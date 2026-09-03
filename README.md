@@ -1,37 +1,58 @@
 # Rekordbox playlist → WAV
 
-Convert a Rekordbox playlist’s lossless tracks to PCM WAV and write a small import XML with copied cues, beatgrid, and tags.
+Turn a Rekordbox playlist of lossless tracks into WAV files, **without changing your originals**. Cues, beatgrid, rating, BPM, and tags are copied into a new playlist named `{your playlist} [WAV]`.
 
-Requires **Python 3.10+** and **ffmpeg** / **ffprobe** on `PATH`. On macOS:
+Works with Rekordbox **6** and **7**.
+
+**Not File → Import.** Rekordbox loads this XML from the **rekordbox xml** pane. The full click-path is in **[USAGE.md](USAGE.md)**.
+
+## What gets converted
+
+
+| You have                               | What happens                             |
+| -------------------------------------- | ---------------------------------------- |
+| FLAC (`.flac`)                         | New WAV (same sample rate and bit depth) |
+| Apple Lossless / ALAC (`.m4a`, `.caf`) | New WAV                                  |
+| AIFF (`.aiff`, `.aif`)                 | New WAV                                  |
+| WAV (`.wav`, `.wave`)                  | Copied as-is                             |
+
+
+MP3, AAC, and other lossy files are skipped with an error. Existing WAVs in the output folder are left alone unless you pass `--force`.
+
+## First time on a Mac
+
+1. Install **Homebrew** if you do not have it: [https://brew.sh](https://brew.sh)
+2. In Terminal:
 
 ```bash
 brew install ffmpeg
 ```
 
-(`ffprobe` comes with that package.) Rekordbox 6 and 7 XML exports are both accepted.
+You also need **Python 3.10 or newer**. On many Macs, `python3` is already there. If Terminal says `command not found: python3`:
 
-## Supported formats
+```bash
+brew install python@3.12
+```
 
-| Input | Action |
-| --- | --- |
-| FLAC (`.flac`) | Convert to PCM WAV |
-| ALAC (`.m4a`, `.caf`) | Convert to PCM WAV |
-| AIFF (`.aiff`, `.aif`) | Convert to PCM WAV |
-| WAV (`.wav`, `.wave`) | Copy as-is |
 
-Sample rate and bit depth are preserved on convert. Other formats are rejected.
 
-## Usage
+## Run it
 
-Interactive (recommended):
+1. In Rekordbox: **File → Export Collection in xml format**. Save somewhere local (not iCloud if you can avoid it).
+2. Open Terminal, go to this folder, then:
 
 ```bash
 ./rb-converter.py
 ```
 
-The wizard finds a Rekordbox XML export, lists playlists, converts the ones you pick, and prints how to import the result.
+1. Pick the XML export, pick one or more playlists (`1`, `1,4,7`, or `all`), and confirm the output folder (default `./output`).
+2. Follow the import steps printed at the end — or open **[USAGE.md](USAGE.md)** and do section 3.
 
-Or pass flags:
+The new playlist in the import file is named `{original} [WAV]`. Running again **adds** tracks; it does not wipe the playlist.
+
+## Options (optional)
+
+Most people can ignore this and use the prompts.
 
 ```bash
 ./rb-converter.py \
@@ -39,17 +60,15 @@ Or pass flags:
   --playlist "Dark forest duplicate"
 ```
 
-| Flag | Default | |
-| --- | --- | --- |
-| `--xml` | prompted | Rekordbox XML export |
-| `--playlist` | prompted | Exact playlist name (wizard can pick several) |
-| `--wav-dir` | `./output` | WAV root; files go in `--wav-dir/<playlist>/` |
-| `--output` | `./output/rekordbox-wav-import.xml` | Import XML (created or **extended**, never overwritten) |
-| `--force` | off | Reconvert existing valid WAVs |
-| `--dry-run` | off | Validate only; write nothing |
 
-Existing dest files are skipped unless `--force`. Filename collisions abort before any write. A progress bar is printed on a TTY during convert/copy/skip.
+| Option       | Default                             | Meaning                                           |
+| ------------ | ----------------------------------- | ------------------------------------------------- |
+| `--xml`      | asked                               | Your Rekordbox collection export                  |
+| `--playlist` | asked                               | Playlist name, exactly as in Rekordbox            |
+| `--wav-dir`  | `./output`                          | Folder for WAV files (`output/<playlist>/`)       |
+| `--output`   | `./output/rekordbox-wav-import.xml` | File Rekordbox should import (appended on re-run) |
+| `--force`    | off                                 | Rebuild WAVs even if they already exist           |
+| `--dry-run`  | off                                 | Check only; write nothing                         |
 
-The new playlist is named `{original} [WAV]`. Re-running appends new tracks; it does not replace the playlist.
 
-See **[USAGE.md](USAGE.md)** for exporting the library from Rekordbox and importing the generated XML back (via the **rekordbox xml** pane, not File → Import). Original files are never modified.
+If two tracks would get the same filename, the run stops before writing anything. Keep the WAV folder where it is after import — moving files later breaks the paths Rekordbox stored.
