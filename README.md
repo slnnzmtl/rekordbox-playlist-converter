@@ -10,6 +10,17 @@ brew install ffmpeg
 
 (`ffprobe` comes with that package.) Rekordbox 6 and 7 XML exports are both accepted.
 
+## Supported formats
+
+| Input | Action |
+| --- | --- |
+| FLAC (`.flac`) | Convert to PCM WAV |
+| ALAC (`.m4a`, `.caf`) | Convert to PCM WAV |
+| AIFF (`.aiff`, `.aif`) | Convert to PCM WAV |
+| WAV (`.wav`, `.wave`) | Copy as-is |
+
+Sample rate and bit depth are preserved on convert. Other formats are rejected.
+
 ## Usage
 
 Interactive (recommended):
@@ -37,7 +48,7 @@ Or pass flags:
 | `--force` | off | Reconvert existing valid WAVs |
 | `--dry-run` | off | Validate only; write nothing |
 
-FLAC, ALAC, and AIFF are converted (sample rate and bit depth preserved). WAVs are copied. Existing dest files are skipped unless `--force`. Filename collisions abort before any write. A progress bar is printed on a TTY during convert/copy/skip.
+Existing dest files are skipped unless `--force`. Filename collisions abort before any write. A progress bar is printed on a TTY during convert/copy/skip.
 
 The new playlist is named `{original} [WAV]`. Re-running appends new tracks; it does not replace the playlist.
 
