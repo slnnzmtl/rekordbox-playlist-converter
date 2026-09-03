@@ -2,9 +2,18 @@
 
 Convert a Rekordbox playlist to WAV files, then bring the new tracks and playlist back into Rekordbox. The original lossless files are never modified.
 
-Works with Rekordbox **6** and **7**. Menu names below match Rekordbox 7; Rekordbox 6 is the same idea (File → Export Collection, plus the **rekordbox xml** pane).
+## Prerequisites
 
-You need **Python 3.10+**, and **ffmpeg** / **ffprobe** on your `PATH` (`brew install ffmpeg` on macOS).
+- **Python 3.10+**
+- **ffmpeg** and **ffprobe** on your `PATH`
+
+On macOS, install both via Homebrew (one package):
+
+```bash
+brew install ffmpeg
+```
+
+Works with Rekordbox **6** and **7**. Menu names below match Rekordbox 7; Rekordbox 6 is the same idea (File → Export Collection, plus the **rekordbox xml** pane).
 
 ---
 
@@ -27,7 +36,7 @@ To include beatgrid data in the XML (Rekordbox 7): **Preferences → Advanced �
 ### Interactive (easiest)
 
 ```bash
-./rb_playlist_to_wav.py
+./rb-converter.py
 ```
 
 The script offers XML files from common export locations, lists playlists (with folder path and track count), lets you pick one or more (`1`, `1,4,7`, or `all`), confirms `./output` and `./output/rekordbox-wav-import.xml`, converts, then prints the Rekordbox import steps.
@@ -35,7 +44,7 @@ The script offers XML files from common export locations, lists playlists (with 
 ### Flags
 
 ```bash
-./rb_playlist_to_wav.py \
+./rb-converter.py \
   --xml ~/Documents/rekordbox/rekordbox.xml \
   --playlist "Dark forest duplicate"
 ```

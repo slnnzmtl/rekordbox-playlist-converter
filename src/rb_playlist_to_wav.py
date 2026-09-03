@@ -158,7 +158,9 @@ def require_tools() -> list[str]:
     missing = []
     for name in ("ffmpeg", "ffprobe"):
         if shutil.which(name) is None:
-            missing.append(f"{name} not found on PATH")
+            missing.append(
+                f"{name} not found on PATH (install with: brew install ffmpeg)"
+            )
     return missing
 
 
@@ -503,7 +505,9 @@ def run_ffprobe(path: Path) -> dict:
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
-        raise CliError("ffprobe not found on PATH") from exc
+        raise CliError(
+            "ffprobe not found on PATH (install with: brew install ffmpeg)"
+        ) from exc
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
         raise CliError(f"ffprobe failed for {path}: {err}")
@@ -737,7 +741,9 @@ def run_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
-        raise CliError("ffmpeg not found on PATH") from exc
+        raise CliError(
+            "ffmpeg not found on PATH (install with: brew install ffmpeg)"
+        ) from exc
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
         raise CliError(f"ffmpeg conversion failed for {source}: {err}")

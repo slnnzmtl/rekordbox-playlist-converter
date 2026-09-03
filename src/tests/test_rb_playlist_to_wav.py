@@ -3,12 +3,17 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 import tempfile
 import unicodedata
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
+
+_SRC = Path(__file__).resolve().parents[1]
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 import rb_playlist_to_wav as rb
 
@@ -698,6 +703,13 @@ class WizardHelperTests(unittest.TestCase):
         with patch.object(rb.sys.stdin, "isatty", return_value=False):
             rc = rb.main([])
         self.assertEqual(rc, 2)
+
+    def test_require_tools_mentions_brew(self) -> None:
+        with patch.object(rb.shutil, "which", return_value=None):
+            missing = rb.require_tools()
+        self.assertEqual(len(missing), 2)
+        for msg in missing:
+            self.assertIn("brew install ffmpeg", msg)
 
 
 if __name__ == "__main__":

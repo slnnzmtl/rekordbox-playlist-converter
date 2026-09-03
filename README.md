@@ -2,14 +2,20 @@
 
 Convert a Rekordbox playlist’s lossless tracks to PCM WAV and write a small import XML with copied cues, beatgrid, and tags.
 
-Requires **Python 3.10+**, plus **ffmpeg** and **ffprobe** on `PATH`. Rekordbox 6 and 7 XML exports are both accepted.
+Requires **Python 3.10+** and **ffmpeg** / **ffprobe** on `PATH`. On macOS:
+
+```bash
+brew install ffmpeg
+```
+
+(`ffprobe` comes with that package.) Rekordbox 6 and 7 XML exports are both accepted.
 
 ## Usage
 
 Interactive (recommended):
 
 ```bash
-./rb_playlist_to_wav.py
+./rb-converter.py
 ```
 
 The wizard finds a Rekordbox XML export, lists playlists, converts the ones you pick, and prints how to import the result.
@@ -17,7 +23,7 @@ The wizard finds a Rekordbox XML export, lists playlists, converts the ones you 
 Or pass flags:
 
 ```bash
-./rb_playlist_to_wav.py \
+./rb-converter.py \
   --xml rekordbox.xml \
   --playlist "Dark forest duplicate"
 ```
