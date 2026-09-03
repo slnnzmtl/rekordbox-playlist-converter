@@ -6,6 +6,16 @@ Requires **Python 3.10+**, plus **ffmpeg** and **ffprobe** on `PATH`. Rekordbox 
 
 ## Usage
 
+Interactive (recommended):
+
+```bash
+./rb_playlist_to_wav.py
+```
+
+The wizard finds a Rekordbox XML export, lists playlists, converts the ones you pick, and prints how to import the result.
+
+Or pass flags:
+
 ```bash
 ./rb_playlist_to_wav.py \
   --xml rekordbox.xml \
@@ -14,10 +24,10 @@ Requires **Python 3.10+**, plus **ffmpeg** and **ffprobe** on `PATH`. Rekordbox 
 
 | Flag | Default | |
 | --- | --- | --- |
-| `--xml` | required | Rekordbox XML export |
-| `--playlist` | required | Exact playlist name |
-| `--wav-dir` | `./WAV` | WAV root; files go in `--wav-dir/<playlist>/` |
-| `--output` | `./rekordbox-wav-import.xml` | Import XML (created or **extended**, never overwritten) |
+| `--xml` | prompted | Rekordbox XML export |
+| `--playlist` | prompted | Exact playlist name (wizard can pick several) |
+| `--wav-dir` | `./output` | WAV root; files go in `--wav-dir/<playlist>/` |
+| `--output` | `./output/rekordbox-wav-import.xml` | Import XML (created or **extended**, never overwritten) |
 | `--force` | off | Reconvert existing valid WAVs |
 | `--dry-run` | off | Validate only; write nothing |
 

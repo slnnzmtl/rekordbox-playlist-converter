@@ -24,7 +24,15 @@ To include beatgrid data in the XML (Rekordbox 7): **Preferences → Advanced �
 
 ## 2. Convert a playlist
 
-From this repo:
+### Interactive (easiest)
+
+```bash
+./rb_playlist_to_wav.py
+```
+
+The script offers XML files from common export locations, lists playlists (with folder path and track count), lets you pick one or more (`1`, `1,4,7`, or `all`), confirms `./output` and `./output/rekordbox-wav-import.xml`, converts, then prints the Rekordbox import steps.
+
+### Flags
 
 ```bash
 ./rb_playlist_to_wav.py \
@@ -34,18 +42,18 @@ From this repo:
 
 That writes:
 
-- WAV files → `./WAV/Dark forest duplicate/`
-- Import XML → `./rekordbox-wav-import.xml`
+- WAV files → `./output/Dark forest duplicate/`
+- Import XML → `./output/rekordbox-wav-import.xml`
 - New playlist name in the XML → `Dark forest duplicate [WAV]`
 
-`--playlist` must match the name in Rekordbox **exactly** (including spaces).
-
-Optional flags:
+`--playlist` must match the name in Rekordbox **exactly** (including spaces). With the wizard you can convert several playlists in one run; they all extend the same `--output` file.
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--wav-dir` | `./WAV` | Root folder for WAVs (`--wav-dir/<playlist>/`) |
-| `--output` | `./rekordbox-wav-import.xml` | Import XML |
+| `--xml` | prompted | Rekordbox XML export |
+| `--playlist` | prompted | Exact playlist name |
+| `--wav-dir` | `./output` | Root folder for WAVs (`--wav-dir/<playlist>/`) |
+| `--output` | `./output/rekordbox-wav-import.xml` | Import XML |
 | `--force` | off | Reconvert even if a valid WAV already exists |
 | `--dry-run` | off | Check paths and collisions; write nothing |
 
@@ -67,7 +75,7 @@ Rekordbox does **not** use **File → Import**. XML is a side library you point 
 ### Point Rekordbox at the generated file
 
 1. **Preferences → Advanced → Database**.
-2. In **rekordbox xml**, set **Imported Library** to `rekordbox-wav-import.xml` (the file this tool wrote, not your original export).
+2. In **rekordbox xml**, set **Imported Library** to `./output/rekordbox-wav-import.xml` (the file this tool wrote, not your original export).
 3. Close Preferences. In the browser tree you should see **rekordbox xml**.
 
 If the pane was already pointing at another XML, change **Imported Library** to this file. Click the refresh control on the rekordbox xml library if tracks do not appear yet.

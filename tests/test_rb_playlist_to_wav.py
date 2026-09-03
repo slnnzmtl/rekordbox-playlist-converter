@@ -525,8 +525,15 @@ class XmlFixtureTests(unittest.TestCase):
 
     def test_defaults_argparse(self) -> None:
         args = rb.parse_args(["--xml", "in.xml", "--playlist", "P"])
-        self.assertEqual(args.wav_dir, Path("WAV"))
-        self.assertEqual(args.output, Path("rekordbox-wav-import.xml"))
+        self.assertEqual(args.xml, Path("in.xml"))
+        self.assertEqual(args.playlist, "P")
+        self.assertEqual(args.wav_dir, Path("output"))
+        self.assertEqual(args.output, Path("output/rekordbox-wav-import.xml"))
+
+    def test_optional_xml_playlist_defaults_none(self) -> None:
+        args = rb.parse_args([])
+        self.assertIsNone(args.xml)
+        self.assertIsNone(args.playlist)
 
 
 class ProgressTests(unittest.TestCase):
@@ -600,6 +607,97 @@ class ConvertSkipTests(unittest.TestCase):
                 stats = rb.convert_unique(plan, force=True)
             ff.assert_called_once()
             self.assertEqual(stats.converted, 1)
+
+
+class WizardHelperTests(unittest.TestCase):
+    def test_discover_xml_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cwd = Path(tmp)
+            hit = cwd / "rekordbox.xml"
+            hit.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
+            (cwd / "other.txt").write_text("x", encoding="utf-8")
+            found = rb.discover_xml_candidates(
+                cwd,
+                candidates=(Path("rekordbox.xml"), Path("missing.xml")),
+            )
+            self.assertEqual(found, [hit.resolve()])
+
+    def test_discover_xml_candidates_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(
+                rb.discover_xml_candidates(
+                    Path(tmp), candidates=(Path("rekordbox.xml"),)
+                ),
+                [],
+            )
+
+    def test_iter_playlists_nested_folders(self) -> None:
+        xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="0"/>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="2">
+      <NODE Name="Top" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+      <NODE Name="Intelligent playlists" Type="0" Count="1">
+        <NODE Name="Nested" Type="1" KeyType="0" Entries="2">
+          <TRACK Key="1"/><TRACK Key="2"/>
+        </NODE>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        root = ET.fromstring(xml)
+        entries = rb.iter_playlists(root)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0][0], "")
+        self.assertEqual(entries[0][1], "Top")
+        self.assertEqual(entries[1][0], "Intelligent playlists")
+        self.assertEqual(entries[1][1], "Nested")
+        self.assertEqual(rb.playlist_track_count(entries[1][2]), 2)
+
+    def test_parse_selection_single_and_multi(self) -> None:
+        entries = [
+            ("", "A", ET.Element("NODE")),
+            ("f", "B", ET.Element("NODE")),
+            ("f", "C", ET.Element("NODE")),
+        ]
+        chosen, errors = rb.parse_playlist_selection("1", entries)
+        self.assertEqual(errors, [])
+        self.assertEqual([n for _f, n, _e in chosen], ["A"])
+        chosen, errors = rb.parse_playlist_selection("1,3", entries)
+        self.assertEqual(errors, [])
+        self.assertEqual([n for _f, n, _e in chosen], ["A", "C"])
+        chosen, errors = rb.parse_playlist_selection("all", entries)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(chosen), 3)
+
+    def test_parse_selection_rejects_duplicate_names(self) -> None:
+        entries = [
+            ("one", "Same", ET.Element("NODE")),
+            ("two", "Same", ET.Element("NODE")),
+            ("", "Other", ET.Element("NODE")),
+        ]
+        chosen, errors = rb.parse_playlist_selection("1,2", entries)
+        self.assertEqual(chosen, [])
+        self.assertTrue(any("same name" in e for e in errors))
+        chosen, errors = rb.parse_playlist_selection("all", entries)
+        self.assertEqual(chosen, [])
+        self.assertTrue(any("same name" in e for e in errors))
+
+    def test_parse_selection_out_of_range(self) -> None:
+        entries = [("", "A", ET.Element("NODE"))]
+        _, errors = rb.parse_playlist_selection("2", entries)
+        self.assertTrue(any("out of range" in e for e in errors))
+
+    def test_main_requires_flags_when_non_tty(self) -> None:
+        with patch.object(rb.sys.stdin, "isatty", return_value=False):
+            rc = rb.main([])
+        self.assertEqual(rc, 2)
 
 
 if __name__ == "__main__":

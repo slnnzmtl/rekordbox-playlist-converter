@@ -19,9 +19,15 @@ from pathlib import Path
 from typing import Iterable
 from urllib.parse import quote, unquote
 
-DEFAULT_WAV_DIR = Path("WAV")
-DEFAULT_OUTPUT = Path("rekordbox-wav-import.xml")
+DEFAULT_WAV_DIR = Path("output")
+DEFAULT_OUTPUT = Path("output") / "rekordbox-wav-import.xml"
 WAV_SUFFIX = " [WAV]"
+XML_CANDIDATE_RELATIVE = (
+    Path("rekordbox.xml"),
+    Path("Rekordbox-collection.xml"),
+    Path.home() / "Documents" / "rekordbox" / "rekordbox.xml",
+    Path.home() / "Documents" / "rekordbox" / "Playlists" / "Rekordbox-collection.xml",
+)
 SUPPORTED_LOSSLESS_EXT = {".flac", ".aiff", ".aif", ".wav", ".wave", ".m4a", ".caf"}
 WAV_EXT = {".wav", ".wave"}
 ALAC_EXT = {".m4a", ".caf"}
@@ -31,8 +37,6 @@ CODEC_BY_DEPTH = {
     24: "pcm_s24le",
     32: "pcm_s32le",
 }
-FLOAT_CODECS = {"pcm_f32le"}
-PCM_PREFIX = "pcm"
 
 
 class CliError(Exception):
@@ -109,21 +113,33 @@ class ConvertStats:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Convert a Rekordbox playlist to WAV and write import XML."
+        description=(
+            "Convert a Rekordbox playlist to WAV and write import XML. "
+            "Omit --xml/--playlist in a terminal for an interactive wizard."
+        )
     )
-    parser.add_argument("--xml", type=Path, required=True, help="Source Rekordbox XML export")
-    parser.add_argument("--playlist", required=True, help="Exact playlist name to convert")
+    parser.add_argument(
+        "--xml",
+        type=Path,
+        default=None,
+        help="Source Rekordbox XML export (prompted if omitted)",
+    )
+    parser.add_argument(
+        "--playlist",
+        default=None,
+        help="Exact playlist name to convert (prompted if omitted)",
+    )
     parser.add_argument(
         "--wav-dir",
         type=Path,
         default=DEFAULT_WAV_DIR,
-        help="Directory for WAV files (default: ./WAV)",
+        help="Directory for WAV files (default: ./output)",
     )
     parser.add_argument(
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT,
-        help="Output Rekordbox XML (default: ./rekordbox-wav-import.xml)",
+        help="Output Rekordbox XML (default: ./output/rekordbox-wav-import.xml)",
     )
     parser.add_argument(
         "--force",
@@ -144,6 +160,13 @@ def require_tools() -> list[str]:
         if shutil.which(name) is None:
             missing.append(f"{name} not found on PATH")
     return missing
+
+
+def abs_path(path: Path) -> Path:
+    path = path.expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path
 
 
 def load_dj_playlists(path: Path) -> ET.Element:
@@ -175,23 +198,230 @@ def skeleton_from(source_root: ET.Element) -> ET.Element:
     return root
 
 
-def iter_playlist_nodes(node: ET.Element) -> Iterable[ET.Element]:
-    if node.tag == "NODE" and node.get("Type") == "1":
-        yield node
-    for child in node:
-        if child.tag == "NODE":
-            yield from iter_playlist_nodes(child)
+def _walk_playlists(
+    node: ET.Element, folder_parts: list[str]
+) -> Iterable[tuple[str, str, ET.Element]]:
+    """Yield (folder_path, name, node) for playlist nodes under a folder tree."""
+    if node.tag != "NODE":
+        return
+    name = node.get("Name") or ""
+    if node.get("Type") == "1":
+        folder = " / ".join(folder_parts) if folder_parts else ""
+        yield folder, name, node
+        return
+    if node.get("Type") == "0":
+        next_parts = folder_parts if name == "ROOT" else [*folder_parts, name]
+        for child in node:
+            yield from _walk_playlists(child, next_parts)
 
 
-def find_playlists_by_name(root: ET.Element, name: str) -> list[ET.Element]:
+def iter_playlists(root: ET.Element) -> list[tuple[str, str, ET.Element]]:
+    """All playlists as (folder_path, name, node), depth-first."""
     playlists = root.find("PLAYLISTS")
     if playlists is None:
         return []
-    found: list[ET.Element] = []
+    found: list[tuple[str, str, ET.Element]] = []
     for child in playlists:
-        if child.tag == "NODE":
-            found.extend(n for n in iter_playlist_nodes(child) if n.get("Name") == name)
+        found.extend(_walk_playlists(child, []))
     return found
+
+
+def find_playlists_by_name(root: ET.Element, name: str) -> list[ET.Element]:
+    return [node for _folder, pl_name, node in iter_playlists(root) if pl_name == name]
+
+
+def playlist_track_count(node: ET.Element) -> int:
+    return len(node.findall("TRACK"))
+
+
+def discover_xml_candidates(
+    cwd: Path | None = None,
+    candidates: tuple[Path, ...] | None = None,
+) -> list[Path]:
+    """Existing XML paths from the default probe list (deduped, absolute)."""
+    base = cwd if cwd is not None else Path.cwd()
+    probe = candidates if candidates is not None else XML_CANDIDATE_RELATIVE
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for rel in probe:
+        path = rel if rel.is_absolute() else (base / rel)
+        try:
+            resolved = path.expanduser().resolve()
+        except OSError:
+            continue
+        if not resolved.is_file() or resolved in seen:
+            continue
+        seen.add(resolved)
+        found.append(resolved)
+    return found
+
+
+def parse_playlist_selection(
+    text: str,
+    entries: list[tuple[str, str, ET.Element]],
+) -> tuple[list[tuple[str, str, ET.Element]], list[str]]:
+    """
+    Parse '1', '1,4,7', or 'all' into playlist entries.
+    Rejects selecting two playlists that share the same Name.
+    """
+    errors: list[str] = []
+    raw = text.strip().lower()
+    if not raw:
+        return [], ["empty selection"]
+    if raw == "all":
+        indices = list(range(len(entries)))
+    else:
+        indices = []
+        for part in text.replace(" ", "").split(","):
+            if not part:
+                continue
+            if not part.isdigit():
+                errors.append(f"invalid selection: {part!r}")
+                continue
+            n = int(part)
+            if n < 1 or n > len(entries):
+                errors.append(f"selection out of range: {n}")
+                continue
+            indices.append(n - 1)
+        if not indices and not errors:
+            errors.append("empty selection")
+    if errors:
+        return [], errors
+    chosen = [entries[i] for i in indices]
+    # Deduplicate by index order while keeping first occurrence
+    seen_idx: set[int] = set()
+    unique_chosen: list[tuple[str, str, ET.Element]] = []
+    for i, entry in zip(indices, chosen):
+        if i in seen_idx:
+            continue
+        seen_idx.add(i)
+        unique_chosen.append(entry)
+    names = [name for _f, name, _n in unique_chosen]
+    dupes = {n for n in names if names.count(n) > 1}
+    if dupes:
+        listed = ", ".join(sorted(dupes))
+        return [], [
+            f"cannot select multiple playlists with the same name: {listed}"
+        ]
+    return unique_chosen, []
+
+
+def prompt_line(message: str, default: str | None = None) -> str:
+    if default is not None:
+        shown = f"{message} [{default}]: "
+    else:
+        shown = f"{message}: "
+    try:
+        value = input(shown).strip()
+    except EOFError as exc:
+        raise CliError("input cancelled") from exc
+    if not value and default is not None:
+        return default
+    return value
+
+
+def prompt_xml_path(existing: Path | None) -> Path:
+    if existing is not None:
+        return existing.expanduser()
+    candidates = discover_xml_candidates()
+    print("Rekordbox XML export")
+    if candidates:
+        for i, path in enumerate(candidates, 1):
+            print(f"  {i}) {path}")
+        print("  Or type a path")
+        choice = prompt_line("Select XML", "1" if len(candidates) == 1 else None)
+        if choice.isdigit():
+            n = int(choice)
+            if 1 <= n <= len(candidates):
+                return candidates[n - 1]
+            raise CliError(f"selection out of range: {n}")
+        path = Path(choice).expanduser()
+    else:
+        print("  No common export paths found.")
+        path = Path(prompt_line("Path to Rekordbox XML")).expanduser()
+    if not path.is_file():
+        raise CliError(f"source XML not found: {path}")
+    return path
+
+
+def prompt_playlists(
+    root: ET.Element, playlist_arg: str | None
+) -> list[str]:
+    if playlist_arg is not None:
+        return [playlist_arg]
+    entries = iter_playlists(root)
+    if not entries:
+        raise CliError("no playlists found in XML")
+    print()
+    print("Playlists")
+    for i, (folder, name, node) in enumerate(entries, 1):
+        count = playlist_track_count(node)
+        label = f"{folder} / {name}" if folder else name
+        print(f"  {i}) {label} ({count} tracks)")
+    print("  Select: 1  or  1,4,7  or  all")
+    while True:
+        text = prompt_line("Playlists")
+        chosen, errors = parse_playlist_selection(text, entries)
+        if errors:
+            for err in errors:
+                print(f"  {err}", file=sys.stderr)
+            continue
+        return [name for _f, name, _n in chosen]
+
+
+def prompt_paths(wav_dir: Path, output: Path) -> tuple[Path, Path]:
+    print()
+    wav_s = prompt_line("WAV directory", str(wav_dir))
+    out_s = prompt_line("Output XML", str(output))
+    return Path(wav_s).expanduser(), Path(out_s).expanduser()
+
+
+def print_import_hints(output: Path) -> None:
+    print()
+    print("Import into Rekordbox")
+    print("  1. Preferences → View → Layout → enable rekordbox xml")
+    print("  2. Preferences → Advanced → Database → Imported Library →")
+    print(f"     {output}")
+    print("  3. Browser → rekordbox xml → Playlists → Import Playlist")
+    print("     (or drag the [WAV] playlist into Playlists)")
+
+
+def run_convert_one(
+    xml_path: Path,
+    playlist_name: str,
+    wav_dir: Path,
+    output: Path,
+    *,
+    force: bool,
+    dry_run: bool,
+) -> int:
+    plan, errors = prepare(xml_path, playlist_name, wav_dir, output)
+    if errors:
+        print_errors(errors)
+        return 1
+    assert plan is not None
+    if dry_run:
+        print_summary(plan, None, dry_run=True)
+        return 0
+    try:
+        stats = convert_unique(
+            plan, force=force, progress=sys.stderr.isatty()
+        )
+        stats.appended = apply_xml(plan)
+        atomic_write_xml(plan.output_root, plan.output)
+    except CliError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print_summary(plan, stats, dry_run=False)
+    return 0
+
+
+def prompt_wizard(args: argparse.Namespace) -> tuple[Path, list[str], Path, Path]:
+    xml_path = prompt_xml_path(args.xml)
+    root = load_dj_playlists(xml_path)
+    names = prompt_playlists(root, args.playlist)
+    wav_dir, output = prompt_paths(args.wav_dir, args.output)
+    return xml_path, names, wav_dir, output
 
 
 def collection_indexes(root: ET.Element) -> tuple[dict[str, ET.Element], dict[str, ET.Element]]:
@@ -333,7 +563,7 @@ def is_valid_pcm_wav(path: Path) -> bool:
     if stream is None:
         return False
     codec = str(stream.get("codec_name") or "")
-    return codec.startswith(PCM_PREFIX)
+    return codec.startswith("pcm")
 
 
 def classify_source(path: Path, stream: dict) -> tuple[str, bool]:
@@ -396,9 +626,7 @@ def build_plan(
     tracks_el, resolve_errors = resolve_playlist_tracks(source_root, playlist_el)
     errors.extend(resolve_errors)
 
-    wav_dir_abs = wav_dir.expanduser()
-    if not wav_dir_abs.is_absolute():
-        wav_dir_abs = Path.cwd() / wav_dir_abs
+    wav_dir_abs = abs_path(wav_dir)
     try:
         playlist_dir = wav_dir_abs / playlist_dir_name(playlist_name)
     except CliError as exc:
@@ -689,9 +917,7 @@ def apply_xml(plan: Plan) -> int:
 
 
 def atomic_write_xml(root: ET.Element, path: Path) -> None:
-    path = path.expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
+    path = abs_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     ET.indent(root, space="  ")
     fd, tmp = tempfile.mkstemp(prefix=".rb_wav_", suffix=".xml", dir=str(path.parent))
@@ -781,9 +1007,7 @@ def prepare(
         errors.append(f"duplicate playlist name: {playlist_name}")
         return None, errors
 
-    output_path = output.expanduser()
-    if not output_path.is_absolute():
-        output_path = Path.cwd() / output_path
+    output_path = abs_path(output)
     output_existed = output_path.is_file()
     output_root: ET.Element | None = None
     if output_existed:
@@ -810,24 +1034,42 @@ def prepare(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    plan, errors = prepare(args.xml, args.playlist, args.wav_dir, args.output)
-    if errors:
-        print_errors(errors)
-        return 1
-    assert plan is not None
-    if args.dry_run:
-        print_summary(plan, None, dry_run=True)
-        return 0
-    try:
-        stats = convert_unique(
-            plan, force=args.force, progress=sys.stderr.isatty()
+    need_wizard = args.xml is None or args.playlist is None
+    if need_wizard:
+        if not sys.stdin.isatty():
+            print(
+                "error: --xml and --playlist are required when not running interactively",
+                file=sys.stderr,
+            )
+            return 2
+        try:
+            xml_path, playlist_names, wav_dir, output = prompt_wizard(args)
+        except CliError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+    else:
+        assert args.xml is not None and args.playlist is not None
+        xml_path = args.xml
+        playlist_names = [args.playlist]
+        wav_dir = args.wav_dir
+        output = args.output
+
+    for i, name in enumerate(playlist_names):
+        if len(playlist_names) > 1:
+            print()
+            print(f"=== {name} ({i + 1}/{len(playlist_names)}) ===")
+        rc = run_convert_one(
+            xml_path,
+            name,
+            wav_dir,
+            output,
+            force=args.force,
+            dry_run=args.dry_run,
         )
-        stats.appended = apply_xml(plan)
-        atomic_write_xml(plan.output_root, plan.output)
-    except CliError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    print_summary(plan, stats, dry_run=False)
+        if rc != 0:
+            return rc
+    if not args.dry_run:
+        print_import_hints(abs_path(output))
     return 0
 
 
