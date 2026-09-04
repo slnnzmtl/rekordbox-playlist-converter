@@ -1,0 +1,4 @@
+{
+  "name": "Rekordbox Track Converter",
+  "install": "sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg python3-tk"
+}
