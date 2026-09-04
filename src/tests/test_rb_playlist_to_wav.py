@@ -204,6 +204,105 @@ class XmlFixtureTests(unittest.TestCase):
         with patch.object(rb, "require_tools", return_value=[]):
             _, errors = rb.prepare(dup, "Untitled Intelligent List", self.wav_dir, self.output)
         self.assertTrue(any("duplicate playlist name" in e for e in errors))
+        joined = "\n".join(errors)
+        self.assertIn("Intelligent playlists / Untitled Intelligent List", joined)
+
+    def test_duplicate_playlist_resolved_by_folder(self) -> None:
+        root = rb.load_dj_playlists(self.xml_path)
+        playlists = root.find("PLAYLISTS/NODE")
+        assert playlists is not None
+        ET.SubElement(
+            playlists,
+            "NODE",
+            {"Name": "Untitled Intelligent List", "Type": "1", "KeyType": "0", "Entries": "0"},
+        )
+        dup = self.root / "dup-folder.xml"
+        ET.ElementTree(root).write(dup, encoding="UTF-8", xml_declaration=True)
+        with patch.object(rb, "require_tools", return_value=[]), patch.object(
+            rb, "run_ffprobe", side_effect=self._probe
+        ):
+            plan, errors = rb.prepare(
+                dup,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+                playlist_folder="Intelligent playlists",
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(len(plan.unique), 3)
+
+    def test_duplicate_playlist_resolved_by_path(self) -> None:
+        root = rb.load_dj_playlists(self.xml_path)
+        playlists = root.find("PLAYLISTS/NODE")
+        assert playlists is not None
+        ET.SubElement(
+            playlists,
+            "NODE",
+            {"Name": "Untitled Intelligent List", "Type": "1", "KeyType": "0", "Entries": "0"},
+        )
+        dup = self.root / "dup-path.xml"
+        ET.ElementTree(root).write(dup, encoding="UTF-8", xml_declaration=True)
+        with patch.object(rb, "require_tools", return_value=[]), patch.object(
+            rb, "run_ffprobe", side_effect=self._probe
+        ):
+            plan, errors = rb.prepare(
+                dup,
+                "Intelligent playlists / Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(plan.playlist_name, "Untitled Intelligent List")
+        self.assertEqual(len(plan.unique), 3)
+
+    def test_missing_source_file_skipped_with_warning(self) -> None:
+        self.c.unlink()
+        with patch.object(rb, "require_tools", return_value=[]), patch.object(
+            rb, "run_ffprobe", side_effect=self._probe
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(len(plan.unique), 2)
+        self.assertEqual(len(plan.tracks), 2)
+        self.assertEqual(len(plan.warnings), 1)
+        self.assertIn("missing source file", plan.warnings[0])
+        self.assertIn(str(self.c), plan.warnings[0])
+
+    def test_missing_source_file_does_not_abort_convert(self) -> None:
+        self.c.unlink()
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(rb, "require_tools", return_value=[]), patch.object(
+            rb, "run_ffprobe", side_effect=self._probe
+        ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_valid_pcm_wav", return_value=False
+        ):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        out = ET.parse(self.output).getroot()
+        self.assertEqual(len(out.findall("COLLECTION/TRACK")), 2)
+        pl = rb.find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
+        self.assertEqual(len(pl), 1)
+        self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2"])
 
     def test_missing_collection_key(self) -> None:
         root = rb.load_dj_playlists(self.xml_path)
@@ -665,6 +764,58 @@ class WizardHelperTests(unittest.TestCase):
         self.assertEqual(entries[1][1], "Nested")
         self.assertEqual(rb.playlist_track_count(entries[1][2]), 2)
 
+    def test_resolve_playlist_disambiguates_same_leaf_name(self) -> None:
+        xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="0"/>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="2">
+      <NODE Name="Selections" Type="0" Count="1">
+        <NODE Name="Night" Type="0" Count="1">
+          <NODE Name="Darkprog" Type="1" KeyType="0" Entries="5"/>
+        </NODE>
+      </NODE>
+      <NODE Name="Genres" Type="0" Count="1">
+        <NODE Name="Psychedelic" Type="0" Count="1">
+          <NODE Name="Progressive" Type="0" Count="1">
+            <NODE Name="Darkprog" Type="1" KeyType="0" Entries="671"/>
+          </NODE>
+        </NODE>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        root = ET.fromstring(xml)
+        found, errors = rb.resolve_playlist(root, "Darkprog")
+        self.assertIsNone(found)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("duplicate playlist name: Darkprog", errors[0])
+        self.assertIn("Selections / Night / Darkprog", errors[0])
+        self.assertIn("Genres / Psychedelic / Progressive / Darkprog", errors[0])
+
+        found, errors = rb.resolve_playlist(
+            root, "Darkprog", folder="Selections / Night"
+        )
+        self.assertEqual(errors, [])
+        assert found is not None
+        self.assertEqual(found[0], "Selections / Night")
+        self.assertEqual(found[1], "Darkprog")
+        self.assertEqual(found[2].get("Entries"), "5")
+
+        found, errors = rb.resolve_playlist(
+            root, "Genres / Psychedelic / Progressive / Darkprog"
+        )
+        self.assertEqual(errors, [])
+        assert found is not None
+        self.assertEqual(found[2].get("Entries"), "671")
+
+    def test_playlist_label(self) -> None:
+        self.assertEqual(rb.playlist_label("", "Top"), "Top")
+        self.assertEqual(rb.playlist_label("Selections / Night", "Darkprog"), "Selections / Night / Darkprog")
+
     def test_parse_selection_single_and_multi(self) -> None:
         entries = [
             ("", "A", ET.Element("NODE")),
@@ -705,11 +856,61 @@ class WizardHelperTests(unittest.TestCase):
         self.assertEqual(rc, 2)
 
     def test_require_tools_mentions_brew(self) -> None:
-        with patch.object(rb.shutil, "which", return_value=None):
+        with patch.object(rb, "tool_path", return_value=None):
             missing = rb.require_tools()
         self.assertEqual(len(missing), 2)
         for msg in missing:
             self.assertIn("brew install ffmpeg", msg)
+
+    def test_tool_path_uses_path_when_not_frozen(self) -> None:
+        with patch.object(rb.sys, "frozen", False, create=True), patch.object(
+            rb.shutil, "which", return_value="/usr/local/bin/ffmpeg"
+        ) as which:
+            self.assertEqual(rb.tool_path("ffmpeg"), "/usr/local/bin/ffmpeg")
+            which.assert_called_once_with("ffmpeg")
+
+    def test_tool_path_prefers_meipass_when_frozen(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            meipass = Path(tmp)
+            bundled = meipass / "ffmpeg"
+            bundled.write_text("")
+            bundled.chmod(0o755)
+            with patch.object(rb.sys, "frozen", True, create=True), patch.object(
+                rb.sys, "_MEIPASS", str(meipass), create=True
+            ), patch.object(rb.shutil, "which") as which:
+                self.assertEqual(rb.tool_path("ffmpeg"), str(bundled))
+                which.assert_not_called()
+
+    def test_tool_path_falls_back_to_executable_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            mac_os = Path(tmp) / "MacOS"
+            mac_os.mkdir()
+            beside = mac_os / "ffprobe"
+            beside.write_text("")
+            beside.chmod(0o755)
+            fake_exe = mac_os / "Rekordbox WAV Converter"
+            fake_exe.write_text("")
+            with patch.object(rb.sys, "frozen", True, create=True), patch.object(
+                rb.sys, "_MEIPASS", str(Path(tmp) / "missing"), create=True
+            ), patch.object(rb.sys, "executable", str(fake_exe)), patch.object(
+                rb.shutil, "which"
+            ) as which:
+                self.assertEqual(
+                    rb.tool_path("ffprobe"),
+                    str(beside.resolve()),
+                )
+                which.assert_not_called()
+
+
+class GuiUsageGuideTests(unittest.TestCase):
+    def test_usage_guide_covers_key_rekordbox_steps(self) -> None:
+        import usage_guide
+
+        text = usage_guide.USAGE_GUIDE
+        self.assertIn("Imported Library", text)
+        self.assertIn("File → Import", text)
+        self.assertIn("Export BeatGrid", text)
+        self.assertIn("do not use file → import", text.casefold())
 
 
 if __name__ == "__main__":

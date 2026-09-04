@@ -14,7 +14,7 @@ import tempfile
 import unicodedata
 import xml.etree.ElementTree as ET
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import quote, unquote
@@ -101,6 +101,7 @@ class Plan:
     source_root: ET.Element
     output_root: ET.Element
     output_existed: bool
+    warnings: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -127,7 +128,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--playlist",
         default=None,
-        help="Exact playlist name to convert (prompted if omitted)",
+        help="Playlist name, or 'folder / name' if the name is used more than once",
     )
     parser.add_argument(
         "--wav-dir",
@@ -154,10 +155,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def tool_path(name: str) -> str | None:
+    """Resolve ffmpeg/ffprobe: bundled when frozen, else PATH."""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            bundled = Path(meipass) / name
+            if bundled.is_file():
+                return str(bundled)
+        beside = Path(sys.executable).resolve().parent / name
+        if beside.is_file():
+            return str(beside)
+    return shutil.which(name)
+
+
 def require_tools() -> list[str]:
     missing = []
     for name in ("ffmpeg", "ffprobe"):
-        if shutil.which(name) is None:
+        if tool_path(name) is None:
             missing.append(
                 f"{name} not found on PATH (install with: brew install ffmpeg)"
             )
@@ -230,6 +245,46 @@ def iter_playlists(root: ET.Element) -> list[tuple[str, str, ET.Element]]:
 
 def find_playlists_by_name(root: ET.Element, name: str) -> list[ET.Element]:
     return [node for _folder, pl_name, node in iter_playlists(root) if pl_name == name]
+
+
+def playlist_label(folder: str, name: str) -> str:
+    return f"{folder} / {name}" if folder else name
+
+
+def resolve_playlist(
+    root: ET.Element,
+    playlist_name: str,
+    folder: str | None = None,
+) -> tuple[tuple[str, str, ET.Element] | None, list[str]]:
+    """
+    Find one playlist by leaf name, folder+name, or 'folder / name' path.
+    Ambiguous leaf names are an error unless folder (or a full path) is given.
+    """
+    entries = iter_playlists(root)
+    if folder is not None:
+        matches = [
+            entry for entry in entries if entry[0] == folder and entry[1] == playlist_name
+        ]
+        label = playlist_label(folder, playlist_name)
+        if not matches:
+            return None, [f"playlist not found: {label}"]
+        if len(matches) > 1:
+            return None, [f"duplicate playlist name: {label}"]
+        return matches[0], []
+
+    by_name = [entry for entry in entries if entry[1] == playlist_name]
+    if len(by_name) == 1:
+        return by_name[0], []
+    if len(by_name) > 1:
+        listed = "\n".join(f"  {playlist_label(f, n)}" for f, n, _ in by_name)
+        return None, [f"duplicate playlist name: {playlist_name}\n{listed}"]
+
+    by_path = [entry for entry in entries if playlist_label(entry[0], entry[1]) == playlist_name]
+    if len(by_path) == 1:
+        return by_path[0], []
+    if len(by_path) > 1:
+        return None, [f"duplicate playlist name: {playlist_name}"]
+    return None, [f"playlist not found: {playlist_name}"]
 
 
 def playlist_track_count(node: ET.Element) -> int:
@@ -348,9 +403,9 @@ def prompt_xml_path(existing: Path | None) -> Path:
 
 def prompt_playlists(
     root: ET.Element, playlist_arg: str | None
-) -> list[str]:
+) -> list[tuple[str | None, str]]:
     if playlist_arg is not None:
-        return [playlist_arg]
+        return [(None, playlist_arg)]
     entries = iter_playlists(root)
     if not entries:
         raise CliError("no playlists found in XML")
@@ -358,8 +413,7 @@ def prompt_playlists(
     print("Playlists")
     for i, (folder, name, node) in enumerate(entries, 1):
         count = playlist_track_count(node)
-        label = f"{folder} / {name}" if folder else name
-        print(f"  {i}) {label} ({count} tracks)")
+        print(f"  {i}) {playlist_label(folder, name)} ({count} tracks)")
     print("  Select: 1  or  1,4,7  or  all")
     while True:
         text = prompt_line("Playlists")
@@ -368,7 +422,7 @@ def prompt_playlists(
             for err in errors:
                 print(f"  {err}", file=sys.stderr)
             continue
-        return [name for _f, name, _n in chosen]
+        return [(folder, name) for folder, name, _n in chosen]
 
 
 def prompt_paths(wav_dir: Path, output: Path) -> tuple[Path, Path]:
@@ -396,12 +450,21 @@ def run_convert_one(
     *,
     force: bool,
     dry_run: bool,
+    playlist_folder: str | None = None,
 ) -> int:
-    plan, errors = prepare(xml_path, playlist_name, wav_dir, output)
+    plan, errors = prepare(
+        xml_path,
+        playlist_name,
+        wav_dir,
+        output,
+        playlist_folder=playlist_folder,
+    )
     if errors:
         print_errors(errors)
         return 1
     assert plan is not None
+    if plan.warnings:
+        print_warnings(plan.warnings)
     if dry_run:
         print_summary(plan, None, dry_run=True)
         return 0
@@ -418,7 +481,9 @@ def run_convert_one(
     return 0
 
 
-def prompt_wizard(args: argparse.Namespace) -> tuple[Path, list[str], Path, Path]:
+def prompt_wizard(
+    args: argparse.Namespace,
+) -> tuple[Path, list[tuple[str | None, str]], Path, Path]:
     xml_path = prompt_xml_path(args.xml)
     root = load_dj_playlists(xml_path)
     names = prompt_playlists(root, args.playlist)
@@ -488,8 +553,13 @@ def collision_key(name: str) -> str:
 
 
 def run_ffprobe(path: Path) -> dict:
+    exe = tool_path("ffprobe")
+    if exe is None:
+        raise CliError(
+            "ffprobe not found on PATH (install with: brew install ffmpeg)"
+        )
     cmd = [
-        "ffprobe",
+        exe,
         "-v",
         "error",
         "-select_streams",
@@ -638,11 +708,15 @@ def build_plan(
         playlist_dir = wav_dir_abs / "_"
 
     planned: list[PlannedTrack] = []
+    warnings: list[str] = []
     for el in tracks_el:
         loc = el.get("Location", "")
         source_path = decode_location(loc)
         if source_path is None:
             errors.append(f"invalid Rekordbox file URL: {loc or '(empty)'}")
+            continue
+        if not source_path.is_file():
+            warnings.append(f"missing source file: {source_path}")
             continue
         dest_name = dest_name_for(source_path)
         dest_path = playlist_dir / dest_name
@@ -684,9 +758,6 @@ def build_plan(
         unique_dest[dest_key] = item
         unique.append(item)
 
-        if not item.source_path.is_file():
-            errors.append(f"missing source file: {item.source_path}")
-            continue
         try:
             probe = run_ffprobe(item.source_path)
         except CliError as exc:
@@ -721,6 +792,7 @@ def build_plan(
         source_root=source_root,
         output_root=output_root,
         output_existed=output_existed,
+        warnings=warnings,
     )
     if errors:
         return plan, errors
@@ -728,8 +800,13 @@ def build_plan(
 
 
 def run_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
+    exe = tool_path("ffmpeg")
+    if exe is None:
+        raise CliError(
+            "ffmpeg not found on PATH (install with: brew install ffmpeg)"
+        )
     cmd = [
-        "ffmpeg",
+        exe,
         "-y" if force or dest.exists() else "-n",
         "-i",
         str(source),
@@ -946,6 +1023,11 @@ def print_errors(errors: list[str]) -> None:
         print(err, file=sys.stderr)
 
 
+def print_warnings(warnings: list[str]) -> None:
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+
+
 def print_summary(
     plan: Plan,
     stats: ConvertStats | None,
@@ -957,7 +1039,8 @@ def print_summary(
     print()
     if dry_run:
         print("Converted:")
-        print(f"{unique_n} WAV files → {plan.playlist_dir}")
+        missing = f" ({len(plan.warnings)} missing skipped)" if plan.warnings else ""
+        print(f"{unique_n} WAV files → {plan.playlist_dir}{missing}")
         print()
         print("Output:")
         print(plan.output)
@@ -974,6 +1057,8 @@ def print_summary(
         parts.append(f"{stats.copied} copied")
     if stats.skipped:
         parts.append(f"{stats.skipped} skipped")
+    if plan.warnings:
+        parts.append(f"{len(plan.warnings)} missing skipped")
     if not parts:
         parts.append(f"{unique_n} WAV files")
     print(f"{', '.join(parts)} → {plan.playlist_dir}")
@@ -993,6 +1078,8 @@ def prepare(
     playlist_name: str,
     wav_dir: Path,
     output: Path,
+    *,
+    playlist_folder: str | None = None,
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(require_tools())
@@ -1005,13 +1092,14 @@ def prepare(
         errors.append(str(exc))
         return None, errors
 
-    matches = find_playlists_by_name(source_root, playlist_name)
-    if not matches:
-        errors.append(f"playlist not found: {playlist_name}")
+    found, resolve_errors = resolve_playlist(
+        source_root, playlist_name, folder=playlist_folder
+    )
+    if resolve_errors:
+        errors.extend(resolve_errors)
         return None, errors
-    if len(matches) > 1:
-        errors.append(f"duplicate playlist name: {playlist_name}")
-        return None, errors
+    assert found is not None
+    _folder, resolved_name, playlist_el = found
 
     output_path = abs_path(output)
     output_existed = output_path.is_file()
@@ -1027,8 +1115,8 @@ def prepare(
 
     plan, plan_errors = build_plan(
         source_root,
-        matches[0],
-        playlist_name,
+        playlist_el,
+        resolved_name,
         wav_dir,
         output_path,
         output_root,
@@ -1049,21 +1137,22 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         try:
-            xml_path, playlist_names, wav_dir, output = prompt_wizard(args)
+            xml_path, playlist_refs, wav_dir, output = prompt_wizard(args)
         except CliError as exc:
             print(str(exc), file=sys.stderr)
             return 1
     else:
         assert args.xml is not None and args.playlist is not None
         xml_path = args.xml
-        playlist_names = [args.playlist]
+        playlist_refs = [(None, args.playlist)]
         wav_dir = args.wav_dir
         output = args.output
 
-    for i, name in enumerate(playlist_names):
-        if len(playlist_names) > 1:
+    for i, (folder, name) in enumerate(playlist_refs):
+        if len(playlist_refs) > 1:
             print()
-            print(f"=== {name} ({i + 1}/{len(playlist_names)}) ===")
+            label = playlist_label(folder, name) if folder else name
+            print(f"=== {label} ({i + 1}/{len(playlist_refs)}) ===")
         rc = run_convert_one(
             xml_path,
             name,
@@ -1071,6 +1160,7 @@ def main(argv: list[str] | None = None) -> int:
             output,
             force=args.force,
             dry_run=args.dry_run,
+            playlist_folder=folder,
         )
         if rc != 0:
             return rc
