@@ -29,30 +29,15 @@ Import into Rekordbox the same way as the CLI — point **Imported Library** at 
 
 Needs the [python.org macOS 64-bit universal2](https://www.python.org/downloads/macos/) installer (3.12 or newer, Tk included). Homebrew Python cannot produce this `.app`.
 
-1. Download the **release** zips of static `ffmpeg` and `ffprobe` for **both** `macos/arm64` and `macos/amd64` from [ffmpeg.martin-riedl.de](https://ffmpeg.martin-riedl.de/). Do **not** copy Homebrew’s binaries (they link cellar dylibs). Lipo them into `vendor/ffmpeg/`:
-
 ```bash
-mkdir -p vendor/ffmpeg
-lipo -create ffmpeg-arm64 ffmpeg-x86_64 -output vendor/ffmpeg/ffmpeg
-lipo -create ffprobe-arm64 ffprobe-x86_64 -output vendor/ffmpeg/ffprobe
-chmod +x vendor/ffmpeg/ffmpeg vendor/ffmpeg/ffprobe
-xattr -cr vendor/ffmpeg
-codesign --force --sign - vendor/ffmpeg/ffmpeg vendor/ffmpeg/ffprobe
-lipo -archs vendor/ffmpeg/ffmpeg   # x86_64 arm64
+./scripts/build-macos-app.sh
 ```
 
-Static ffmpeg is GPL — keep a `COPYING` / `LICENSE` file in `vendor/ffmpeg/` if the build provides one (the app bundle will include it).
+That script downloads static **release** `ffmpeg`/`ffprobe` for arm64 and amd64 from [ffmpeg.martin-riedl.de](https://ffmpeg.martin-riedl.de/), lipos them into `vendor/ffmpeg/`, recreates `.venv` from the python.org interpreter if needed, runs PyInstaller, and ad-hoc signs the bundle. Override the interpreter with `PYTHON=/path/to/python3` if you have more than one framework install.
 
-2. Recreate `.venv` from that python.org interpreter (`python3 -m tkinter` must open a window):
+Do **not** copy Homebrew’s ffmpeg (cellar dylibs). Static ffmpeg is GPL — the script keeps a `COPYING` / `LICENSE` from the zip when present.
 
-```bash
-/Library/Frameworks/Python.framework/Versions/3.12/bin/python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-build.txt
-pyinstaller rb_converter.spec
-```
-
-The app lands in `dist/Rekordbox WAV Converter.app`. Ad-hoc sign if needed: `codesign --force --deep -s - "dist/Rekordbox WAV Converter.app"`. Confirm both slices: `lipo -archs "dist/Rekordbox WAV Converter.app/Contents/MacOS/Rekordbox WAV Converter"`.
+The app lands in `dist/Rekordbox WAV Converter.app`. Confirm both slices: `lipo -archs "dist/Rekordbox WAV Converter.app/Contents/MacOS/Rekordbox WAV Converter"`.
 
 ## First time on a Mac (CLI)
 
