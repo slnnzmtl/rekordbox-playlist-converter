@@ -41,6 +41,8 @@ class ConverterApp:
         self._busy = False
         self._search_showing_placeholder = False
         self._usage_window: tk.Toplevel | None = None
+        self._progress_target = 0.0
+        self._progress_anim_id: str | None = None
         # (folder, name, display label) for every playlist in the XML
         self._playlist_entries: list[tuple[str, str, str]] = []
         # Currently visible rows after search filter
@@ -120,8 +122,9 @@ class ConverterApp:
             side=tk.RIGHT, padx=(0, 8)
         )
 
-        self.progress = ttk.Progressbar(frm, mode="indeterminate")
+        self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
         self.progress.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
+        self.progress["value"] = 0
 
         ttk.Label(frm, textvariable=self.status_var, wraplength=1000).grid(
             row=7, column=0, columnspan=3, sticky="ew", **pad
@@ -311,9 +314,55 @@ class ConverterApp:
         state = tk.DISABLED if busy else tk.NORMAL
         self.convert_btn.configure(state=state)
         if busy:
-            self.progress.start(12)
+            self._cancel_progress_anim()
+            self._progress_target = 0.0
+            self.progress["value"] = 0
+        # On success finish_ok leaves the bar at 100; on error finish_error resets.
+
+    def _cancel_progress_anim(self) -> None:
+        if self._progress_anim_id is not None:
+            self.root.after_cancel(self._progress_anim_id)
+            self._progress_anim_id = None
+
+    def _animate_progress_to(self, pct: float, *, snap: bool = False) -> None:
+        self._progress_target = max(0.0, min(100.0, float(pct)))
+        if snap:
+            self._cancel_progress_anim()
+            self.progress["value"] = self._progress_target
+            return
+        if self._progress_anim_id is None:
+            self._tick_progress_anim()
+
+    def _tick_progress_anim(self) -> None:
+        self._progress_anim_id = None
+        cur = float(self.progress["value"])
+        target = self._progress_target
+        diff = target - cur
+        if abs(diff) < 0.2:
+            self.progress["value"] = target
+            return
+        # Ease toward target (~60fps); never overshoot.
+        step = diff * 0.22
+        if abs(step) < 0.35:
+            step = 0.35 if diff > 0 else -0.35
+        nxt = cur + step
+        if (diff > 0 and nxt > target) or (diff < 0 and nxt < target):
+            nxt = target
+        self.progress["value"] = nxt
+        self._progress_anim_id = self.root.after(16, self._tick_progress_anim)
+
+    def _set_progress(
+        self, current: int, total: int, *, action: str = "", name: str = ""
+    ) -> None:
+        if total <= 0:
+            pct = 100.0 if current else 0.0
         else:
-            self.progress.stop()
+            pct = min(100.0, 100.0 * current / total)
+        self._animate_progress_to(pct)
+        if action and name:
+            self.status_var.set(f"{action.capitalize()} {name} ({current}/{total})…")
+        elif total > 0:
+            self.status_var.set(f"Working… {current}/{total} ({int(pct)}%)")
 
     def _ui(self, fn) -> None:
         self.root.after(0, fn)
@@ -343,13 +392,14 @@ class ConverterApp:
         xml_path = Path(xml_s).expanduser()
 
         self._set_busy(True)
-        self.status_var.set("Working…")
+        self.status_var.set("Preparing…")
 
         def worker() -> None:
             try:
                 summaries: list[str] = []
                 skipped: list[str] = []
                 playlist_dirs: list[Path] = []
+                plans: list[rb.Plan] = []
                 for i, (folder, name) in enumerate(selected):
                     label = f"{name} ({i + 1}/{len(selected)})"
                     self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
@@ -365,10 +415,43 @@ class ConverterApp:
                         self._ui(lambda m=msg: self._finish_error(m))
                         return
                     assert plan is not None
+                    plans.append(plan)
                     skipped.extend(plan.warnings)
                     playlist_dirs.append(plan.playlist_dir)
-                    self._ui(lambda l=label: self.status_var.set(f"Converting {l}…"))
-                    stats = rb.convert_unique(plan, force=force, progress=False)
+
+                total = sum(len(plan.unique) for plan in plans)
+                done_base = 0
+
+                def on_progress(
+                    current: int,
+                    _plan_total: int,
+                    action: str,
+                    track_name: str,
+                    base: int = 0,
+                ) -> None:
+                    overall = base + current
+                    self._ui(
+                        lambda o=overall, t=total, a=action, n=track_name: self._set_progress(
+                            o, t, action=a, name=n
+                        )
+                    )
+
+                for plan in plans:
+                    base = done_base
+
+                    def tick(
+                        current: int,
+                        plan_total: int,
+                        action: str,
+                        track_name: str,
+                        b: int = base,
+                    ) -> None:
+                        on_progress(current, plan_total, action, track_name, base=b)
+
+                    stats = rb.convert_unique(
+                        plan, force=force, progress=False, on_progress=tick
+                    )
+                    done_base += len(plan.unique)
                     stats.appended = rb.apply_xml(plan)
                     rb.atomic_write_xml(plan.output_root, plan.output)
                     parts = []
@@ -384,6 +467,11 @@ class ConverterApp:
                         parts.append(f"{len(plan.warnings)} missing skipped")
                     detail = ", ".join(parts) if parts else "done"
                     summaries.append(f"{plan.wav_playlist_name}: {detail}")
+
+                if total == 0:
+                    self._ui(lambda: self._set_progress(0, 0))
+                else:
+                    self._ui(lambda t=total: self._set_progress(t, t))
                 open_dir = playlist_dirs[0] if len(playlist_dirs) == 1 else wav_dir
                 out = str(output)
                 self._ui(
@@ -400,6 +488,7 @@ class ConverterApp:
 
     def _finish_error(self, message: str) -> None:
         self._set_busy(False)
+        self._animate_progress_to(0, snap=True)
         self.status_var.set("Failed.")
         messagebox.showerror("Conversion failed", message)
 
@@ -411,6 +500,7 @@ class ConverterApp:
         open_dir: Path | None = None,
     ) -> None:
         self._set_busy(False)
+        self._animate_progress_to(100, snap=True)
         body = "\n".join(summaries)
         self.status_var.set(
             f"Done. Point Rekordbox Imported Library at:\n{output}"

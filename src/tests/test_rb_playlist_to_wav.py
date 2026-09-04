@@ -664,6 +664,22 @@ class ProgressTests(unittest.TestCase):
         self.assertIn("2/2", text)
         self.assertTrue(text.endswith("\n"))
 
+    def test_on_progress_fires_when_disabled(self) -> None:
+        seen: list[tuple[int, int, str, str]] = []
+        buf = io.StringIO()
+        with patch.object(rb.sys, "stderr", buf):
+            bar = rb.Progress(
+                2, enabled=False, on_progress=lambda c, t, a, n: seen.append((c, t, a, n))
+            )
+            bar.update(1, "convert", "a.wav")
+            bar.update(2, "skip", "b.wav")
+            bar.close()
+        self.assertEqual(buf.getvalue(), "")
+        self.assertEqual(
+            seen,
+            [(1, 2, "convert", "a.wav"), (2, 2, "skip", "b.wav")],
+        )
+
 
 class ConvertSkipTests(unittest.TestCase):
     def test_skip_existing_valid_wav_unless_force(self) -> None:
@@ -711,6 +727,57 @@ class ConvertSkipTests(unittest.TestCase):
                 stats = rb.convert_unique(plan, force=True)
             ff.assert_called_once()
             self.assertEqual(stats.converted, 1)
+
+    def test_convert_unique_on_progress_callbacks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wav_dir = root / "WAV"
+            playlist_dir = wav_dir / "P"
+            playlist_dir.mkdir(parents=True)
+            items: list[rb.PlannedTrack] = []
+            for name in ("a.wav", "b.wav"):
+                dest = playlist_dir / name
+                dest.write_bytes(b"RIFF")
+                el = ET.Element("TRACK", {"TrackID": name, "Location": "file://x"})
+                items.append(
+                    rb.PlannedTrack(
+                        source_el=el,
+                        source_path=root / name,
+                        dest_path=dest,
+                        dest_location=rb.encode_location(dest),
+                        dest_name=name,
+                        codec="pcm_s24le",
+                        copy_wav=False,
+                        noop=False,
+                    )
+                )
+            plan = rb.Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                wav_dir=wav_dir,
+                playlist_dir=playlist_dir,
+                output=root / "o.xml",
+                tracks=items,
+                unique=items,
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+            )
+            seen: list[tuple[int, int, str, str]] = []
+            with patch.object(rb, "is_valid_pcm_wav", return_value=True), patch.object(
+                rb, "run_ffmpeg"
+            ) as ff:
+                stats = rb.convert_unique(
+                    plan,
+                    force=False,
+                    on_progress=lambda c, t, a, n: seen.append((c, t, a, n)),
+                )
+            ff.assert_not_called()
+            self.assertEqual(stats.skipped, 2)
+            self.assertEqual(
+                seen,
+                [(1, 2, "skip", "a.wav"), (2, 2, "skip", "b.wav")],
+            )
 
 
 class WizardHelperTests(unittest.TestCase):

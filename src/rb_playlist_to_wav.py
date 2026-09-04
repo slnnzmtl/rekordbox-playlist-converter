@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 from urllib.parse import quote, unquote
 
 DEFAULT_WAV_DIR = Path("output")
@@ -44,14 +44,22 @@ class CliError(Exception):
 
 
 class Progress:
-    """Single-line stderr bar. No-op when not enabled (non-TTY, tests)."""
+    """Single-line stderr bar. Callback always fires; stderr only when enabled."""
 
-    def __init__(self, total: int, enabled: bool) -> None:
+    def __init__(
+        self,
+        total: int,
+        enabled: bool,
+        on_progress: Callable[[int, int, str, str], None] | None = None,
+    ) -> None:
         self.total = max(total, 0)
         self.enabled = enabled
+        self.on_progress = on_progress
         self._width = 0
 
     def update(self, current: int, action: str, name: str) -> None:
+        if self.on_progress is not None:
+            self.on_progress(current, self.total, action, name)
         if not self.enabled:
             return
         total = self.total
@@ -826,11 +834,17 @@ def run_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
         raise CliError(f"ffmpeg conversion failed for {source}: {err}")
 
 
-def convert_unique(plan: Plan, force: bool, *, progress: bool = False) -> ConvertStats:
+def convert_unique(
+    plan: Plan,
+    force: bool,
+    *,
+    progress: bool = False,
+    on_progress: Callable[[int, int, str, str], None] | None = None,
+) -> ConvertStats:
     stats = ConvertStats()
     plan.playlist_dir.mkdir(parents=True, exist_ok=True)
     items = plan.unique
-    bar = Progress(len(items), progress)
+    bar = Progress(len(items), progress, on_progress=on_progress)
     try:
         for i, item in enumerate(items, 1):
             name = item.dest_name
