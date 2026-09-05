@@ -17,6 +17,10 @@ DEFAULT_OUTPUT = DEFAULT_WAV_DIR / "rekordbox-wav-import.xml"
 SEARCH_PLACEHOLDER = "Search playlists…"
 
 
+def total_successful_conversions(stats_list: list[rb.ConvertStats]) -> int:
+    return sum(s.converted + s.copied for s in stats_list)
+
+
 def open_in_finder(path: Path) -> None:
     """Reveal a folder in Finder (macOS) or the platform file browser."""
     target = path if path.is_dir() else path.parent
@@ -398,6 +402,7 @@ class ConverterApp:
             try:
                 summaries: list[str] = []
                 skipped: list[str] = []
+                all_stats: list[rb.ConvertStats] = []
                 playlist_dirs: list[Path] = []
                 plans: list[rb.Plan] = []
                 for i, (folder, name) in enumerate(selected):
@@ -451,6 +456,7 @@ class ConverterApp:
                     stats = rb.convert_unique(
                         plan, force=force, progress=False, on_progress=tick
                     )
+                    all_stats.append(stats)
                     done_base += len(plan.unique)
                     stats.appended = rb.apply_xml(plan)
                     rb.atomic_write_xml(plan.output_root, plan.output)
@@ -474,11 +480,16 @@ class ConverterApp:
                     self._ui(lambda t=total: self._set_progress(t, t))
                 open_dir = playlist_dirs[0] if len(playlist_dirs) == 1 else wav_dir
                 out = str(output)
-                self._ui(
-                    lambda s=summaries, o=out, w=skipped, d=open_dir: self._finish_ok(
-                        s, o, w, d
+                if total_successful_conversions(all_stats) == 0:
+                    self._ui(
+                        lambda s=summaries, w=skipped: self._finish_no_conversions(s, w)
                     )
-                )
+                else:
+                    self._ui(
+                        lambda s=summaries, o=out, w=skipped, d=open_dir: self._finish_ok(
+                            s, o, w, d
+                        )
+                    )
             except rb.CliError as exc:
                 self._ui(lambda e=str(exc): self._finish_error(e))
             except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
@@ -491,6 +502,22 @@ class ConverterApp:
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Failed.")
         messagebox.showerror("Conversion failed", message)
+
+    def _finish_no_conversions(
+        self,
+        summaries: list[str],
+        warnings: list[str] | None = None,
+    ) -> None:
+        self._set_busy(False)
+        self._animate_progress_to(0, snap=True)
+        self.status_var.set("Finished with no WAV files converted or copied.")
+        body = "\n".join(summaries)
+        if warnings:
+            body += (
+                "\n\nThese files were missing and were skipped:\n\n"
+                + "\n".join(warnings)
+            )
+        messagebox.showwarning("No conversions", body)
 
     def _finish_ok(
         self,
