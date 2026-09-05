@@ -560,6 +560,20 @@ def collision_key(name: str) -> str:
     return unicodedata.normalize("NFC", name).casefold()
 
 
+def resolve_existing_file(path: Path) -> Path | None:
+    """Return path if it exists; otherwise match by Unicode-normalized filename."""
+    if path.is_file():
+        return path
+    parent = path.parent
+    if not parent.is_dir():
+        return None
+    key = collision_key(path.name)
+    for entry in parent.iterdir():
+        if entry.is_file() and collision_key(entry.name) == key:
+            return entry
+    return None
+
+
 def run_ffprobe(path: Path) -> dict:
     exe = tool_path("ffprobe")
     if exe is None:
@@ -723,9 +737,11 @@ def build_plan(
         if source_path is None:
             errors.append(f"invalid Rekordbox file URL: {loc or '(empty)'}")
             continue
-        if not source_path.is_file():
+        resolved = resolve_existing_file(source_path)
+        if resolved is None:
             warnings.append(f"missing source file: {source_path}")
             continue
+        source_path = resolved
         dest_name = dest_name_for(source_path)
         dest_path = playlist_dir / dest_name
         dest_location = encode_location(dest_path)
