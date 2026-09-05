@@ -11,6 +11,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import rb_playlist_to_wav as rb
 from usage_guide import USAGE_GUIDE
+from version import __version__
 
 DEFAULT_WAV_DIR = Path.home() / "Documents" / "rekordbox-wav"
 DEFAULT_OUTPUT = DEFAULT_WAV_DIR / "rekordbox-wav-import.xml"
@@ -62,27 +63,34 @@ class ConverterApp:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         frm.columnconfigure(1, weight=1)
-        frm.rowconfigure(2, weight=1)
+        frm.rowconfigure(3, weight=1)
 
-        ttk.Label(frm, text="Rekordbox XML").grid(row=0, column=0, sticky="w", **pad)
+        header = ttk.Frame(frm)
+        header.grid(row=0, column=0, columnspan=3, sticky="w", **pad)
+        self.title_label = ttk.Label(header, text="Rekordbox WAV Converter")
+        self.title_label.grid(row=0, column=0, sticky="w")
+        self.version_label = ttk.Label(header, text=__version__)
+        self.version_label.grid(row=1, column=0, sticky="w")
+
+        ttk.Label(frm, text="Rekordbox XML").grid(row=1, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.xml_var).grid(
-            row=0, column=1, sticky="ew", **pad
+            row=1, column=1, sticky="ew", **pad
         )
         ttk.Button(frm, text="Browse…", command=self._browse_xml).grid(
-            row=0, column=2, **pad
+            row=1, column=2, **pad
         )
 
-        ttk.Label(frm, text="Playlists").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Playlists").grid(row=2, column=0, sticky="w", **pad)
         self.search_entry = ttk.Entry(frm, textvariable=self.search_var)
-        self.search_entry.grid(row=1, column=1, sticky="ew", **pad)
+        self.search_entry.grid(row=2, column=1, sticky="ew", **pad)
         self.search_entry.bind("<FocusIn>", self._on_search_focus_in)
         self.search_entry.bind("<FocusOut>", self._on_search_focus_out)
         ttk.Label(frm, text="Hold ⌃ to multi-select").grid(
-            row=1, column=2, sticky="e", **pad
+            row=2, column=2, sticky="e", **pad
         )
 
         list_frame = ttk.Frame(frm)
-        list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", **pad)
+        list_frame.grid(row=3, column=0, columnspan=3, sticky="nsew", **pad)
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
         self.playlist_list = tk.Listbox(
@@ -95,24 +103,24 @@ class ConverterApp:
         self.playlist_list.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
 
-        ttk.Label(frm, text="WAV folder").grid(row=3, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="WAV folder").grid(row=4, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.wav_dir_var).grid(
-            row=3, column=1, sticky="ew", **pad
-        )
-        ttk.Button(frm, text="Browse…", command=self._browse_wav_dir).grid(
-            row=3, column=2, **pad
-        )
-
-        ttk.Label(frm, text="Import XML").grid(row=4, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.output_var).grid(
             row=4, column=1, sticky="ew", **pad
         )
-        ttk.Button(frm, text="Browse…", command=self._browse_output).grid(
+        ttk.Button(frm, text="Browse…", command=self._browse_wav_dir).grid(
             row=4, column=2, **pad
         )
 
+        ttk.Label(frm, text="Import XML").grid(row=5, column=0, sticky="w", **pad)
+        ttk.Entry(frm, textvariable=self.output_var).grid(
+            row=5, column=1, sticky="ew", **pad
+        )
+        ttk.Button(frm, text="Browse…", command=self._browse_output).grid(
+            row=5, column=2, **pad
+        )
+
         opts = ttk.Frame(frm)
-        opts.grid(row=5, column=0, columnspan=3, sticky="ew", **pad)
+        opts.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
         ttk.Checkbutton(
             opts, text="Overwrite existing WAV files", variable=self.force_var
         ).pack(side=tk.LEFT)
@@ -123,11 +131,11 @@ class ConverterApp:
         )
 
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
+        self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
         self.progress["value"] = 0
 
         ttk.Label(frm, textvariable=self.status_var, wraplength=1000).grid(
-            row=7, column=0, columnspan=3, sticky="ew", **pad
+            row=8, column=0, columnspan=3, sticky="ew", **pad
         )
 
         candidates = rb.discover_xml_candidates()
@@ -145,8 +153,11 @@ class ConverterApp:
         )
         menubar.add_cascade(label="Help", menu=help_menu)
         self.root.config(menu=menubar)
-        self.root.bind_all("<Command-?>", lambda _e: self._show_usage_guide())
-        self.root.bind_all("<Command-Shift-/>", lambda _e: self._show_usage_guide())
+        try:
+            self.root.bind_all("<Command-?>", lambda _e: self._show_usage_guide())
+            self.root.bind_all("<Command-Shift-/>", lambda _e: self._show_usage_guide())
+        except tk.TclError:
+            pass
 
     def _show_usage_guide(self) -> None:
         if self._usage_window is not None and self._usage_window.winfo_exists():
