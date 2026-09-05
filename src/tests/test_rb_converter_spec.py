@@ -21,6 +21,18 @@ class SpecUniversal2Tests(unittest.TestCase):
     def test_spec_targets_universal2(self) -> None:
         self.assertIn('target_arch="universal2"', _SPEC)
 
+    def test_bundle_identifier_is_not_rekordbox_tld(self) -> None:
+        self.assertIn(
+            'bundle_identifier="io.github.slnnzmtl.rekordboxWavConverter"',
+            _SPEC,
+        )
+        self.assertNotIn('bundle_identifier="com.rekordbox.', _SPEC)
+
+    def test_spec_always_bundles_licenses(self) -> None:
+        self.assertIn('project_license = root / "LICENSE"', _SPEC)
+        self.assertIn("COPYING.GPLv3", _SPEC)
+        self.assertIn('datas.append((str(project_license), "."))', _SPEC)
+
     def test_require_universal2_accepts_fat_binary(self) -> None:
         require = _load_require_universal2()
         result = subprocess.CompletedProcess(

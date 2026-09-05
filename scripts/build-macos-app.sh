@@ -118,6 +118,14 @@ fetch_and_lipo_ffmpeg() {
   codesign --force --sign - "$VENDOR/ffmpeg" "$VENDOR/ffprobe"
 }
 
+ensure_ffmpeg_license() {
+  # Upstream zips often ship no COPYING; always place our third_party notice.
+  local src="$ROOT/third_party/ffmpeg/COPYING.GPLv3"
+  [[ -f "$src" ]] || die "missing $src"
+  mkdir -p "$VENDOR"
+  cp "$src" "$VENDOR/COPYING.GPLv3"
+}
+
 ensure_vendor_ffmpeg() {
   if [[ -f "$VENDOR/ffmpeg" && -f "$VENDOR/ffprobe" ]]; then
     if lipo -archs "$VENDOR/ffmpeg" 2>/dev/null | grep -qw x86_64 \
@@ -125,6 +133,7 @@ ensure_vendor_ffmpeg() {
       && lipo -archs "$VENDOR/ffprobe" 2>/dev/null | grep -qw x86_64 \
       && lipo -archs "$VENDOR/ffprobe" 2>/dev/null | grep -qw arm64; then
       printf 'Using existing universal2 ffmpeg/ffprobe in vendor/ffmpeg/\n'
+      ensure_ffmpeg_license
       return
     fi
     printf 'vendor/ffmpeg is not universal2; re-fetching and lipo’ing…\n'
@@ -132,6 +141,7 @@ ensure_vendor_ffmpeg() {
     printf 'vendor/ffmpeg missing; fetching static release builds…\n'
   fi
   fetch_and_lipo_ffmpeg
+  ensure_ffmpeg_license
   require_universal2 "$VENDOR/ffmpeg"
   require_universal2 "$VENDOR/ffprobe"
 }

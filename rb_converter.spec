@@ -50,11 +50,23 @@ for name in ("ffmpeg", "ffprobe"):
     require_universal2(path)
     binaries.append((str(path), "."))
 
+# Always ship project GPL + ffmpeg GPL text (do not rely on upstream zips).
 datas = []
-for lic in ("COPYING", "LICENSE", "LICENSE.md", "COPYING.GPLv3"):
-    lic_path = vendor_ffmpeg / lic
-    if lic_path.is_file():
-        datas.append((str(lic_path), "."))
+project_license = root / "LICENSE"
+if not project_license.is_file():
+    raise SystemExit(f"Missing {project_license}")
+datas.append((str(project_license), "."))
+
+ffmpeg_license = vendor_ffmpeg / "COPYING.GPLv3"
+if not ffmpeg_license.is_file():
+    # Fallback if build script has not run ensure_ffmpeg_license yet.
+    ffmpeg_license = root / "third_party" / "ffmpeg" / "COPYING.GPLv3"
+if not ffmpeg_license.is_file():
+    raise SystemExit(
+        f"Missing ffmpeg license at vendor/ffmpeg/COPYING.GPLv3 or "
+        f"{root / 'third_party' / 'ffmpeg' / 'COPYING.GPLv3'}"
+    )
+datas.append((str(ffmpeg_license), "third_party/ffmpeg"))
 
 a = Analysis(
     [str(src / "rb_converter_gui.py")],
@@ -104,7 +116,7 @@ app = BUNDLE(
     coll,
     name="Rekordbox WAV Converter.app",
     icon=None,
-    bundle_identifier="com.rekordbox.wav.converter",
+    bundle_identifier="io.github.slnnzmtl.rekordboxWavConverter",
     info_plist={
         "NSHighResolutionCapable": True,
         "CFBundleDisplayName": "Rekordbox WAV Converter",
