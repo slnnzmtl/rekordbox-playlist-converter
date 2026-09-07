@@ -60,6 +60,14 @@ class AppLogoTests(unittest.TestCase):
         self.assertTrue(logo.read_bytes().startswith(b"\x89PNG"))
         self.assertEqual(app_logo_path().resolve(), logo)
 
+    def test_window_icon_png_is_committed_256px(self) -> None:
+        from rb_converter_gui import app_window_icon_path
+
+        icon = Path(__file__).resolve().parents[2] / "assets" / "rpc-logo-white-256.png"
+        self.assertTrue(icon.is_file())
+        self.assertTrue(icon.read_bytes().startswith(b"\x89PNG"))
+        self.assertEqual(app_window_icon_path().resolve(), icon)
+
     def test_gui_applies_app_logo_as_window_icon(self) -> None:
         try:
             import _tkinter  # noqa: F401
@@ -80,7 +88,8 @@ class AppLogoTests(unittest.TestCase):
                 app = ConverterApp(root)
             logo = getattr(app, "logo_image", None)
             self.assertIsNotNone(logo)
-            self.assertGreater(int(logo.width()), 0)
+            self.assertEqual(int(logo.width()), 256)
+            self.assertEqual(int(logo.height()), 256)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

@@ -20,20 +20,31 @@ DEFAULT_WAV_DIR = Path.home() / "Documents" / "rekordbox-wav"
 DEFAULT_OUTPUT = DEFAULT_WAV_DIR / "rekordbox-wav-import.xml"
 SEARCH_PLACEHOLDER = "Search playlists…"
 APP_LOGO_NAME = "rpc-logo-white.png"
+APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
 
 
-def app_logo_path() -> Path:
-    """Return the shipped app logo PNG (bundled when frozen)."""
+def _bundled_asset(name: str) -> Path:
+    """Resolve a file under assets/ (bundled when frozen)."""
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
         if meipass:
-            bundled = Path(meipass) / "assets" / APP_LOGO_NAME
+            bundled = Path(meipass) / "assets" / name
             if bundled.is_file():
                 return bundled
-        beside = Path(sys.executable).resolve().parent / "assets" / APP_LOGO_NAME
+        beside = Path(sys.executable).resolve().parent / "assets" / name
         if beside.is_file():
             return beside
-    return Path(__file__).resolve().parent.parent / "assets" / APP_LOGO_NAME
+    return Path(__file__).resolve().parent.parent / "assets" / name
+
+
+def app_logo_path() -> Path:
+    """Return the full-resolution app logo PNG."""
+    return _bundled_asset(APP_LOGO_NAME)
+
+
+def app_window_icon_path() -> Path:
+    """Return the 256px window-icon PNG used by Tk."""
+    return _bundled_asset(APP_WINDOW_ICON_NAME)
 
 
 def total_successful_conversions(stats_list: list[rb.ConvertStats]) -> int:
@@ -80,7 +91,7 @@ class ConverterApp:
         self._start_update_check(manual=False)
 
     def _apply_window_icon(self) -> tk.PhotoImage | None:
-        path = app_logo_path()
+        path = app_window_icon_path()
         if not path.is_file():
             return None
         try:

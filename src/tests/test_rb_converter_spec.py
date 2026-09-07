@@ -75,6 +75,12 @@ class SpecAppIconTests(unittest.TestCase):
         self.assertTrue(logo.is_file(), "assets/rpc-logo-white.png must exist")
         self.assertTrue(logo.read_bytes().startswith(b"\x89PNG"))
 
+    def test_spec_bundles_256px_window_icon(self) -> None:
+        self.assertIn("rpc-logo-white-256.png", _SPEC)
+        icon = _REPO / "assets" / "rpc-logo-white-256.png"
+        self.assertTrue(icon.is_file(), "assets/rpc-logo-white-256.png must exist")
+        self.assertTrue(icon.read_bytes().startswith(b"\x89PNG"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Build assets/app.icns from assets/rpc-logo-white.png (requires ffmpeg)."""
+"""Build assets/app.icns and the 256px Tk icon from assets/rpc-logo-white.png."""
 
 from __future__ import annotations
 
 import struct
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "assets" / "rpc-logo-white.png"
 DEST = ROOT / "assets" / "app.icns"
+WINDOW_ICON = ROOT / "assets" / "rpc-logo-white-256.png"
+WINDOW_ICON_SIZE = 256
 
 # PNG-compressed ICNS types used by modern macOS.
 _ENTRIES = (
@@ -64,6 +65,8 @@ def main() -> int:
     body = b"".join(chunks)
     DEST.write_bytes(b"icns" + struct.pack(">I", 8 + len(body)) + body)
     print(f"Wrote {DEST} ({DEST.stat().st_size} bytes)")
+    _png_at_size(SRC, WINDOW_ICON, WINDOW_ICON_SIZE)
+    print(f"Wrote {WINDOW_ICON} ({WINDOW_ICON.stat().st_size} bytes)")
     return 0
 
 

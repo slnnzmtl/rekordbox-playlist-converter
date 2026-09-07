@@ -68,10 +68,11 @@ if not ffmpeg_license.is_file():
     )
 datas.append((str(ffmpeg_license), "third_party/ffmpeg"))
 
-logo_png = root / "assets" / "rpc-logo-white.png"
-if not logo_png.is_file():
-    raise SystemExit(f"Missing {logo_png}")
-datas.append((str(logo_png), "assets"))
+for logo_name in ("rpc-logo-white.png", "rpc-logo-white-256.png"):
+    logo_png = root / "assets" / logo_name
+    if not logo_png.is_file():
+        raise SystemExit(f"Missing {logo_png}")
+    datas.append((str(logo_png), "assets"))
 
 app_icns = root / "assets" / "app.icns"
 if not app_icns.is_file():
