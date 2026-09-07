@@ -32,7 +32,8 @@ export.
 2. Select one or more playlists (hold ⌃ to multi-select). Search filters the
    list.
 3. Confirm WAV folder and Import XML. Defaults are ~/Documents/rekordbox-wav
-   and ~/Documents/rekordbox-wav/rekordbox-wav-import.xml.
+   and ~/Documents/rekordbox-wav/rekordbox-wav-import.xml. The app remembers
+   your last-used WAV folder and Import XML between launches.
 4. Click Convert.
 
 What you get:

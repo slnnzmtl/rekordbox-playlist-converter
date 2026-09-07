@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import rb_playlist_to_wav as rb
+from gui_preferences import load_preferences, resolve_startup_paths, save_preferences
 from update_check import ReleaseInfo, UpdateCheckResult, check_for_update
 from usage_guide import USAGE_GUIDE
 from version import __version__
@@ -68,8 +69,15 @@ class ConverterApp:
         self.logo_image = self._apply_window_icon()
 
         self.xml_var = tk.StringVar()
-        self.wav_dir_var = tk.StringVar(value=str(DEFAULT_WAV_DIR))
-        self.output_var = tk.StringVar(value=str(DEFAULT_OUTPUT))
+        self.wav_dir_var = tk.StringVar()
+        self.output_var = tk.StringVar()
+        startup_wav, startup_output = resolve_startup_paths(
+            load_preferences(),
+            default_wav_dir=DEFAULT_WAV_DIR,
+            default_import_xml=DEFAULT_OUTPUT,
+        )
+        self.wav_dir_var.set(str(startup_wav))
+        self.output_var.set(str(startup_output))
         self.force_var = tk.BooleanVar(value=False)
         self.search_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
@@ -255,6 +263,22 @@ class ConverterApp:
         dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
         dlg.focus_force()
 
+    def _resolved_output_paths(self) -> tuple[Path, Path]:
+        wav_dir = Path(self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)).expanduser()
+        output = Path(self.output_var.get().strip() or str(DEFAULT_OUTPUT)).expanduser()
+        if not wav_dir.is_absolute():
+            wav_dir = Path.home() / wav_dir
+        if not output.is_absolute():
+            output = Path.home() / output
+        return wav_dir, output
+
+    def _persist_output_preferences(self) -> None:
+        wav_dir, output = self._resolved_output_paths()
+        try:
+            save_preferences(wav_dir, output)
+        except OSError:
+            pass
+
     def _browse_xml(self) -> None:
         initial = Path.home() / "Documents"
         path = filedialog.askopenfilename(
@@ -273,6 +297,7 @@ class ConverterApp:
         )
         if path:
             self.wav_dir_var.set(path)
+            self._persist_output_preferences()
 
     def _browse_output(self) -> None:
         path = filedialog.asksaveasfilename(
@@ -286,6 +311,7 @@ class ConverterApp:
         )
         if path:
             self.output_var.set(path)
+            self._persist_output_preferences()
 
     def _load_playlists(self) -> None:
         self.playlist_list.delete(0, tk.END)
@@ -444,12 +470,8 @@ class ConverterApp:
         if not selected:
             messagebox.showerror("Selection", "Select at least one playlist.")
             return
-        wav_dir = Path(self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)).expanduser()
-        output = Path(self.output_var.get().strip() or str(DEFAULT_OUTPUT)).expanduser()
-        if not wav_dir.is_absolute():
-            wav_dir = Path.home() / wav_dir
-        if not output.is_absolute():
-            output = Path.home() / output
+        wav_dir, output = self._resolved_output_paths()
+        self._persist_output_preferences()
         force = bool(self.force_var.get())
         xml_path = Path(xml_s).expanduser()
 
