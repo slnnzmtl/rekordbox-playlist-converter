@@ -121,6 +121,40 @@ class GuiPreferencesPersistTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_browse_output_saves_preferences(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch("rb_converter_gui.filedialog.asksaveasfilename") as ask_save, patch(
+                "rb_converter_gui.save_preferences"
+            ) as save_prefs:
+                ask_save.return_value = "/tmp/chosen-import.xml"
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root)
+                app.wav_dir_var.set("/tmp/chosen-wav")
+                app._browse_output()
+                save_prefs.assert_called_once()
+                args = save_prefs.call_args[0]
+                self.assertEqual(args[0], Path("/tmp/chosen-wav"))
+                self.assertEqual(args[1], Path("/tmp/chosen-import.xml"))
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
     def test_start_convert_saves_preferences_before_worker(self) -> None:
         if not _tk_available():
             self.skipTest("_tkinter not available")
@@ -151,6 +185,73 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 args = save_prefs.call_args[0]
                 self.assertEqual(args[0], Path("/tmp/typed-wav"))
                 self.assertEqual(args[1], Path("/tmp/typed-import.xml"))
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_browse_wav_dir_continues_when_save_preferences_fails(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch("rb_converter_gui.filedialog.askdirectory") as ask_dir, patch(
+                "rb_converter_gui.save_preferences",
+                side_effect=OSError("permission denied"),
+            ):
+                ask_dir.return_value = "/tmp/chosen-wav"
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root)
+                app._browse_wav_dir()
+                self.assertEqual(app.wav_dir_var.get(), "/tmp/chosen-wav")
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_start_convert_continues_when_save_preferences_fails(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch(
+                "rb_converter_gui.save_preferences",
+                side_effect=OSError("permission denied"),
+            ), patch.object(
+                ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
+            ), patch("rb_converter_gui.threading.Thread") as thread_cls:
+                thread_cls.return_value.start = lambda: None
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root)
+                app.xml_var.set("/tmp/test.xml")
+                app.wav_dir_var.set("/tmp/typed-wav")
+                app.output_var.set("/tmp/typed-import.xml")
+                app._start_convert()
+                self.assertEqual(thread_cls.call_count, 2)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

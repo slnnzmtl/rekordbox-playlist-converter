@@ -224,14 +224,21 @@ class ConverterApp:
         dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
         dlg.focus_force()
 
-    def _persist_output_preferences(self) -> None:
+    def _resolved_output_paths(self) -> tuple[Path, Path]:
         wav_dir = Path(self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)).expanduser()
         output = Path(self.output_var.get().strip() or str(DEFAULT_OUTPUT)).expanduser()
         if not wav_dir.is_absolute():
             wav_dir = Path.home() / wav_dir
         if not output.is_absolute():
             output = Path.home() / output
-        save_preferences(wav_dir, output)
+        return wav_dir, output
+
+    def _persist_output_preferences(self) -> None:
+        wav_dir, output = self._resolved_output_paths()
+        try:
+            save_preferences(wav_dir, output)
+        except OSError:
+            pass
 
     def _browse_xml(self) -> None:
         initial = Path.home() / "Documents"
@@ -424,12 +431,7 @@ class ConverterApp:
         if not selected:
             messagebox.showerror("Selection", "Select at least one playlist.")
             return
-        wav_dir = Path(self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)).expanduser()
-        output = Path(self.output_var.get().strip() or str(DEFAULT_OUTPUT)).expanduser()
-        if not wav_dir.is_absolute():
-            wav_dir = Path.home() / wav_dir
-        if not output.is_absolute():
-            output = Path.home() / output
+        wav_dir, output = self._resolved_output_paths()
         self._persist_output_preferences()
         force = bool(self.force_var.get())
         xml_path = Path(xml_s).expanduser()
