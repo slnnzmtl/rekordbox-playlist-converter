@@ -6,10 +6,12 @@ from __future__ import annotations
 import subprocess
 import threading
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import rb_playlist_to_wav as rb
+from update_check import ReleaseInfo, UpdateCheckResult, check_for_update
 from usage_guide import USAGE_GUIDE
 from version import __version__
 
@@ -46,6 +48,7 @@ class ConverterApp:
         self._busy = False
         self._search_showing_placeholder = False
         self._usage_window: tk.Toplevel | None = None
+        self._update_modal_shown = False
         self._progress_target = 0.0
         self._progress_anim_id: str | None = None
         # (folder, name, display label) for every playlist in the XML
@@ -57,6 +60,7 @@ class ConverterApp:
         self.search_var.trace_add("write", lambda *_: self._apply_playlist_filter())
         if not self.search_var.get():
             self._show_search_placeholder()
+        self._start_update_check(manual=False)
 
     def _build(self) -> None:
         self._build_menubar()
@@ -154,6 +158,10 @@ class ConverterApp:
             label="How to Use…",
             command=self._show_usage_guide,
             accelerator="Command-?",
+        )
+        help_menu.add_command(
+            label="Check for Updates…",
+            command=self._check_for_updates_manual,
         )
         menubar.add_cascade(label="Help", menu=help_menu)
         self.root.config(menu=menubar)
@@ -597,6 +605,80 @@ class ConverterApp:
         )
         ttk.Button(btns, text="OK", command=close).pack(side=tk.LEFT)
         dlg.bind("<Return>", lambda _e: close())
+        dlg.bind("<Escape>", lambda _e: close())
+        dlg.protocol("WM_DELETE_WINDOW", close)
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        dlg.wait_window()
+
+    def _start_update_check(self, *, manual: bool) -> None:
+        def worker() -> None:
+            result = check_for_update(__version__)
+            self._ui(lambda r=result, m=manual: self._handle_update_check_result(r, manual=m))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _check_for_updates_manual(self) -> None:
+        self._start_update_check(manual=True)
+
+    def _handle_update_check_result(
+        self, result: UpdateCheckResult, *, manual: bool
+    ) -> None:
+        if result.is_error:
+            if manual:
+                messagebox.showerror(
+                    "Update check failed",
+                    f"Could not check for updates:\n\n{result.message}",
+                )
+            return
+        if result.is_up_to_date:
+            if manual:
+                messagebox.showinfo(
+                    "No updates",
+                    f"Rekordbox WAV Converter {__version__} is up to date.",
+                )
+            return
+        if result.is_update_available and result.release is not None:
+            if manual or not self._update_modal_shown:
+                if not manual:
+                    self._update_modal_shown = True
+                self._show_update_available(result.release)
+
+    def _show_update_available(self, release: ReleaseInfo) -> None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Update available")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.grid(row=0, column=0, sticky="nsew")
+
+        message = (
+            f"A new version is available.\n\n"
+            f"Current version: {__version__}\n"
+            f"Latest version: {release.version}"
+        )
+        if release.release_notes:
+            message += f"\n\n{release.release_notes}"
+        ttk.Label(frm, text=message, justify=tk.LEFT, wraplength=480).grid(
+            row=0, column=0, columnspan=2, sticky="w"
+        )
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=1, column=0, columnspan=2, sticky="e", pady=(16, 0))
+
+        def close() -> None:
+            dlg.destroy()
+
+        def view_release() -> None:
+            webbrowser.open(release.html_url)
+            close()
+
+        ttk.Button(btns, text="Later", command=close).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btns, text="View release", command=view_release).pack(side=tk.LEFT)
         dlg.bind("<Escape>", lambda _e: close())
         dlg.protocol("WM_DELETE_WINDOW", close)
         dlg.update_idletasks()
