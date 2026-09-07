@@ -19,7 +19,7 @@ python3 -m unittest discover -s src/tests -v
 ./scripts/build-macos-app.sh
 ```
 
-The `.app` icon is `assets/app.icns`, built from `assets/rpc-logo-white.png`. The same script also writes the 256px Tk window icon:
+The `.app` icon is `assets/app.icns`, built from `assets/rpc-logo-white.png` via `ffmpeg` and macOS `iconutil` (so Finder list view gets proper ARGB icons). The same script also writes the 256px Tk window icon:
 
 ```bash
 python3 scripts/make-app-icns.py

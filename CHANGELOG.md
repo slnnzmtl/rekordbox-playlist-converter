@@ -2,7 +2,7 @@
 
 ## 1.1.0
 
-- App icon from the new rpc-logo-white mark (macOS `.app` and a 256px Tk window icon).
+- App icon from the new rpc-logo-white mark (macOS `.app` via `iconutil` so Finder list view shows correctly, plus a 256px Tk window icon).
 - Help → Check for Updates (GitHub Releases) with an in-app notification modal.
 - App version shown under the application title.
 - Fix NFC/NFD source path collision detection on macOS.
