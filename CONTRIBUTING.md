@@ -19,6 +19,12 @@ python3 -m unittest discover -s src/tests -v
 ./scripts/build-macos-app.sh
 ```
 
+The `.app` icon is `assets/app.icns`, built from `assets/rpc-logo-white.png`. The same script also writes the 256px Tk window icon:
+
+```bash
+python3 scripts/make-app-icns.py
+```
+
 Do not commit `dist/`, `build/`, `vendor/`, or `.venv/` (they are gitignored).
 
 ## Pull requests

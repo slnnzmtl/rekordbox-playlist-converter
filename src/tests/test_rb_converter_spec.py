@@ -60,5 +60,27 @@ class SpecUniversal2Tests(unittest.TestCase):
         self.assertIn("lipo not found", str(ctx.exception))
 
 
+class SpecAppIconTests(unittest.TestCase):
+    def test_bundle_uses_committed_icns_icon(self) -> None:
+        self.assertIn('app_icns = root / "assets" / "app.icns"', _SPEC)
+        self.assertIn("icon=str(app_icns)", _SPEC)
+        self.assertNotIn("icon=None", _SPEC)
+        icon = _REPO / "assets" / "app.icns"
+        self.assertTrue(icon.is_file(), "assets/app.icns must exist for the macOS app icon")
+        self.assertTrue(icon.read_bytes().startswith(b"icns"))
+
+    def test_spec_bundles_logo_png(self) -> None:
+        self.assertIn("rpc-logo-white.png", _SPEC)
+        logo = _REPO / "assets" / "rpc-logo-white.png"
+        self.assertTrue(logo.is_file(), "assets/rpc-logo-white.png must exist")
+        self.assertTrue(logo.read_bytes().startswith(b"\x89PNG"))
+
+    def test_spec_bundles_256px_window_icon(self) -> None:
+        self.assertIn("rpc-logo-white-256.png", _SPEC)
+        icon = _REPO / "assets" / "rpc-logo-white-256.png"
+        self.assertTrue(icon.is_file(), "assets/rpc-logo-white-256.png must exist")
+        self.assertTrue(icon.read_bytes().startswith(b"\x89PNG"))
+
+
 if __name__ == "__main__":
     unittest.main()

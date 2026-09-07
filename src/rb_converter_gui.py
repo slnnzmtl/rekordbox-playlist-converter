@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import threading
 import tkinter as tk
 import webbrowser
@@ -18,6 +19,32 @@ from version import __version__
 DEFAULT_WAV_DIR = Path.home() / "Documents" / "rekordbox-wav"
 DEFAULT_OUTPUT = DEFAULT_WAV_DIR / "rekordbox-wav-import.xml"
 SEARCH_PLACEHOLDER = "Search playlists…"
+APP_LOGO_NAME = "rpc-logo-white.png"
+APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
+
+
+def _bundled_asset(name: str) -> Path:
+    """Resolve a file under assets/ (bundled when frozen)."""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            bundled = Path(meipass) / "assets" / name
+            if bundled.is_file():
+                return bundled
+        beside = Path(sys.executable).resolve().parent / "assets" / name
+        if beside.is_file():
+            return beside
+    return Path(__file__).resolve().parent.parent / "assets" / name
+
+
+def app_logo_path() -> Path:
+    """Return the full-resolution app logo PNG."""
+    return _bundled_asset(APP_LOGO_NAME)
+
+
+def app_window_icon_path() -> Path:
+    """Return the 256px window-icon PNG used by Tk."""
+    return _bundled_asset(APP_WINDOW_ICON_NAME)
 
 
 def total_successful_conversions(stats_list: list[rb.ConvertStats]) -> int:
@@ -38,6 +65,7 @@ class ConverterApp:
         root.title("Rekordbox WAV Converter")
         root.minsize(560, 480)
         root.geometry("1120x720")
+        self.logo_image = self._apply_window_icon()
 
         self.xml_var = tk.StringVar()
         self.wav_dir_var = tk.StringVar(value=str(DEFAULT_WAV_DIR))
@@ -61,6 +89,17 @@ class ConverterApp:
         if not self.search_var.get():
             self._show_search_placeholder()
         self._start_update_check(manual=False)
+
+    def _apply_window_icon(self) -> tk.PhotoImage | None:
+        path = app_window_icon_path()
+        if not path.is_file():
+            return None
+        try:
+            image = tk.PhotoImage(file=str(path))
+            self.root.iconphoto(True, image)
+            return image
+        except tk.TclError:
+            return None
 
     def _build(self) -> None:
         self._build_menubar()

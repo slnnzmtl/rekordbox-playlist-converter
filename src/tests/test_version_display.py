@@ -15,7 +15,7 @@ from version import __version__
 
 class VersionDisplayTests(unittest.TestCase):
     def test_version_matches_current_release(self) -> None:
-        self.assertEqual(__version__, "1.0.0")
+        self.assertEqual(__version__, "1.1.0")
 
     def test_spec_bundle_version_matches_app_version(self) -> None:
         spec = (_REPO / "rb_converter.spec").read_text()
