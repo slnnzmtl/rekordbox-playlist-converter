@@ -60,6 +60,23 @@ class SpecUniversal2Tests(unittest.TestCase):
         self.assertIn("lipo not found", str(ctx.exception))
 
 
+def _icns_chunk_payloads(data: bytes) -> dict[bytes, bytes]:
+    if not data.startswith(b"icns") or len(data) < 8:
+        return {}
+    declared = int.from_bytes(data[4:8], "big")
+    end = min(declared, len(data))
+    payloads: dict[bytes, bytes] = {}
+    i = 8
+    while i + 8 <= end:
+        ostype = data[i : i + 4]
+        size = int.from_bytes(data[i + 4 : i + 8], "big")
+        if size < 8 or i + size > end:
+            break
+        payloads[ostype] = data[i + 8 : i + size]
+        i += size
+    return payloads
+
+
 class SpecAppIconTests(unittest.TestCase):
     def test_bundle_uses_committed_icns_icon(self) -> None:
         self.assertIn('app_icns = root / "assets" / "app.icns"', _SPEC)
@@ -68,6 +85,23 @@ class SpecAppIconTests(unittest.TestCase):
         icon = _REPO / "assets" / "app.icns"
         self.assertTrue(icon.is_file(), "assets/app.icns must exist for the macOS app icon")
         self.assertTrue(icon.read_bytes().startswith(b"icns"))
+
+    def test_app_icns_includes_finder_list_view_argb_icons(self) -> None:
+        """Finder list/column views need legacy ARGB icons (ic04/ic05).
+
+        PNG-only handmade .icns files often render as colorful static there.
+        """
+        icon = _REPO / "assets" / "app.icns"
+        payloads = _icns_chunk_payloads(icon.read_bytes())
+        types = sorted(payloads)
+        self.assertTrue(
+            b"ic04" in payloads and payloads[b"ic04"].startswith(b"ARGB"),
+            f"missing 16px ARGB icon (ic04); found {types}",
+        )
+        self.assertTrue(
+            b"ic05" in payloads and payloads[b"ic05"].startswith(b"ARGB"),
+            f"missing 32px ARGB icon (ic05); found {types}",
+        )
 
     def test_spec_bundles_logo_png(self) -> None:
         self.assertIn("rpc-logo-white.png", _SPEC)
