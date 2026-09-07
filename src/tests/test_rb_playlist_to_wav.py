@@ -280,10 +280,13 @@ class XmlFixtureTests(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
-        ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_valid_pcm_wav", return_value=False
+        with (
+            patch.object(rb, "require_tools", return_value=[]),
+            patch.object(rb, "run_ffprobe", side_effect=self._probe),
+            patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg),
+            patch.object(rb, "is_valid_pcm_wav", return_value=False),
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch("sys.stderr", new_callable=io.StringIO) as stderr,
         ):
             rc = rb.main(
                 [
@@ -298,6 +301,7 @@ class XmlFixtureTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(rc, 0)
+        self.assertIn("missing source file", stderr.getvalue())
         out = ET.parse(self.output).getroot()
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 2)
         pl = rb.find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
@@ -371,10 +375,13 @@ class XmlFixtureTests(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
-        ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_valid_pcm_wav", return_value=False
+        with (
+            patch.object(rb, "require_tools", return_value=[]),
+            patch.object(rb, "run_ffprobe", side_effect=self._probe),
+            patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg),
+            patch.object(rb, "is_valid_pcm_wav", return_value=False),
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch("sys.stderr", new_callable=io.StringIO),
         ):
             rc = rb.main(
                 [
@@ -471,8 +478,10 @@ class XmlFixtureTests(unittest.TestCase):
             patch.object(rb, "run_ffprobe", side_effect=self._probe),
             patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg),
             patch.object(rb, "is_valid_pcm_wav", return_value=False),
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch("sys.stderr", new_callable=io.StringIO),
         )
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             self.assertEqual(
                 rb.main(
                     [
@@ -502,7 +511,7 @@ class XmlFixtureTests(unittest.TestCase):
         slim = self.root / "slim.xml"
         ET.ElementTree(src).write(slim, encoding="UTF-8", xml_declaration=True)
 
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             self.assertEqual(
                 rb.main(
                     [
@@ -545,7 +554,7 @@ class XmlFixtureTests(unittest.TestCase):
         ET.SubElement(node, "TRACK", {"Key": "42"})
         grown = self.root / "grown.xml"
         ET.ElementTree(src).write(grown, encoding="UTF-8", xml_declaration=True)
-        with patches[0], patches[1], patches[2], patches[3]:
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
             self.assertEqual(
                 rb.main(
                     [
@@ -571,8 +580,11 @@ class XmlFixtureTests(unittest.TestCase):
 
     def test_invalid_existing_output_not_clobbered(self) -> None:
         self.output.write_text("not a rekordbox collection", encoding="utf-8")
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with (
+            patch.object(rb, "require_tools", return_value=[]),
+            patch.object(rb, "run_ffprobe", side_effect=self._probe),
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch("sys.stderr", new_callable=io.StringIO) as stderr,
         ):
             rc = rb.main(
                 [
@@ -587,6 +599,7 @@ class XmlFixtureTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(rc, 1)
+        self.assertIn("Invalid XML", stderr.getvalue())
         self.assertEqual(self.output.read_text(encoding="utf-8"), "not a rekordbox collection")
 
     def test_dry_run_writes_nothing(self) -> None:
@@ -689,6 +702,36 @@ class XmlFixtureTests(unittest.TestCase):
         args = rb.parse_args([])
         self.assertIsNone(args.xml)
         self.assertIsNone(args.playlist)
+
+
+class ShareOutputRootTests(unittest.TestCase):
+    def _plan(self, name: str) -> rb.Plan:
+        root = ET.fromstring("<DJ_PLAYLISTS/>")
+        return rb.Plan(
+            playlist_name=name,
+            wav_playlist_name=f"{name} [WAV]",
+            wav_dir=Path("/tmp/out"),
+            playlist_dir=Path("/tmp/out") / name,
+            output=Path("/tmp/out/import.xml"),
+            tracks=[],
+            unique=[],
+            source_root=ET.fromstring("<DJ_PLAYLISTS/>"),
+            output_root=root,
+            output_existed=False,
+        )
+
+    def test_share_output_root_noop_for_single_plan(self) -> None:
+        plan = self._plan("A")
+        original = plan.output_root
+        rb.share_output_root([plan])
+        self.assertIs(plan.output_root, original)
+
+    def test_share_output_root_unifies_multiple_plans(self) -> None:
+        first = self._plan("A")
+        second = self._plan("B")
+        self.assertIsNot(first.output_root, second.output_root)
+        rb.share_output_root([first, second])
+        self.assertIs(first.output_root, second.output_root)
 
 
 class ProgressTests(unittest.TestCase):
@@ -969,9 +1012,14 @@ class WizardHelperTests(unittest.TestCase):
         self.assertTrue(any("out of range" in e for e in errors))
 
     def test_main_requires_flags_when_non_tty(self) -> None:
-        with patch.object(rb.sys.stdin, "isatty", return_value=False):
+        with (
+            patch.object(rb.sys.stdin, "isatty", return_value=False),
+            patch("sys.stdout", new_callable=io.StringIO),
+            patch("sys.stderr", new_callable=io.StringIO) as stderr,
+        ):
             rc = rb.main([])
         self.assertEqual(rc, 2)
+        self.assertIn("--xml and --playlist are required", stderr.getvalue())
 
     def test_require_tools_mentions_brew(self) -> None:
         with patch.object(rb, "tool_path", return_value=None):
