@@ -1,5 +1,9 @@
 # Rekordbox playlist → WAV
 
+<p align="center">
+  <img src="assets/rpc-logo-white.png" alt="Rekordbox WAV Converter logo" width="160">
+</p>
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![CI](https://github.com/slnnzmtl/rekordbox-playlist-converter/actions/workflows/test.yml/badge.svg)](https://github.com/slnnzmtl/rekordbox-playlist-converter/actions/workflows/test.yml)
 

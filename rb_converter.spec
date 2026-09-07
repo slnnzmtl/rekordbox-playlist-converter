@@ -68,6 +68,15 @@ if not ffmpeg_license.is_file():
     )
 datas.append((str(ffmpeg_license), "third_party/ffmpeg"))
 
+logo_png = root / "assets" / "rpc-logo-white.png"
+if not logo_png.is_file():
+    raise SystemExit(f"Missing {logo_png}")
+datas.append((str(logo_png), "assets"))
+
+app_icns = root / "assets" / "app.icns"
+if not app_icns.is_file():
+    raise SystemExit(f"Missing {app_icns}")
+
 a = Analysis(
     [str(src / "rb_converter_gui.py")],
     pathex=[str(src)],
@@ -115,12 +124,12 @@ coll = COLLECT(
 app = BUNDLE(
     coll,
     name="Rekordbox WAV Converter.app",
-    icon=None,
+    icon=str(app_icns),
     bundle_identifier="io.github.slnnzmtl.rekordboxWavConverter",
     info_plist={
         "NSHighResolutionCapable": True,
         "CFBundleDisplayName": "Rekordbox WAV Converter",
-        "CFBundleShortVersionString": "1.0.0",
+        "CFBundleShortVersionString": "1.1.0",
         "NSDocumentsFolderUsageDescription": (
             "Writes converted WAV files and the Rekordbox import XML."
         ),

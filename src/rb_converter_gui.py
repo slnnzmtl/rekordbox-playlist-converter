@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import threading
 import tkinter as tk
 import webbrowser
@@ -18,6 +19,21 @@ from version import __version__
 DEFAULT_WAV_DIR = Path.home() / "Documents" / "rekordbox-wav"
 DEFAULT_OUTPUT = DEFAULT_WAV_DIR / "rekordbox-wav-import.xml"
 SEARCH_PLACEHOLDER = "Search playlists…"
+APP_LOGO_NAME = "rpc-logo-white.png"
+
+
+def app_logo_path() -> Path:
+    """Return the shipped app logo PNG (bundled when frozen)."""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            bundled = Path(meipass) / "assets" / APP_LOGO_NAME
+            if bundled.is_file():
+                return bundled
+        beside = Path(sys.executable).resolve().parent / "assets" / APP_LOGO_NAME
+        if beside.is_file():
+            return beside
+    return Path(__file__).resolve().parent.parent / "assets" / APP_LOGO_NAME
 
 
 def total_successful_conversions(stats_list: list[rb.ConvertStats]) -> int:
@@ -38,6 +54,7 @@ class ConverterApp:
         root.title("Rekordbox WAV Converter")
         root.minsize(560, 480)
         root.geometry("1120x720")
+        self.logo_image = self._apply_window_icon()
 
         self.xml_var = tk.StringVar()
         self.wav_dir_var = tk.StringVar(value=str(DEFAULT_WAV_DIR))
@@ -61,6 +78,17 @@ class ConverterApp:
         if not self.search_var.get():
             self._show_search_placeholder()
         self._start_update_check(manual=False)
+
+    def _apply_window_icon(self) -> tk.PhotoImage | None:
+        path = app_logo_path()
+        if not path.is_file():
+            return None
+        try:
+            image = tk.PhotoImage(file=str(path))
+            self.root.iconphoto(True, image)
+            return image
+        except tk.TclError:
+            return None
 
     def _build(self) -> None:
         self._build_menubar()

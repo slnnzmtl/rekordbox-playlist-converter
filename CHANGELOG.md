@@ -2,6 +2,7 @@
 
 ## 1.1.0
 
+- App icon from the new rpc-logo-white mark (macOS `.app` and GUI window).
 - Help → Check for Updates (GitHub Releases) with an in-app notification modal.
 - App version shown under the application title.
 - Fix NFC/NFD source path collision detection on macOS.
