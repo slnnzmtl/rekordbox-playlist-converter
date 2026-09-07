@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0
+
+- Help → Check for Updates (GitHub Releases) with an in-app notification modal.
+- App version shown under the application title.
+- Fix NFC/NFD source path collision detection on macOS.
+- Share a single output root when converting multiple playlists in one run.
+- Clearer GUI finish path when a run performs zero conversions.
+
 ## 1.0.0
 
 First public release.
