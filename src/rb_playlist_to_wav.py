@@ -924,6 +924,14 @@ def find_or_create_wav_playlist(output_root: ET.Element, name: str) -> tuple[ET.
     return node, False
 
 
+def share_output_root(plans: list[Plan]) -> None:
+    if len(plans) < 2:
+        return
+    shared = plans[0].output_root
+    for plan in plans[1:]:
+        plan.output_root = shared
+
+
 def rewrite_counts(output_root: ET.Element, wav_node: ET.Element) -> None:
     collection = output_root.find("COLLECTION")
     if collection is not None:

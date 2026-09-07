@@ -435,6 +435,7 @@ class ConverterApp:
                     skipped.extend(plan.warnings)
                     playlist_dirs.append(plan.playlist_dir)
 
+                rb.share_output_root(plans)
                 total = sum(len(plan.unique) for plan in plans)
                 done_base = 0
 

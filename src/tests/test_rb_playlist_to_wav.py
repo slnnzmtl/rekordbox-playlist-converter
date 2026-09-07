@@ -410,6 +410,57 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(len(pl), 1)
         self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2", "3"])
 
+    def test_prepare_all_then_apply_keeps_every_playlist(self) -> None:
+        """GUI prepares every playlist before writing; trees must be shared."""
+        src = rb.load_dj_playlists(self.xml_path)
+        playlists_root = src.find("PLAYLISTS/NODE")
+        assert playlists_root is not None
+        morning = ET.SubElement(
+            playlists_root,
+            "NODE",
+            {"Name": "Morning", "Type": "1", "KeyType": "0", "Entries": "1"},
+        )
+        ET.SubElement(morning, "TRACK", {"Key": "219211420"})
+        playlists_root.set("Count", "2")
+        ET.ElementTree(src).write(self.xml_path, encoding="UTF-8", xml_declaration=True)
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(rb, "require_tools", return_value=[]), patch.object(
+            rb, "run_ffprobe", side_effect=self._probe
+        ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_valid_pcm_wav", return_value=False
+        ):
+            plan_a, errors_a = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+            plan_b, errors_b = rb.prepare(
+                self.xml_path, "Morning", self.wav_dir, self.output
+            )
+            self.assertEqual(errors_a, [])
+            self.assertEqual(errors_b, [])
+            assert plan_a is not None and plan_b is not None
+            self.assertIsNot(plan_a.output_root, plan_b.output_root)
+            plans = [plan_a, plan_b]
+            rb.share_output_root(plans)
+            self.assertIs(plan_a.output_root, plan_b.output_root)
+            for plan in plans:
+                rb.convert_unique(plan, force=False, progress=False)
+                rb.apply_xml(plan)
+                rb.atomic_write_xml(plan.output_root, plan.output)
+
+        out = ET.parse(self.output).getroot()
+        names = sorted(name for _folder, name, _node in rb.iter_playlists(out))
+        self.assertEqual(names, ["Morning [WAV]", "Untitled Intelligent List [WAV]"])
+        root_node = out.find("PLAYLISTS/NODE")
+        assert root_node is not None
+        self.assertEqual(root_node.get("Count"), "2")
+        self.assertEqual(len(out.findall("COLLECTION/TRACK")), 4)
+        morning_pl = rb.find_playlists_by_name(out, "Morning [WAV]")[0]
+        self.assertEqual(len(morning_pl.findall("TRACK")), 1)
+
     def test_location_reuse_and_rerun_extends_playlist(self) -> None:
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
