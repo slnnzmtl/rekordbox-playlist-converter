@@ -19,7 +19,7 @@ python3 -m unittest discover -s src/tests -v
 ./scripts/build-macos-app.sh
 ```
 
-The `.app` icon is `assets/app.icns`, built from `assets/rpc-logo-white.png`. The generator clips the mark to a macOS squircle, writes the 256px Tk window icon, and uses `iconutil` on macOS (or a handmade PNG+ARGB `.icns` elsewhere) so Finder list view still gets `ic04`/`ic05`:
+The `.app` icon is `assets/app.icns`, built from `assets/rpc-logo-white.png`. The generator insets the mark to Apple's 824/1024 Dock grid, clips it to a macOS squircle, writes the 256px Tk window icon, and uses `iconutil` on macOS (or a handmade PNG+ARGB `.icns` elsewhere) so Finder list view still gets `ic04`/`ic05`:
 
 ```bash
 python3 scripts/make-app-icns.py

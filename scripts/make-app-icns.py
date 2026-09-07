@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Build macOS-style rounded assets from assets/rpc-logo-white.png.
 
-Applies an Apple-like squircle mask, writes the 256px Tk icon, and builds
-assets/app.icns (iconutil on macOS, handmade PNG+ARGB ICNS elsewhere).
+Insets artwork to Apple's 824/1024 icon grid, applies an Apple-like squircle
+mask, writes the 256px Tk icon, and builds assets/app.icns (iconutil on macOS,
+handmade PNG+ARGB ICNS elsewhere).
 """
 
 from __future__ import annotations
@@ -22,6 +23,10 @@ WINDOW_ICON_SIZE = 256
 
 # Superellipse exponent used by modern macOS / iOS app icons.
 _SQUIRCLE_N = 5.0
+
+# Apple's macOS app-icon grid (1024 template): artwork fills an 824 box.
+_ICON_GRID = 1024
+_ICON_ART_BOX = 824
 
 # Apple iconset filenames → pixel size (1x and @2x).
 _ICONSET_SIZES = (
@@ -164,6 +169,69 @@ def apply_macos_squircle(width: int, height: int, rgba: bytearray) -> bytearray:
     return out
 
 
+def art_grid_margin_px(size: int) -> int:
+    return int(round(size * (_ICON_GRID - _ICON_ART_BOX) / (2 * _ICON_GRID)))
+
+
+def has_macos_art_grid_margin(width: int, height: int, rgba: bytes) -> bool:
+    """True when mid-edge probes in the Apple grid margin are already transparent."""
+    if width < 16 or height < 16:
+        return False
+    margin = art_grid_margin_px(min(width, height))
+    if margin < 2:
+        return False
+    probe = max(1, margin // 2)
+
+    def alpha(x: int, y: int) -> int:
+        return rgba[(y * width + x) * 4 + 3]
+
+    return (
+        alpha(probe, height // 2) == 0
+        and alpha(width - 1 - probe, height // 2) == 0
+        and alpha(width // 2, probe) == 0
+        and alpha(width // 2, height - 1 - probe) == 0
+    )
+
+
+def fit_macos_icon_grid(width: int, height: int, rgba: bytearray) -> bytearray:
+    """Inset artwork to Apple's 824/1024 grid, then apply a squircle to the art box.
+
+    Full-bleed plates look oversized in the Dock next to stock macOS icons.
+    """
+    art_w = max(1, int(round(width * _ICON_ART_BOX / _ICON_GRID)))
+    art_h = max(1, int(round(height * _ICON_ART_BOX / _ICON_GRID)))
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "src.png"
+        art = Path(tmp) / "art.png"
+        write_png_rgba(src, width, height, bytes(rgba))
+        proc = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(src),
+                "-vf",
+                f"scale={art_w}:{art_h}:flags=lanczos,format=rgba",
+                str(art),
+            ],
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout).decode("utf-8", "replace")
+            raise SystemExit(f"ffmpeg failed inset scale: {err}")
+        aw, ah, art_rgba = read_png_rgba(art)
+    masked = apply_macos_squircle(aw, ah, art_rgba)
+    out = bytearray(width * height * 4)
+    ox = (width - aw) // 2
+    oy = (height - ah) // 2
+    for y in range(ah):
+        src_row = y * aw * 4
+        dst_row = ((oy + y) * width + ox) * 4
+        out[dst_row : dst_row + aw * 4] = masked[src_row : src_row + aw * 4]
+    return out
+
+
 def _packbits(src: bytes) -> bytes:
     out = bytearray()
     i = 0
@@ -205,6 +273,7 @@ def _icns_chunk(ostype: bytes, payload: bytes) -> bytes:
 
 
 def _png_at_size(src: Path, dest: Path, size: int) -> bytes:
+    # Source is already grid-inset + squircle; only rescale for each ICNS slot.
     proc = subprocess.run(
         [
             "ffmpeg",
@@ -221,8 +290,6 @@ def _png_at_size(src: Path, dest: Path, size: int) -> bytes:
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout).decode("utf-8", "replace")
         raise SystemExit(f"ffmpeg failed for {size}px: {err}")
-    width, height, rgba = read_png_rgba(dest)
-    write_png_rgba(dest, width, height, apply_macos_squircle(width, height, rgba))
     data = dest.read_bytes()
     if not data.startswith(b"\x89PNG"):
         raise SystemExit(f"{dest} is not a PNG")
@@ -252,9 +319,16 @@ def main() -> int:
         raise SystemExit("missing command: ffmpeg")
 
     width, height, rgba = read_png_rgba(SRC)
-    masked = apply_macos_squircle(width, height, rgba)
-    write_png_rgba(SRC, width, height, masked)
-    print(f"Wrote {SRC} ({SRC.stat().st_size} bytes, {width}x{height} squircle)")
+    if has_macos_art_grid_margin(width, height, rgba):
+        composed = bytearray(rgba)
+        print(f"Reusing inset {SRC.name} ({width}x{height})")
+    else:
+        composed = fit_macos_icon_grid(width, height, rgba)
+        write_png_rgba(SRC, width, height, composed)
+        print(
+            f"Wrote {SRC} ({SRC.stat().st_size} bytes, {width}x{height}, "
+            f"art box {_ICON_ART_BOX}/{_ICON_GRID})"
+        )
 
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)

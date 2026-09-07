@@ -2,7 +2,7 @@
 
 ## 1.1.0
 
-- App icon from the new rpc-logo-white mark, clipped to a macOS squircle (`.app` via `iconutil` or handmade ICNS, plus a 256px Tk window icon).
+- App icon from the new rpc-logo-white mark, inset to Apple's 824/1024 Dock grid and clipped to a macOS squircle (`.app` via `iconutil` or handmade ICNS, plus a 256px Tk window icon).
 - Help → Check for Updates (GitHub Releases) with an in-app notification modal.
 - App version shown under the application title.
 - Fix NFC/NFD source path collision detection on macOS.

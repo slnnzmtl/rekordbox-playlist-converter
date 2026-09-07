@@ -149,6 +149,27 @@ class AppLogoTests(unittest.TestCase):
         self.assertEqual(alpha(width - 1, height - 1), 0)
         self.assertEqual(alpha(width // 2, height // 2), 255)
 
+    def test_window_icon_follows_macos_art_grid_inset(self) -> None:
+        """Dock-sized icons use Apple's 824/1024 art box (~100px margin @1024).
+
+        Full-bleed squircles read oversized next to stock macOS Dock icons.
+        """
+        icon = Path(__file__).resolve().parents[2] / "assets" / "rpc-logo-white-256.png"
+        width, height, rgba = _png_rgba(icon)
+        self.assertEqual((width, height), (256, 256))
+
+        def alpha(x: int, y: int) -> int:
+            return rgba[(y * width + x) * 4 + 3]
+
+        # Margin is (1024-824)/(2*1024) of the canvas; probe halfway into it.
+        margin = int(round(width * (1024 - 824) / (2 * 1024)))
+        self.assertGreater(margin, 4)
+        probe = margin // 2
+        self.assertEqual(alpha(probe, height // 2), 0)
+        self.assertEqual(alpha(width - 1 - probe, height // 2), 0)
+        self.assertEqual(alpha(width // 2, probe), 0)
+        self.assertEqual(alpha(width // 2, height - 1 - probe), 0)
+
     def test_source_logo_has_macos_rounded_corners(self) -> None:
         logo = Path(__file__).resolve().parents[2] / "assets" / "rpc-logo-white.png"
         width, height, rgba = _png_rgba(logo)
@@ -160,6 +181,18 @@ class AppLogoTests(unittest.TestCase):
         self.assertEqual(alpha(0, 0), 0)
         self.assertEqual(alpha(width - 1, height - 1), 0)
         self.assertEqual(alpha(width // 2, height // 2), 255)
+
+    def test_source_logo_follows_macos_art_grid_inset(self) -> None:
+        logo = Path(__file__).resolve().parents[2] / "assets" / "rpc-logo-white.png"
+        width, height, rgba = _png_rgba(logo)
+        margin = int(round(width * (1024 - 824) / (2 * 1024)))
+        probe = margin // 2
+
+        def alpha(x: int, y: int) -> int:
+            return rgba[(y * width + x) * 4 + 3]
+
+        self.assertEqual(alpha(probe, height // 2), 0)
+        self.assertEqual(alpha(width // 2, probe), 0)
 
     def test_gui_applies_app_logo_as_window_icon(self) -> None:
         try:
