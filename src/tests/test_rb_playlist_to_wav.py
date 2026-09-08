@@ -283,7 +283,7 @@ class XmlFixtureTests(unittest.TestCase):
         with patch.object(rb, "require_tools", return_value=[]), patch.object(
             rb, "run_ffprobe", side_effect=self._probe
         ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_valid_pcm_wav", return_value=False
+            rb, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(
                 [
@@ -374,7 +374,7 @@ class XmlFixtureTests(unittest.TestCase):
         with patch.object(rb, "require_tools", return_value=[]), patch.object(
             rb, "run_ffprobe", side_effect=self._probe
         ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_valid_pcm_wav", return_value=False
+            rb, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(
                 [
@@ -431,7 +431,7 @@ class XmlFixtureTests(unittest.TestCase):
         with patch.object(rb, "require_tools", return_value=[]), patch.object(
             rb, "run_ffprobe", side_effect=self._probe
         ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_valid_pcm_wav", return_value=False
+            rb, "is_cdj_safe_wav", return_value=False
         ):
             plan_a, errors_a = rb.prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
@@ -470,7 +470,7 @@ class XmlFixtureTests(unittest.TestCase):
             patch.object(rb, "require_tools", return_value=[]),
             patch.object(rb, "run_ffprobe", side_effect=self._probe),
             patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg),
-            patch.object(rb, "is_valid_pcm_wav", return_value=False),
+            patch.object(rb, "is_cdj_safe_wav", return_value=False),
         )
         with patches[0], patches[1], patches[2], patches[3]:
             self.assertEqual(
@@ -612,7 +612,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertFalse(self.wav_dir.exists())
         self.assertIn("Untitled Intelligent List [WAV]", buf.getvalue())
 
-    def test_unknown_bit_depth_and_unsupported_format(self) -> None:
+    def test_unsupported_lossy_format_errors_flac_without_depth_ok(self) -> None:
         mp3 = self.music / "x.mp3"
         mp3.write_bytes(b"ID3")
         mystery = self.music / "odd.flac"
@@ -667,10 +667,16 @@ class XmlFixtureTests(unittest.TestCase):
         with patch.object(rb, "require_tools", return_value=[]), patch.object(
             rb, "run_ffprobe", side_effect=probe
         ):
-            _, errors = rb.prepare(path, "Bad", self.wav_dir, self.output)
+            plan, errors = rb.prepare(path, "Bad", self.wav_dir, self.output)
         joined = "\n".join(errors)
         self.assertIn("unsupported format", joined)
-        self.assertIn("unknown bit depth", joined)
+        self.assertNotIn("unknown bit depth", joined)
+        # FLAC without bits_per_raw_sample still plans as CDJ-safe 16-bit PCM.
+        assert plan is not None
+        flac_items = [t for t in plan.unique if t.source_path == mystery]
+        self.assertEqual(len(flac_items), 1)
+        self.assertEqual(flac_items[0].codec, "pcm_s16le")
+        self.assertFalse(flac_items[0].copy_wav)
 
     def test_playlist_dir_name_sanitizes_separators(self) -> None:
         self.assertEqual(rb.playlist_dir_name("Dark forest"), "Dark forest")
@@ -766,13 +772,13 @@ class ConvertSkipTests(unittest.TestCase):
                 output_root=ET.Element("DJ_PLAYLISTS"),
                 output_existed=False,
             )
-            with patch.object(rb, "is_valid_pcm_wav", return_value=True), patch.object(
+            with patch.object(rb, "is_cdj_safe_wav", return_value=True), patch.object(
                 rb, "run_ffmpeg"
             ) as ff:
                 stats = rb.convert_unique(plan, force=False)
             ff.assert_not_called()
             self.assertEqual(stats.skipped, 1)
-            with patch.object(rb, "is_valid_pcm_wav", return_value=True), patch.object(
+            with patch.object(rb, "is_cdj_safe_wav", return_value=True), patch.object(
                 rb, "run_ffmpeg"
             ) as ff:
                 stats = rb.convert_unique(plan, force=True)
@@ -815,7 +821,7 @@ class ConvertSkipTests(unittest.TestCase):
                 output_existed=False,
             )
             seen: list[tuple[int, int, str, str]] = []
-            with patch.object(rb, "is_valid_pcm_wav", return_value=True), patch.object(
+            with patch.object(rb, "is_cdj_safe_wav", return_value=True), patch.object(
                 rb, "run_ffmpeg"
             ) as ff:
                 stats = rb.convert_unique(

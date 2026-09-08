@@ -8,6 +8,7 @@ import copy
 import json
 import os
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,7 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Iterable
 from urllib.parse import quote, unquote
@@ -38,9 +40,84 @@ CODEC_BY_DEPTH = {
     32: "pcm_s32le",
 }
 
+CDJ_SAFE_SAMPLE_RATE = 44100
+CDJ_SAFE_CHANNELS = 2
+CDJ_SAFE_BIT_DEPTH = 16
+WAVE_FORMAT_PCM = 1
+CDJ_SAFE_CHUNK_IDS = ("fmt ", "data")
+
 
 class CliError(Exception):
     """Fatal error with a user-facing message."""
+
+
+@dataclass(frozen=True)
+class WavInfo:
+    format_tag: int
+    channels: int
+    sample_rate: int
+    bits_per_sample: int
+    fmt_chunk_size: int
+    chunk_ids: tuple[str, ...]
+
+
+def parse_wav_info(path: Path) -> WavInfo:
+    """Parse RIFF/WAVE chunk layout and the primary fmt fields."""
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise CliError(f"cannot read WAV: {path}: {exc}") from exc
+    if len(data) < 12 or data[0:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise CliError(f"not a RIFF/WAVE file: {path}")
+    chunk_ids: list[str] = []
+    format_tag = channels = sample_rate = bits_per_sample = fmt_chunk_size = 0
+    found_fmt = False
+    offset = 12
+    while offset + 8 <= len(data):
+        cid = data[offset : offset + 4]
+        size = struct.unpack_from("<I", data, offset + 4)[0]
+        payload_start = offset + 8
+        payload_end = payload_start + size
+        if payload_end > len(data):
+            raise CliError(f"truncated WAV chunk {cid!r} in {path}")
+        chunk_ids.append(cid.decode("ascii", errors="replace"))
+        if cid == b"fmt ":
+            if size < 16:
+                raise CliError(f"fmt chunk too small in {path}")
+            format_tag, channels, sample_rate, _byte_rate, _align, bits_per_sample = (
+                struct.unpack_from("<HHIIHH", data, payload_start)
+            )
+            fmt_chunk_size = size
+            found_fmt = True
+        offset = payload_end + (size % 2)
+    if not found_fmt:
+        raise CliError(f"WAV missing fmt chunk: {path}")
+    return WavInfo(
+        format_tag=format_tag,
+        channels=channels,
+        sample_rate=sample_rate,
+        bits_per_sample=bits_per_sample,
+        fmt_chunk_size=fmt_chunk_size,
+        chunk_ids=tuple(chunk_ids),
+    )
+
+
+def is_cdj_safe_wav(path: Path) -> bool:
+    """True if path is 16-bit / 44.1 kHz / stereo WAVE_FORMAT_PCM with fmt+data only."""
+    if not path.is_file():
+        return False
+    try:
+        info = parse_wav_info(path)
+    except CliError:
+        return False
+    return (
+        info.format_tag == WAVE_FORMAT_PCM
+        and info.fmt_chunk_size == 16
+        and info.channels == CDJ_SAFE_CHANNELS
+        and info.sample_rate == CDJ_SAFE_SAMPLE_RATE
+        and info.bits_per_sample == CDJ_SAFE_BIT_DEPTH
+        and info.chunk_ids == CDJ_SAFE_CHUNK_IDS
+    )
 
 
 class Progress:
@@ -123,7 +200,8 @@ class ConvertStats:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Convert a Rekordbox playlist to WAV and write import XML. "
+            "Convert a Rekordbox playlist to CDJ-safe WAV (16-bit / 44.1 kHz / "
+            "stereo PCM) and write import XML. "
             "Omit --xml/--playlist in a terminal for an interactive wizard."
         )
     )
@@ -645,25 +723,8 @@ def bit_depth_of_codec(codec: str) -> int:
     raise CliError(f"unknown codec {codec}")
 
 
-def is_valid_pcm_wav(path: Path) -> bool:
-    if not path.is_file():
-        return False
-    try:
-        probe = run_ffprobe(path)
-    except CliError:
-        return False
-    fmt = str((probe.get("format") or {}).get("format_name") or "")
-    if "wav" not in fmt.lower():
-        return False
-    stream = first_stream(probe)
-    if stream is None:
-        return False
-    codec = str(stream.get("codec_name") or "")
-    return codec.startswith("pcm")
-
-
 def classify_source(path: Path, stream: dict) -> tuple[str, bool]:
-    """Return (ffmpeg_codec or 'copy', is_copy)."""
+    """Return (ffmpeg_codec or 'copy', is_copy) for CDJ-safe 16-bit output."""
     ext = path.suffix.lower()
     codec_name = str(stream.get("codec_name") or "")
     if ext not in SUPPORTED_LOSSLESS_EXT:
@@ -671,11 +732,13 @@ def classify_source(path: Path, stream: dict) -> tuple[str, bool]:
     if ext in ALAC_EXT:
         if codec_name != "alac":
             raise CliError(f"unsupported format: {path} (expected ALAC)")
-        return pcm_codec_for_stream(stream), False
+        return "pcm_s16le", False
     if ext in WAV_EXT:
-        return "copy", True
+        if is_cdj_safe_wav(path):
+            return "copy", True
+        return "pcm_s16le", False
     if ext in {".flac", ".aiff", ".aif"}:
-        return pcm_codec_for_stream(stream), False
+        return "pcm_s16le", False
     raise CliError(f"unsupported format: {path}")
 
 
@@ -794,15 +857,15 @@ def build_plan(
         try:
             codec, is_copy = classify_source(item.source_path, stream)
         except CliError as exc:
-            msg = str(exc)
-            if msg == "unknown bit depth":
-                errors.append(f"unknown bit depth: {item.source_path}")
-            else:
-                errors.append(msg)
+            errors.append(str(exc))
             continue
         item.copy_wav = is_copy
         item.codec = None if is_copy else codec
         item.noop = is_copy and same_file(item.source_path, item.dest_path)
+        if (not is_copy) and same_file(item.source_path, item.dest_path):
+            errors.append(
+                f"refusing to convert in place (source is not CDJ-safe WAV): {item.source_path}"
+            )
 
     wav_playlist_name = f"{playlist_name}{WAV_SUFFIX}"
     plan = Plan(
@@ -823,7 +886,30 @@ def build_plan(
     return plan, []
 
 
+@lru_cache(maxsize=1)
+def ffmpeg_supports_soxr() -> bool:
+    exe = tool_path("ffmpeg")
+    if exe is None:
+        return False
+    try:
+        proc = subprocess.run(
+            [exe, "-hide_banner", "-filters"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return False
+    text = (proc.stdout or "") + (proc.stderr or "")
+    return "soxr" in text.lower()
+
+
 def run_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
+    """Encode dest as CDJ-safe 16-bit / 44.1 kHz / stereo WAVE_FORMAT_PCM.
+
+    ``codec`` is accepted for call-site compatibility; output is always pcm_s16le.
+    """
+    del codec  # CDJ-safe profile is fixed for this release (option B).
     exe = tool_path("ffmpeg")
     if exe is None:
         raise CliError(
@@ -835,10 +921,26 @@ def run_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
         "-i",
         str(source),
         "-vn",
-        "-c:a",
-        codec,
-        str(dest),
+        "-map_metadata",
+        "-1",
+        "-fflags",
+        "+bitexact",
+        "-flags:a",
+        "+bitexact",
     ]
+    if ffmpeg_supports_soxr():
+        cmd.extend(["-af", "aresample=resampler=soxr"])
+    cmd.extend(
+        [
+            "-ar",
+            str(CDJ_SAFE_SAMPLE_RATE),
+            "-ac",
+            str(CDJ_SAFE_CHANNELS),
+            "-c:a",
+            "pcm_s16le",
+            str(dest),
+        ]
+    )
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     except FileNotFoundError as exc:
@@ -848,6 +950,10 @@ def run_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
         raise CliError(f"ffmpeg conversion failed for {source}: {err}")
+    if not is_cdj_safe_wav(dest):
+        raise CliError(
+            f"ffmpeg produced a non-CDJ-safe WAV for {source}: {dest}"
+        )
 
 
 def convert_unique(
@@ -868,7 +974,7 @@ def convert_unique(
                 bar.update(i, "skip", name)
                 stats.skipped += 1
                 continue
-            if not force and is_valid_pcm_wav(item.dest_path):
+            if not force and is_cdj_safe_wav(item.dest_path):
                 bar.update(i, "skip", name)
                 stats.skipped += 1
                 continue
