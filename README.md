@@ -18,15 +18,17 @@ Pre-built **macOS app** (universal2): see [GitHub Releases](https://github.com/s
 ## What gets converted
 
 
-| You have                               | What happens                             |
-| -------------------------------------- | ---------------------------------------- |
-| FLAC (`.flac`)                         | New WAV (same sample rate and bit depth) |
-| Apple Lossless / ALAC (`.m4a`, `.caf`) | New WAV                                  |
-| AIFF (`.aiff`, `.aif`)                 | New WAV                                  |
-| WAV (`.wav`, `.wave`)                  | Copied as-is                             |
+| You have                               | What happens                                                                 |
+| -------------------------------------- | ---------------------------------------------------------------------------- |
+| FLAC (`.flac`)                         | New CDJ-safe WAV (16-bit / 44.1 kHz / stereo PCM)                             |
+| Apple Lossless / ALAC (`.m4a`, `.caf`) | New CDJ-safe WAV                                                             |
+| AIFF (`.aiff`, `.aif`)                 | New CDJ-safe WAV                                                             |
+| WAV (`.wav`, `.wave`)                  | Copied only if already CDJ-safe; otherwise re-encoded to the same profile    |
 
 
-MP3, AAC, and other lossy files are skipped with an error. Existing WAVs in the output folder are left alone unless you pass `--force`.
+MP3, AAC, and other lossy files are skipped with an error. Existing WAVs in the output folder are left alone when they already match the CDJ-safe profile, unless you pass `--force`.
+
+**CDJ-safe profile:** uncompressed stereo PCM, 44.1 kHz, 16-bit, `WAVE_FORMAT_PCM` (not extensible), with only `fmt ` and `data` chunks — so Pioneer/AlphaTheta players that reject `WAVE_FORMAT_EXTENSIBLE` stay happy.
 
 ## macOS app (no Terminal)
 

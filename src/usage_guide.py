@@ -37,13 +37,16 @@ export.
 4. Click Convert.
 
 What you get:
-• WAVs in <WAV folder>/<playlist name>/
+• CDJ-safe WAVs in <WAV folder>/<playlist name>/ (16-bit / 44.1 kHz / stereo
+  WAVE_FORMAT_PCM, fmt + data only — no extensible WAV headers)
 • Import file at the Import XML path
 • Playlist inside that file named {your playlist} [WAV]
 
-Your original files stay where they are. Re-running with the same import file
-adds new tracks; it does not replace the [WAV] playlist. Check “Overwrite
-existing WAV files” only if you want to rebuild WAVs that already exist.
+Your original files stay where they are. Source WAVs are copied only when they
+already match that profile; otherwise they are re-encoded. Re-running with the
+same import file adds new tracks; it does not replace the [WAV] playlist. Check
+“Overwrite existing WAV files” only if you want to rebuild WAVs that already
+exist and are CDJ-safe.
 
 ────────────────────────────────────────
 3. Bring it into Rekordbox

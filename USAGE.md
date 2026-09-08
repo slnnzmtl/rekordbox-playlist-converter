@@ -50,15 +50,15 @@ You will be asked to:
 2. **Choose playlists** — numbered list with folder and track count. Type `1`, `1,4,7`, or `all`.
 3. **Confirm folders** — defaults are `./output` for WAVs and `./output/rekordbox-wav-import.xml` for the import file.
 
-Then it converts (or copies existing WAVs) and prints how to import.
+Then it converts to CDJ-safe WAV (or copies a source that already matches) and prints how to import.
 
 **What you get**
 
-- WAVs in `output/<playlist name>/`
+- CDJ-safe WAVs in `output/<playlist name>/` — 16-bit / 44.1 kHz / stereo `WAVE_FORMAT_PCM` (`fmt ` + `data` only)
 - Import file `output/rekordbox-wav-import.xml`
 - Playlist inside that file named `{your playlist} [WAV]`
 
-Your original files stay where they are.
+Your original files stay where they are. Existing WAVs are re-encoded when they are not already CDJ-safe (for example extensible headers or 48 kHz).
 
 If two tracks would share a filename, nothing is written and you get an error. Re-running with the same import file **adds** new tracks; it does not replace the `[WAV]` playlist.
 
