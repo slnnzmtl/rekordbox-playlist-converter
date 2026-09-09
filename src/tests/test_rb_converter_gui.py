@@ -208,10 +208,10 @@ class AppLogoTests(unittest.TestCase):
             with patch(
                 "rb_converter_gui.check_for_update",
                 return_value=UpdateCheckResult(kind="up_to_date"),
-            ):
+            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
                 root = tk.Tk()
                 root.withdraw()
-                app = ConverterApp(root)
+                app = ConverterApp(root, documents_accessible=False)
             logo = getattr(app, "logo_image", None)
             self.assertIsNotNone(logo)
             self.assertEqual(int(logo.width()), 256)

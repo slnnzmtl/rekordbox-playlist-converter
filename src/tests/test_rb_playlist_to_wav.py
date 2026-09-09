@@ -853,6 +853,43 @@ class WizardHelperTests(unittest.TestCase):
                 [],
             )
 
+    def test_discover_xml_candidates_skips_documents_when_not_accessible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            documents = home / "Documents" / "rekordbox"
+            documents.mkdir(parents=True)
+            docs_xml = documents / "rekordbox.xml"
+            docs_xml.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
+            cwd = home / "cwd"
+            cwd.mkdir()
+            local = cwd / "rekordbox.xml"
+            local.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
+            found = rb.discover_xml_candidates(
+                cwd,
+                candidates=(
+                    Path("rekordbox.xml"),
+                    home / "Documents" / "rekordbox" / "rekordbox.xml",
+                ),
+                documents_accessible=False,
+                home=home,
+            )
+            self.assertEqual(found, [local.resolve()])
+
+    def test_discover_xml_candidates_includes_documents_when_accessible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            documents = home / "Documents" / "rekordbox"
+            documents.mkdir(parents=True)
+            docs_xml = documents / "rekordbox.xml"
+            docs_xml.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
+            found = rb.discover_xml_candidates(
+                home,
+                candidates=(home / "Documents" / "rekordbox" / "rekordbox.xml",),
+                documents_accessible=True,
+                home=home,
+            )
+            self.assertEqual(found, [docs_xml.resolve()])
+
     def test_iter_playlists_nested_folders(self) -> None:
         xml = """\
 <?xml version="1.0" encoding="UTF-8"?>

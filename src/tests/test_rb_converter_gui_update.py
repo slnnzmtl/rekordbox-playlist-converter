@@ -28,10 +28,10 @@ class HelpMenuUpdateTests(unittest.TestCase):
             with patch(
                 "rb_converter_gui.check_for_update",
                 return_value=UpdateCheckResult(kind="up_to_date"),
-            ):
+            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
                 root = tk.Tk()
                 root.withdraw()
-                app = ConverterApp(root)
+                app = ConverterApp(root, documents_accessible=False)
             menu = root.nametowidget(root["menu"])
             help_index = menu.index("Help")
             help_menu = menu.nametowidget(menu.entrycget(help_index, "menu"))
@@ -65,10 +65,10 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
             with patch(
                 "rb_converter_gui.check_for_update",
                 return_value=UpdateCheckResult(kind="update_available", release=release),
-            ):
+            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
                 root = tk.Tk()
                 root.withdraw()
-                app = ConverterApp(root)
+                app = ConverterApp(root, documents_accessible=False)
                 with patch.object(app, "_show_update_available") as show_modal:
                     app._handle_update_check_result(
                         UpdateCheckResult(kind="update_available", release=release),
@@ -105,10 +105,10 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
             with patch(
                 "rb_converter_gui.check_for_update",
                 return_value=UpdateCheckResult(kind="up_to_date"),
-            ):
+            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
                 root = tk.Tk()
                 root.withdraw()
-                app = ConverterApp(root)
+                app = ConverterApp(root, documents_accessible=False)
             with patch("rb_converter_gui.webbrowser.open") as open_url, patch.object(
                 tk.Toplevel, "wait_window"
             ):

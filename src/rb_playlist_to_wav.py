@@ -299,17 +299,38 @@ def playlist_track_count(node: ET.Element) -> int:
     return len(node.findall("TRACK"))
 
 
+def path_is_under_documents(path: Path, *, home: Path | None = None) -> bool:
+    """True if *path* is under ~/Documents without stating the filesystem."""
+    base = home if home is not None else Path.home()
+    documents = (base / "Documents").expanduser()
+    expanded = path.expanduser()
+    try:
+        expanded.relative_to(documents)
+        return True
+    except ValueError:
+        return False
+
+
 def discover_xml_candidates(
     cwd: Path | None = None,
     candidates: tuple[Path, ...] | None = None,
+    *,
+    documents_accessible: bool = True,
+    home: Path | None = None,
 ) -> list[Path]:
-    """Existing XML paths from the default probe list (deduped, absolute)."""
+    """Existing XML paths from the default probe list (deduped, absolute).
+
+    When *documents_accessible* is False, candidates under Documents are skipped
+    without stating them (avoids hanging on macOS TCC dismiss).
+    """
     base = cwd if cwd is not None else Path.cwd()
     probe = candidates if candidates is not None else XML_CANDIDATE_RELATIVE
     found: list[Path] = []
     seen: set[Path] = set()
     for rel in probe:
         path = rel if rel.is_absolute() else (base / rel)
+        if not documents_accessible and path_is_under_documents(path, home=home):
+            continue
         try:
             resolved = path.expanduser().resolve()
         except OSError:

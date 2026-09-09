@@ -4,12 +4,14 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _SRC = Path(__file__).resolve().parents[1]
 _REPO = Path(__file__).resolve().parents[2]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from update_check import UpdateCheckResult
 from version import __version__
 
 
@@ -32,9 +34,13 @@ class VersionDisplayTests(unittest.TestCase):
 
         root = None
         try:
-            root = tk.Tk()
-            root.withdraw()
-            app = ConverterApp(root)
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
             self.assertEqual(app.title_label.cget("text"), "Rekordbox WAV Converter")
             self.assertEqual(app.version_label.cget("text"), __version__)
             title_row = int(app.title_label.grid_info()["row"])

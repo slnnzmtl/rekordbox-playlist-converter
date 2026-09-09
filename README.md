@@ -30,7 +30,7 @@ MP3, AAC, and other lossy files are skipped with an error. Existing WAVs in the 
 
 ## macOS app (no Terminal)
 
-Download **Rekordbox WAV Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon). Defaults write to `~/Documents/rekordbox-wav` (a different folder than the CLI’s `./output`); the app remembers your last WAV folder and Import XML between launches. First launch: right-click → **Open** if Gatekeeper blocks it (ad-hoc signed). macOS may ask for Documents access when writing there.
+Download **Rekordbox WAV Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon). Defaults write to `~/Documents/rekordbox-wav` (a different folder than the CLI’s `./output`); the app remembers your last Rekordbox XML, WAV folder, and Import XML between launches. On launch it searches only your home folder (top-level files) and `~/Documents` for `*rekordbox*.xml` (skipping Desktop, Downloads, and iCloud) and auto-loads a single match, or asks you to choose if several are found. First launch: right-click → **Open** if Gatekeeper blocks it (ad-hoc signed). macOS may ask for Documents access on first open; if you decline, the app still opens and defaults to `~/rekordbox-wav` — Browse… can prompt again when you navigate into Documents.
 
 Import into Rekordbox the same way as the CLI — point **Imported Library** at the app’s import XML. In the app, **Help → How to Use…** (or the **How to use** button) covers the full Rekordbox click-path. Same steps are also in **[USAGE.md](USAGE.md)**.
 
