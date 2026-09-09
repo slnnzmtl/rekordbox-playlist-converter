@@ -28,12 +28,20 @@ export.
 2. Convert in this app
 ────────────────────────────────────────
 
-1. Choose the XML export (Browse… next to Rekordbox XML).
+1. Choose the XML export (Browse… next to Rekordbox XML). The app remembers
+   your last Rekordbox XML between launches. If none is saved, it searches
+   only your home folder (top-level files) and ~/Documents for filenames that
+   contain “rekordbox” and end in .xml (skipping Desktop, Downloads, and
+   iCloud). One match is loaded automatically; if several are found, pick from
+   a short list.
 2. Select one or more playlists (hold ⌃ to multi-select). Search filters the
    list.
 3. Confirm WAV folder and Import XML. Defaults are ~/Documents/rekordbox-wav
-   and ~/Documents/rekordbox-wav/rekordbox-wav-import.xml. The app remembers
-   your last-used WAV folder and Import XML between launches.
+   and ~/Documents/rekordbox-wav/rekordbox-wav-import.xml when Documents access
+   is allowed. If you decline that request, defaults are ~/rekordbox-wav and
+   ~/rekordbox-wav/rekordbox-wav-import.xml; Browse… can prompt again when you
+   open Documents. The app remembers your last-used WAV folder and Import XML
+   between launches.
 4. Click Convert.
 
 What you get:

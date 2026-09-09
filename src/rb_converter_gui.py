@@ -3,8 +3,28 @@
 
 from __future__ import annotations
 
-import subprocess
 import sys
+
+from gui_preferences import (
+    DOCUMENTS_PROBE_FLAG,
+    FIND_REKORDBOX_XML_FLAG,
+    default_output_paths,
+    find_rekordbox_xml_via_child,
+    load_preferences,
+    probe_path_via_child,
+    resolve_startup_paths,
+    run_documents_probe_cli,
+    run_find_rekordbox_xml_cli,
+    save_preferences,
+)
+
+# Same-app TCC child must not import tkinter (slow) or show a window.
+if DOCUMENTS_PROBE_FLAG in sys.argv:
+    raise SystemExit(run_documents_probe_cli(sys.argv[1:]))
+if FIND_REKORDBOX_XML_FLAG in sys.argv:
+    raise SystemExit(run_find_rekordbox_xml_cli(sys.argv[1:]))
+
+import subprocess
 import threading
 import tkinter as tk
 import webbrowser
@@ -12,13 +32,12 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import rb_playlist_to_wav as rb
-from gui_preferences import load_preferences, resolve_startup_paths, save_preferences
 from update_check import ReleaseInfo, UpdateCheckResult, check_for_update
 from usage_guide import USAGE_GUIDE
 from version import __version__
 
-DEFAULT_WAV_DIR = Path.home() / "Documents" / "rekordbox-wav"
-DEFAULT_OUTPUT = DEFAULT_WAV_DIR / "rekordbox-wav-import.xml"
+DEFAULT_WAV_DIR, DEFAULT_OUTPUT = default_output_paths(documents_accessible=True)
+FALLBACK_WAV_DIR, FALLBACK_OUTPUT = default_output_paths(documents_accessible=False)
 SEARCH_PLACEHOLDER = "Search playlists…"
 APP_LOGO_NAME = "rpc-logo-white.png"
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
@@ -61,7 +80,12 @@ def open_in_finder(path: Path) -> None:
 
 
 class ConverterApp:
-    def __init__(self, root: tk.Tk) -> None:
+    def __init__(
+        self,
+        root: tk.Tk,
+        *,
+        documents_accessible: bool | None = None,
+    ) -> None:
         self.root = root
         root.title("Rekordbox WAV Converter")
         root.minsize(560, 480)
@@ -71,10 +95,13 @@ class ConverterApp:
         self.xml_var = tk.StringVar()
         self.wav_dir_var = tk.StringVar()
         self.output_var = tk.StringVar()
+        # Start with home fallback so the window can appear before Documents TCC.
+        saved_prefs = load_preferences()
         startup_wav, startup_output = resolve_startup_paths(
-            load_preferences(),
-            default_wav_dir=DEFAULT_WAV_DIR,
-            default_import_xml=DEFAULT_OUTPUT,
+            saved_prefs,
+            default_wav_dir=FALLBACK_WAV_DIR,
+            default_import_xml=FALLBACK_OUTPUT,
+            documents_accessible=False,
         )
         self.wav_dir_var.set(str(startup_wav))
         self.output_var.set(str(startup_output))
@@ -87,6 +114,7 @@ class ConverterApp:
         self._update_modal_shown = False
         self._progress_target = 0.0
         self._progress_anim_id: str | None = None
+        self._documents_accessible = False
         # (folder, name, display label) for every playlist in the XML
         self._playlist_entries: list[tuple[str, str, str]] = []
         # Currently visible rows after search filter
@@ -96,7 +124,138 @@ class ConverterApp:
         self.search_var.trace_add("write", lambda *_: self._apply_playlist_filter())
         if not self.search_var.get():
             self._show_search_placeholder()
+        self._restore_saved_source_xml(saved_prefs)
+        if documents_accessible is None:
+            # Never list Documents in this process during init: macOS TCC
+            # blocks every thread until the user answers, so the window would
+            # never appear if they dismiss the dialog.
+            self.root.after_idle(self._start_documents_probe)
+        else:
+            self._apply_documents_access(documents_accessible)
         self._start_update_check(manual=False)
+
+    def _restore_saved_source_xml(self, saved: dict[str, str]) -> None:
+        raw = saved.get("source_xml", "").strip()
+        if not raw:
+            return
+        candidate = Path(raw).expanduser()
+        try:
+            if not candidate.is_file():
+                return
+        except OSError:
+            return
+        self._adopt_source_xml(candidate, persist=False)
+
+    def _adopt_source_xml(self, path: Path, *, persist: bool) -> None:
+        self.xml_var.set(str(path))
+        self._load_playlists()
+        if persist:
+            self._persist_output_preferences()
+
+    @property
+    def documents_accessible(self) -> bool:
+        return self._documents_accessible
+
+    def _start_documents_probe(self) -> None:
+        def worker() -> None:
+            # Search known filenames first so a dismissed Documents listing
+            # prompt cannot block XML autoload.
+            hits = find_rekordbox_xml_via_child(Path.home())
+            self._ui(lambda paths=hits: self._apply_xml_search_hits(paths))
+            accessible = probe_path_via_child(Path.home() / "Documents")
+            self._ui(lambda a=accessible: self._apply_documents_access(a))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _probe_documents_after_idle(self) -> None:
+        hits = find_rekordbox_xml_via_child(Path.home())
+        self._apply_xml_search_hits(hits)
+        accessible = probe_path_via_child(Path.home() / "Documents")
+        self._apply_documents_access(accessible)
+
+    def _apply_xml_search_hits(self, paths: list[Path]) -> None:
+        if self.xml_var.get().strip():
+            return
+        if len(paths) == 1:
+            self._adopt_source_xml(paths[0], persist=True)
+        elif len(paths) >= 2:
+            self._show_xml_choice_modal(paths)
+
+    def _show_xml_choice_modal(self, paths: list[Path]) -> None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Choose Rekordbox XML")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(True, True)
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.grid(row=0, column=0, sticky="nsew")
+        dlg.columnconfigure(0, weight=1)
+        dlg.rowconfigure(0, weight=1)
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            frm,
+            text="Several Rekordbox XML files were found. Choose one to load:",
+            wraplength=480,
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+
+        list_frame = ttk.Frame(frm)
+        list_frame.grid(row=1, column=0, sticky="nsew")
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+        listbox = tk.Listbox(list_frame, height=min(8, max(3, len(paths))), width=72)
+        scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=listbox.yview)
+        listbox.configure(yscrollcommand=scroll.set)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        for path in paths:
+            listbox.insert(tk.END, str(path))
+        listbox.selection_set(0)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=2, column=0, sticky="e", pady=(12, 0))
+
+        def close() -> None:
+            dlg.destroy()
+
+        def open_selected() -> None:
+            selection = listbox.curselection()
+            if not selection:
+                return
+            chosen = paths[int(selection[0])]
+            self._adopt_source_xml(chosen, persist=True)
+            close()
+
+        ttk.Button(btns, text="Cancel", command=close).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btns, text="Open", command=open_selected).pack(side=tk.LEFT)
+        listbox.bind("<Double-Button-1>", lambda _e: open_selected())
+        dlg.bind("<Return>", lambda _e: open_selected())
+        dlg.bind("<Escape>", lambda _e: close())
+        dlg.protocol("WM_DELETE_WINDOW", close)
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        dlg.wait_window()
+
+    def _apply_documents_access(self, override: bool | None) -> None:
+        if override is None:
+            accessible = False
+        else:
+            accessible = override
+        self._documents_accessible = accessible
+        if accessible:
+            docs_wav, docs_xml = default_output_paths(documents_accessible=True)
+            startup_wav, startup_output = resolve_startup_paths(
+                load_preferences(),
+                default_wav_dir=docs_wav,
+                default_import_xml=docs_xml,
+                documents_accessible=True,
+            )
+            self.wav_dir_var.set(str(startup_wav))
+            self.output_var.set(str(startup_output))
 
     def _apply_window_icon(self) -> tk.PhotoImage | None:
         path = app_window_icon_path()
@@ -193,11 +352,6 @@ class ConverterApp:
             row=8, column=0, columnspan=3, sticky="ew", **pad
         )
 
-        candidates = rb.discover_xml_candidates()
-        if candidates:
-            self.xml_var.set(str(candidates[0]))
-            self._load_playlists()
-
     def _build_menubar(self) -> None:
         menubar = tk.Menu(self.root)
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -274,38 +428,58 @@ class ConverterApp:
 
     def _persist_output_preferences(self) -> None:
         wav_dir, output = self._resolved_output_paths()
+        source_s = self.xml_var.get().strip()
+        source_xml = Path(source_s).expanduser() if source_s else None
         try:
-            save_preferences(wav_dir, output)
+            save_preferences(wav_dir, output, source_xml=source_xml)
         except OSError:
             pass
 
+    def _browse_initial_dir(self, preferred: Path | None = None) -> str:
+        """Pick a file-dialog start folder without stating Documents when denied."""
+        if preferred is not None:
+            preferred_s = str(preferred).strip()
+            if preferred_s:
+                preferred_path = Path(preferred_s).expanduser()
+                if self._documents_accessible or not rb.path_is_under_documents(
+                    preferred_path
+                ):
+                    return str(preferred_path)
+        if self._documents_accessible:
+            return str(Path.home() / "Documents")
+        return str(Path.home())
+
     def _browse_xml(self) -> None:
-        initial = Path.home() / "Documents"
         path = filedialog.askopenfilename(
             title="Rekordbox XML export",
-            initialdir=str(initial) if initial.is_dir() else str(Path.home()),
+            initialdir=self._browse_initial_dir(Path.home() / "Documents"),
             filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
         )
         if path:
-            self.xml_var.set(path)
-            self._load_playlists()
+            self._adopt_source_xml(Path(path), persist=True)
 
     def _browse_wav_dir(self) -> None:
+        current = self.wav_dir_var.get().strip()
         path = filedialog.askdirectory(
             title="WAV output folder",
-            initialdir=self.wav_dir_var.get() or str(DEFAULT_WAV_DIR),
+            initialdir=self._browse_initial_dir(
+                Path(current) if current else FALLBACK_WAV_DIR
+            ),
         )
         if path:
             self.wav_dir_var.set(path)
             self._persist_output_preferences()
 
     def _browse_output(self) -> None:
+        current = self.output_var.get().strip()
+        if current:
+            preferred = Path(current).expanduser().parent
+        else:
+            preferred = FALLBACK_WAV_DIR
         path = filedialog.asksaveasfilename(
             title="Import XML",
-            initialfile=Path(self.output_var.get()).name or "rekordbox-wav-import.xml",
-            initialdir=str(Path(self.output_var.get()).parent)
-            if self.output_var.get()
-            else str(DEFAULT_WAV_DIR),
+            initialfile=Path(current).name if current else "rekordbox-wav-import.xml",
+            initialdir=self._browse_initial_dir(preferred),
             defaultextension=".xml",
             filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
         )
