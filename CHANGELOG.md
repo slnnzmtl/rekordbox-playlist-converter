@@ -6,6 +6,7 @@
 - Stop copying source WAVs as-is unless they already match that profile; re-encode extensible, non-44.1 kHz, non-stereo, or non-16-bit WAVs.
 - Skip existing dest files only when they are already CDJ-safe (not merely any PCM WAV).
 - Refuse in-place conversion when a playlist source path is the same as the dest and the file is not CDJ-safe (originals stay untouched).
+- GUI remembers the last Rekordbox XML and limits auto-search to home plus Documents (with the existing Documents-access fallback).
 
 ## 1.1.1
 
