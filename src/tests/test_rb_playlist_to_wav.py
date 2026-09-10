@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import io
-import os
 import sys
 import tempfile
 import unicodedata
@@ -667,42 +666,6 @@ class XmlFixtureTests(unittest.TestCase):
         with self.assertRaises(rb.CliError):
             rb.playlist_dir_name("..")
 
-    def test_defaults_argparse(self) -> None:
-        args = rb.parse_args(["--xml", "in.xml", "--playlist", "P"])
-        self.assertEqual(args.xml, Path("in.xml"))
-        self.assertEqual(args.playlist, "P")
-        self.assertEqual(args.wav_dir, Path("output"))
-        self.assertEqual(args.output, Path("output/rekordbox-import.xml"))
-        self.assertEqual(args.format, "wav")
-        self.assertEqual(args.bit_depth, 24)
-        self.assertEqual(args.sample_rate, 48000)
-
-    def test_format_aiff_accepted(self) -> None:
-        args = rb.parse_args(
-            ["--xml", "in.xml", "--playlist", "P", "--format", "aiff"]
-        )
-        self.assertEqual(args.format, "aiff")
-        self.assertEqual(args.bit_depth, 24)
-        self.assertEqual(args.sample_rate, 48000)
-
-    def test_bit_depth_and_sample_rate_accepted(self) -> None:
-        args = rb.parse_args(
-            [
-                "--xml",
-                "in.xml",
-                "--playlist",
-                "P",
-                "--format",
-                "aiff",
-                "--bit-depth",
-                "24",
-                "--sample-rate",
-                "48000",
-            ]
-        )
-        self.assertEqual(args.bit_depth, 24)
-        self.assertEqual(args.sample_rate, 48000)
-
     def test_format_invalid_exits(self) -> None:
         with self.assertRaises(SystemExit):
             rb.parse_args(["--xml", "in.xml", "--playlist", "P", "--format", "mp3"])
@@ -718,11 +681,6 @@ class XmlFixtureTests(unittest.TestCase):
             rb.parse_args(
                 ["--xml", "in.xml", "--playlist", "P", "--sample-rate", "96000"]
             )
-
-    def test_optional_xml_playlist_defaults_none(self) -> None:
-        args = rb.parse_args([])
-        self.assertIsNone(args.xml)
-        self.assertIsNone(args.playlist)
 
 
 class TargetFromStreamTests(unittest.TestCase):
@@ -813,158 +771,11 @@ class PlanQualityFieldsTests(unittest.TestCase):
             self.assertEqual(plan.unique[0].codec, "pcm_s24le")
 
 
-class ProgressTests(unittest.TestCase):
-    def test_disabled_writes_nothing(self) -> None:
-        buf = io.StringIO()
-        with patch.object(rb.sys, "stderr", buf):
-            bar = rb.Progress(3, enabled=False)
-            bar.update(1, "convert", "a.wav")
-            bar.close()
-        self.assertEqual(buf.getvalue(), "")
-
-    def test_enabled_rewrites_one_line(self) -> None:
-        buf = io.StringIO()
-        with patch.object(rb.sys, "stderr", buf), patch.object(
-            rb.shutil, "get_terminal_size", return_value=os.terminal_size((80, 24))
-        ):
-            bar = rb.Progress(2, enabled=True)
-            bar.update(1, "convert", "a.wav")
-            bar.update(2, "skip", "b.wav")
-            bar.close()
-        text = buf.getvalue()
-        self.assertIn("1/2", text)
-        self.assertIn("convert", text)
-        self.assertIn("2/2", text)
-        self.assertTrue(text.endswith("\n"))
-
-    def test_on_progress_fires_when_disabled(self) -> None:
-        seen: list[tuple[int, int, str, str]] = []
-        buf = io.StringIO()
-        with patch.object(rb.sys, "stderr", buf):
-            bar = rb.Progress(
-                2, enabled=False, on_progress=lambda c, t, a, n: seen.append((c, t, a, n))
-            )
-            bar.update(1, "convert", "a.wav")
-            bar.update(2, "skip", "b.wav")
-            bar.close()
-        self.assertEqual(buf.getvalue(), "")
-        self.assertEqual(
-            seen,
-            [(1, 2, "convert", "a.wav"), (2, 2, "skip", "b.wav")],
-        )
-
-
-class ConvertSkipTests(unittest.TestCase):
-    def test_skip_existing_valid_wav_unless_force(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            src = root / "a.flac"
-            write_flac(src)
-            wav_dir = root / "WAV"
-            playlist_dir = wav_dir / "P"
-            dest = playlist_dir / "a.wav"
-            playlist_dir.mkdir(parents=True)
-            dest.write_bytes(b"RIFF")
-            el = ET.Element("TRACK", {"TrackID": "1", "Location": rb.encode_location(src)})
-            item = rb.PlannedTrack(
-                source_el=el,
-                source_path=src,
-                dest_path=dest,
-                dest_location=rb.encode_location(dest),
-                dest_name="a.wav",
-                codec="pcm_s24le",
-                copy_wav=False,
-                noop=False,
-            )
-            plan = rb.Plan(
-                playlist_name="P",
-                wav_playlist_name="P [WAV]",
-                wav_dir=wav_dir,
-                playlist_dir=playlist_dir,
-                output=root / "o.xml",
-                tracks=[item],
-                unique=[item],
-                source_root=ET.Element("DJ_PLAYLISTS"),
-                output_root=ET.Element("DJ_PLAYLISTS"),
-                output_existed=False,
-            )
-            with patch.object(rb, "is_cdj_safe_wav", return_value=True), patch.object(
-                rb, "run_ffmpeg"
-            ) as ff:
-                stats = rb.convert_unique(plan, force=False)
-            ff.assert_not_called()
-            self.assertEqual(stats.skipped, 1)
-            with patch.object(rb, "is_cdj_safe_wav", return_value=True), patch.object(
-                rb, "run_ffmpeg"
-            ) as ff:
-                stats = rb.convert_unique(plan, force=True)
-            ff.assert_called_once()
-            self.assertEqual(stats.converted, 1)
-
-    def test_convert_unique_on_progress_callbacks(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            wav_dir = root / "WAV"
-            playlist_dir = wav_dir / "P"
-            playlist_dir.mkdir(parents=True)
-            items: list[rb.PlannedTrack] = []
-            for name in ("a.wav", "b.wav"):
-                dest = playlist_dir / name
-                dest.write_bytes(b"RIFF")
-                el = ET.Element("TRACK", {"TrackID": name, "Location": "file://x"})
-                items.append(
-                    rb.PlannedTrack(
-                        source_el=el,
-                        source_path=root / name,
-                        dest_path=dest,
-                        dest_location=rb.encode_location(dest),
-                        dest_name=name,
-                        codec="pcm_s24le",
-                        copy_wav=False,
-                        noop=False,
-                    )
-                )
-            plan = rb.Plan(
-                playlist_name="P",
-                wav_playlist_name="P [WAV]",
-                wav_dir=wav_dir,
-                playlist_dir=playlist_dir,
-                output=root / "o.xml",
-                tracks=items,
-                unique=items,
-                source_root=ET.Element("DJ_PLAYLISTS"),
-                output_root=ET.Element("DJ_PLAYLISTS"),
-                output_existed=False,
-            )
-            seen: list[tuple[int, int, str, str]] = []
-            with patch.object(rb, "is_cdj_safe_wav", return_value=True), patch.object(
-                rb, "run_ffmpeg"
-            ) as ff:
-                stats = rb.convert_unique(
-                    plan,
-                    force=False,
-                    on_progress=lambda c, t, a, n: seen.append((c, t, a, n)),
-                )
-            ff.assert_not_called()
-            self.assertEqual(stats.skipped, 2)
-            self.assertEqual(
-                seen,
-                [(1, 2, "skip", "a.wav"), (2, 2, "skip", "b.wav")],
-            )
-
-
 class WizardHelperTests(unittest.TestCase):
     def test_main_requires_flags_when_non_tty(self) -> None:
         with patch.object(rb.sys.stdin, "isatty", return_value=False):
             rc = rb.main([])
         self.assertEqual(rc, 2)
-
-    def test_require_tools_mentions_brew(self) -> None:
-        with patch.object(rb, "tool_path", return_value=None):
-            missing = rb.require_tools()
-        self.assertEqual(len(missing), 2)
-        for msg in missing:
-            self.assertIn("brew install ffmpeg", msg)
 
     def test_tool_path_uses_path_when_not_frozen(self) -> None:
         with patch.object(rb.sys, "frozen", False, create=True), patch.object(

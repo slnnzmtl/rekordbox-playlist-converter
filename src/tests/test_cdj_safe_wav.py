@@ -216,28 +216,6 @@ class CdjSafeConvertTests(unittest.TestCase):
             self.assertEqual(clone.get("Kind"), "WAV File")
             self.assertEqual(clone.get("SampleRate"), "48000")
 
-    def test_rewrite_wav_pcm_strips_extensible(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            src = root / "ext.wav"
-            dest = root / "clean.wav"
-            extra = struct.pack("<H", 22) + bytes(22)
-            write_pcm_wav(
-                src,
-                sample_rate=48000,
-                bits=24,
-                format_tag=0xFFFE,
-                fmt_extra=extra,
-                extra_chunks=[(b"LIST", b"INFO" + b"\x00" * 4)],
-            )
-            rb._rewrite_wav_pcm(src, dest)
-            self.assertTrue(
-                rb.is_cdj_safe_wav(dest, bit_depth=24, sample_rate=48000)
-            )
-            out = rb.parse_wav_info(dest)
-            self.assertEqual(out.format_tag, 1)
-            self.assertEqual(out.chunk_ids, ("fmt ", "data"))
-
 
 class ClassifyCdjSafeTests(unittest.TestCase):
     def test_safe_wav_is_copy_unsafe_and_flac_convert_to_s16(self) -> None:

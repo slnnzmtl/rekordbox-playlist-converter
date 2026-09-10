@@ -74,7 +74,7 @@ Write one sentence: the observable behavior and the seam you will test. If the r
 ### 1. RED — failing test only
 
 - Edit only `src/tests/test_*.py` (add a new test module if the behavior does not belong in an existing file).
-- Match style in `src/tests/test_rb_playlist_to_wav.py`, `test_rb_converter_gui.py`, `test_version_display.py`.
+- Match style in `src/tests/test_rb_playlist_to_wav.py`, `test_rb_converter_gui.py`, `test_update_check.py`.
 - Run the new test first, then discover:
 
 ```bash
@@ -106,7 +106,7 @@ Targeted (faster while iterating):
 ```bash
 python3 -m unittest src.tests.test_rb_playlist_to_wav -v
 python3 -m unittest src.tests.test_rb_converter_gui -v
-python3 -m unittest src.tests.test_version_display -v
+python3 -m unittest src.tests.test_update_check -v
 python3 -m unittest src.tests.test_rb_converter_spec -v
 ```
 

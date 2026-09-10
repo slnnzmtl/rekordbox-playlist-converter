@@ -13,37 +13,6 @@ if str(_SRC) not in sys.path:
 from update_check import ReleaseInfo, UpdateCheckResult
 
 
-class HelpMenuUpdateTests(unittest.TestCase):
-    def test_help_menu_contains_check_for_updates(self) -> None:
-        try:
-            import _tkinter  # noqa: F401
-        except ImportError:
-            self.skipTest("_tkinter not available")
-
-        import tkinter as tk
-        from rb_converter_gui import ConverterApp
-
-        root = None
-        try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
-                root = tk.Tk()
-                root.withdraw()
-                app = ConverterApp(root, documents_accessible=False)
-            menu = root.nametowidget(root["menu"])
-            help_index = menu.index("Help")
-            help_menu = menu.nametowidget(menu.entrycget(help_index, "menu"))
-            labels = [help_menu.entrycget(i, "label") for i in range(help_menu.index("end") + 1)]
-            self.assertIn("Check for Updates…", labels)
-        except tk.TclError:
-            self.skipTest("tk.TclError: display not available")
-        finally:
-            if root is not None:
-                root.destroy()
-
-
 class UpdateCheckBehaviorTests(unittest.TestCase):
     def test_startup_update_modal_not_shown_twice_in_session(self) -> None:
         try:

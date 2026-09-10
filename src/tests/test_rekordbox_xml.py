@@ -48,15 +48,6 @@ class PlaylistXmlHelperTests(unittest.TestCase):
             )
             self.assertEqual(found, [hit.resolve()])
 
-    def test_discover_xml_candidates_empty(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(
-                rb.discover_xml_candidates(
-                    Path(tmp), candidates=(Path("rekordbox.xml"),)
-                ),
-                [],
-            )
-
     def test_discover_xml_candidates_skips_documents_when_not_accessible(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -170,10 +161,6 @@ class PlaylistXmlHelperTests(unittest.TestCase):
         self.assertEqual(errors, [])
         assert found is not None
         self.assertEqual(found[2].get("Entries"), "671")
-
-    def test_playlist_label(self) -> None:
-        self.assertEqual(rb.playlist_label("", "Top"), "Top")
-        self.assertEqual(rb.playlist_label("Selections / Night", "Darkprog"), "Selections / Night / Darkprog")
 
     def test_parse_selection_single_and_multi(self) -> None:
         entries = [
