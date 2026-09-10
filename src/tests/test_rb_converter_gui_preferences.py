@@ -678,11 +678,11 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
                 self.assertEqual(
                     BIT_DEPTH_24_TOOLTIP,
-                    "16-bit tracks are not upconverted to 24-bit.",
+                    "This is a maximum, not a target. 16-bit tracks are not upconverted to 24-bit.",
                 )
                 self.assertEqual(
                     SAMPLE_RATE_48_TOOLTIP,
-                    "44.1 kHz tracks are not upconverted to 48 kHz.",
+                    "This is a maximum, not a target. 44.1 kHz tracks are not upconverted to 48 kHz.",
                 )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")

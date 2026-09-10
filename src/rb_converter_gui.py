@@ -42,8 +42,14 @@ FALLBACK_WAV_DIR, FALLBACK_OUTPUT = default_output_paths(documents_accessible=Fa
 SEARCH_PLACEHOLDER = "Search playlists…"
 APP_LOGO_NAME = "rpc-logo-white.png"
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
-BIT_DEPTH_24_TOOLTIP = "16-bit tracks are not upconverted to 24-bit."
-SAMPLE_RATE_48_TOOLTIP = "44.1 kHz tracks are not upconverted to 48 kHz."
+BIT_DEPTH_24_TOOLTIP = (
+    "This is a maximum, not a target. "
+    "16-bit tracks are not upconverted to 24-bit."
+)
+SAMPLE_RATE_48_TOOLTIP = (
+    "This is a maximum, not a target. "
+    "44.1 kHz tracks are not upconverted to 48 kHz."
+)
 BIT_DEPTH_LABELS = {"16": "16Bit", "24": "24Bit"}
 SAMPLE_RATE_LABELS = {"44100": "44.1KHz", "48000": "48KHz"}
 BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items()}
