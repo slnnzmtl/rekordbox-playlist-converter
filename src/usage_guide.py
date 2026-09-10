@@ -44,9 +44,9 @@ export.
    open Documents. The app remembers your last-used output folder and Import XML
    between launches.
 4. Choose Format: WAV or AIFF.
-5. Choose max bit depth (16 or 24) and max sample rate (44.1 or 48 kHz).
+5. Choose Sampling format (bit depth 16Bit/24Bit and rate 44.1KHz/48KHz).
    These are maxima, not targets: 16-bit tracks stay 16-bit; 44.1 kHz tracks
-   stay 44.1 kHz. Defaults are 24-bit / 48 kHz.
+   stay 44.1 kHz. Defaults are 24Bit / 48KHz.
 6. Click Convert.
 
 What you get:

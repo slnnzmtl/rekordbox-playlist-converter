@@ -637,6 +637,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
+        from tkinter import ttk
         from rb_converter_gui import ConverterApp
 
         root = None
@@ -656,6 +657,20 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 self.assertEqual(app.sample_rate_var.get(), "48000")
                 self.assertFalse(hasattr(app, "quality_caption"))
                 self.assertFalse(hasattr(app, "force_var"))
+                self.assertIsInstance(app.bit_depth_combo, ttk.Combobox)
+                self.assertIsInstance(app.sample_rate_combo, ttk.Combobox)
+                self.assertEqual(str(app.bit_depth_combo.cget("state")), "readonly")
+                self.assertEqual(str(app.sample_rate_combo.cget("state")), "readonly")
+                self.assertEqual(
+                    list(app.bit_depth_combo.cget("values")),
+                    ["16Bit", "24Bit"],
+                )
+                self.assertEqual(
+                    list(app.sample_rate_combo.cget("values")),
+                    ["44.1KHz", "48KHz"],
+                )
+                self.assertEqual(app.bit_depth_combo.get(), "24Bit")
+                self.assertEqual(app.sample_rate_combo.get(), "48KHz")
                 from rb_converter_gui import (
                     BIT_DEPTH_24_TOOLTIP,
                     SAMPLE_RATE_48_TOOLTIP,
@@ -663,11 +678,11 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
                 self.assertEqual(
                     BIT_DEPTH_24_TOOLTIP,
-                    "16-bit tracks are not upconverted to 24-bit.",
+                    "This is a maximum, not a target. 16-bit tracks are not upconverted to 24-bit.",
                 )
                 self.assertEqual(
                     SAMPLE_RATE_48_TOOLTIP,
-                    "44.1 kHz tracks are not upconverted to 48 kHz.",
+                    "This is a maximum, not a target. 44.1 kHz tracks are not upconverted to 48 kHz.",
                 )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")

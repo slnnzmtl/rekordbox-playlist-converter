@@ -4,7 +4,7 @@
 
 Intended for **1.3.0** (app version remains 1.2.0 until release).
 
-- Selectable output quality: `--format wav|aiff`, `--bit-depth 16|24`, `--sample-rate 44100|48000` (GUI radios + prefs). Defaults are WAV / **24** / **48000**.
+- Selectable output quality: `--format wav|aiff`, `--bit-depth 16|24`, `--sample-rate 44100|48000` (GUI Sampling format dropdowns + prefs). Defaults are WAV / **24** / **48000**.
 - Quality is a **ceiling**: never upconvert 16-bit to 24-bit or 44.1 kHz to 48 kHz; preserve source when it fits; reduce only when over the cap.
 - WAV stays stripped `WAVE_FORMAT_PCM` with `fmt `+`data` only (including 24-bit); AIFF stays `FORM`/`AIFF` with ID3v2.3 from the XML and optional cover.
 - Skip dest only when it matches the **effective** quality and canonical container (AIFF also ID3/art), so raising 16/44.1 → 24/48 rebuilds previously reduced files when the source is higher quality.

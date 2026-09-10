@@ -44,6 +44,10 @@ APP_LOGO_NAME = "rpc-logo-white.png"
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
 BIT_DEPTH_24_TOOLTIP = "16-bit tracks are not upconverted to 24-bit."
 SAMPLE_RATE_48_TOOLTIP = "44.1 kHz tracks are not upconverted to 48 kHz."
+BIT_DEPTH_LABELS = {"16": "16Bit", "24": "24Bit"}
+SAMPLE_RATE_LABELS = {"44100": "44.1KHz", "48000": "48KHz"}
+BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items()}
+SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
 
 
 class _HoverTooltip:
@@ -399,24 +403,35 @@ class ConverterApp:
 
         quality = ttk.Frame(frm)
         quality.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
-        ttk.Label(quality, text="Max bit depth").pack(side=tk.LEFT)
-        ttk.Radiobutton(
-            quality, text="16-bit", variable=self.bit_depth_var, value="16"
-        ).pack(side=tk.LEFT, padx=(8, 0))
-        depth24 = ttk.Radiobutton(
-            quality, text="24-bit", variable=self.bit_depth_var, value="24"
+        ttk.Label(quality, text="Sampling format").pack(side=tk.LEFT)
+        self.bit_depth_combo = ttk.Combobox(
+            quality,
+            values=list(BIT_DEPTH_LABELS.values()),
+            state="readonly",
+            width=8,
         )
-        depth24.pack(side=tk.LEFT, padx=(4, 16))
-        _HoverTooltip(depth24, BIT_DEPTH_24_TOOLTIP)
-        ttk.Label(quality, text="Max sample rate").pack(side=tk.LEFT)
-        ttk.Radiobutton(
-            quality, text="44.1 kHz", variable=self.sample_rate_var, value="44100"
-        ).pack(side=tk.LEFT, padx=(8, 0))
-        rate48 = ttk.Radiobutton(
-            quality, text="48 kHz", variable=self.sample_rate_var, value="48000"
+        self.bit_depth_combo.set(
+            BIT_DEPTH_LABELS.get(self.bit_depth_var.get(), "24Bit")
         )
-        rate48.pack(side=tk.LEFT, padx=(4, 0))
-        _HoverTooltip(rate48, SAMPLE_RATE_48_TOOLTIP)
+        self.bit_depth_combo.pack(side=tk.LEFT, padx=(8, 0))
+        self.bit_depth_combo.bind(
+            "<<ComboboxSelected>>", self._on_bit_depth_selected, add="+"
+        )
+        _HoverTooltip(self.bit_depth_combo, BIT_DEPTH_24_TOOLTIP)
+        self.sample_rate_combo = ttk.Combobox(
+            quality,
+            values=list(SAMPLE_RATE_LABELS.values()),
+            state="readonly",
+            width=9,
+        )
+        self.sample_rate_combo.set(
+            SAMPLE_RATE_LABELS.get(self.sample_rate_var.get(), "48KHz")
+        )
+        self.sample_rate_combo.pack(side=tk.LEFT, padx=(8, 0))
+        self.sample_rate_combo.bind(
+            "<<ComboboxSelected>>", self._on_sample_rate_selected, add="+"
+        )
+        _HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
 
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
         self.progress.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
@@ -490,6 +505,14 @@ class ConverterApp:
         )
         dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
         dlg.focus_force()
+
+    def _on_bit_depth_selected(self, _event: object = None) -> None:
+        label = self.bit_depth_combo.get().strip()
+        self.bit_depth_var.set(BIT_DEPTH_FROM_LABEL.get(label, "24"))
+
+    def _on_sample_rate_selected(self, _event: object = None) -> None:
+        label = self.sample_rate_combo.get().strip()
+        self.sample_rate_var.set(SAMPLE_RATE_FROM_LABEL.get(label, "48000"))
 
     def _resolved_output_paths(self) -> tuple[Path, Path]:
         wav_dir = Path(self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)).expanduser()
