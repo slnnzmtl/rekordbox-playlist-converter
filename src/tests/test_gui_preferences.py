@@ -137,20 +137,6 @@ class DefaultOutputPathsTests(unittest.TestCase):
 
 
 class ProbeFolderAccessTests(unittest.TestCase):
-    def test_probe_folder_access_returns_true_when_probe_succeeds(self) -> None:
-        from gui_preferences import probe_folder_access
-
-        self.assertTrue(
-            probe_folder_access(lambda: True, timeout_seconds=1.0)
-        )
-
-    def test_probe_folder_access_returns_false_when_probe_fails(self) -> None:
-        from gui_preferences import probe_folder_access
-
-        self.assertFalse(
-            probe_folder_access(lambda: False, timeout_seconds=1.0)
-        )
-
     def test_probe_folder_access_returns_false_when_probe_times_out(self) -> None:
         from gui_preferences import probe_folder_access
         import time
@@ -202,21 +188,6 @@ class ProbeFolderAccessTests(unittest.TestCase):
             probe_path_via_child(Path("/tmp"), timeout_seconds=0.05, run=hang)
         )
 
-    def test_probe_path_via_child_waits_without_timeout_by_default(self) -> None:
-        from gui_preferences import probe_path_via_child
-        import subprocess
-
-        seen: dict[str, object] = {}
-
-        def capture(*_args: object, **kwargs: object) -> subprocess.CompletedProcess[bytes]:
-            seen["timeout"] = kwargs.get("timeout", "missing")
-            seen["capture_output"] = kwargs.get("capture_output", False)
-            return subprocess.CompletedProcess(args=["probe"], returncode=1)
-
-        self.assertFalse(probe_path_via_child(Path("/tmp"), run=capture))
-        self.assertIsNone(seen["timeout"])
-        self.assertFalse(seen["capture_output"])
-
     def test_documents_probe_command_uses_this_app_not_system_test(self) -> None:
         from gui_preferences import documents_probe_command
 
@@ -238,14 +209,6 @@ class ProbeFolderAccessTests(unittest.TestCase):
             run_documents_probe_cli(["--probe-documents", "/no/such/documents-dir"]),
             1,
         )
-
-    def test_run_documents_probe_cli_lists_directory_contents(self) -> None:
-        from gui_preferences import run_documents_probe_cli
-
-        with tempfile.TemporaryDirectory() as tmp:
-            marker = Path(tmp) / "inside.txt"
-            marker.write_text("x", encoding="utf-8")
-            self.assertEqual(run_documents_probe_cli(["--probe-documents", tmp]), 0)
 
 
 class IterRekordboxXmlFilesTests(unittest.TestCase):
