@@ -41,7 +41,7 @@ class VersionDisplayTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
-            self.assertEqual(app.title_label.cget("text"), "Rekordbox WAV Converter")
+            self.assertEqual(app.title_label.cget("text"), "Rekordbox Playlist Converter")
             self.assertEqual(app.version_label.cget("text"), __version__)
             title_row = int(app.title_label.grid_info()["row"])
             version_row = int(app.version_label.grid_info()["row"])

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tiny tkinter front-end for the Rekordbox WAV converter."""
+"""Tiny tkinter front-end for the Rekordbox Playlist converter."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import sys
 from gui_preferences import (
     DOCUMENTS_PROBE_FLAG,
     FIND_REKORDBOX_XML_FLAG,
+    IMPORT_XML_NAME,
     default_output_paths,
     find_rekordbox_xml_via_child,
     load_preferences,
@@ -41,6 +42,47 @@ FALLBACK_WAV_DIR, FALLBACK_OUTPUT = default_output_paths(documents_accessible=Fa
 SEARCH_PLACEHOLDER = "Search playlists…"
 APP_LOGO_NAME = "rpc-logo-white.png"
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
+QUALITY_CEILING_CAPTION = (
+    "These are maxima, not targets. "
+    "16-bit tracks stay 16-bit; 44.1 kHz tracks stay 44.1 kHz."
+)
+BIT_DEPTH_24_TOOLTIP = "16-bit tracks are not upconverted to 24-bit."
+SAMPLE_RATE_48_TOOLTIP = "44.1 kHz tracks are not upconverted to 48 kHz."
+
+
+class _HoverTooltip:
+    """Minimal Tk Enter/Leave balloon (no third-party tooltip library)."""
+
+    def __init__(self, widget: tk.Widget, text: str) -> None:
+        self.widget = widget
+        self.text = text
+        self._tip: tk.Toplevel | None = None
+        widget.bind("<Enter>", self._show, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+
+    def _show(self, _event: object = None) -> None:
+        if self._tip is not None or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 16
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
+        tip = tk.Toplevel(self.widget)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y}")
+        label = ttk.Label(
+            tip,
+            text=self.text,
+            relief=tk.SOLID,
+            borderwidth=1,
+            padding=(6, 3),
+            wraplength=320,
+        )
+        label.pack()
+        self._tip = tip
+
+    def _hide(self, _event: object = None) -> None:
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
 
 
 def _bundled_asset(name: str) -> Path:
@@ -87,7 +129,7 @@ class ConverterApp:
         documents_accessible: bool | None = None,
     ) -> None:
         self.root = root
-        root.title("Rekordbox WAV Converter")
+        root.title("Rekordbox Playlist Converter")
         root.minsize(560, 480)
         root.geometry("1120x720")
         self.logo_image = self._apply_window_icon()
@@ -109,6 +151,14 @@ class ConverterApp:
         if saved_format not in ("wav", "aiff"):
             saved_format = "wav"
         self.format_var = tk.StringVar(value=saved_format)
+        saved_depth = saved_prefs.get("bit_depth", "16")
+        if saved_depth not in ("16", "24"):
+            saved_depth = "16"
+        self.bit_depth_var = tk.StringVar(value=saved_depth)
+        saved_rate = saved_prefs.get("sample_rate", "44100")
+        if saved_rate not in ("44100", "48000"):
+            saved_rate = "44100"
+        self.sample_rate_var = tk.StringVar(value=saved_rate)
         self.force_var = tk.BooleanVar(value=False)
         self.search_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
@@ -285,7 +335,7 @@ class ConverterApp:
 
         header = ttk.Frame(frm)
         header.grid(row=0, column=0, columnspan=3, sticky="w", **pad)
-        self.title_label = ttk.Label(header, text="Rekordbox WAV Converter")
+        self.title_label = ttk.Label(header, text="Rekordbox Playlist Converter")
         self.title_label.grid(row=0, column=0, sticky="w")
         self.version_label = ttk.Label(header, text=__version__)
         self.version_label.grid(row=1, column=0, sticky="w")
@@ -355,12 +405,38 @@ class ConverterApp:
             side=tk.RIGHT, padx=(0, 8)
         )
 
+        quality = ttk.Frame(frm)
+        quality.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        ttk.Label(quality, text="Max bit depth").pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            quality, text="16-bit", variable=self.bit_depth_var, value="16"
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        depth24 = ttk.Radiobutton(
+            quality, text="24-bit", variable=self.bit_depth_var, value="24"
+        )
+        depth24.pack(side=tk.LEFT, padx=(4, 16))
+        _HoverTooltip(depth24, BIT_DEPTH_24_TOOLTIP)
+        ttk.Label(quality, text="Max sample rate").pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            quality, text="44.1 kHz", variable=self.sample_rate_var, value="44100"
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        rate48 = ttk.Radiobutton(
+            quality, text="48 kHz", variable=self.sample_rate_var, value="48000"
+        )
+        rate48.pack(side=tk.LEFT, padx=(4, 0))
+        _HoverTooltip(rate48, SAMPLE_RATE_48_TOOLTIP)
+
+        self.quality_caption = ttk.Label(
+            frm, text=QUALITY_CEILING_CAPTION, wraplength=1000
+        )
+        self.quality_caption.grid(row=8, column=0, columnspan=3, sticky="w", **pad)
+
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        self.progress.grid(row=9, column=0, columnspan=3, sticky="ew", **pad)
         self.progress["value"] = 0
 
         ttk.Label(frm, textvariable=self.status_var, wraplength=1000).grid(
-            row=8, column=0, columnspan=3, sticky="ew", **pad
+            row=10, column=0, columnspan=3, sticky="ew", **pad
         )
 
     def _build_menubar(self) -> None:
@@ -444,9 +520,20 @@ class ConverterApp:
         fmt = self.format_var.get().strip().lower()
         if fmt not in ("wav", "aiff"):
             fmt = "wav"
+        depth = self.bit_depth_var.get().strip()
+        if depth not in ("16", "24"):
+            depth = "16"
+        rate = self.sample_rate_var.get().strip()
+        if rate not in ("44100", "48000"):
+            rate = "44100"
         try:
             save_preferences(
-                wav_dir, output, source_xml=source_xml, output_format=fmt
+                wav_dir,
+                output,
+                source_xml=source_xml,
+                output_format=fmt,
+                bit_depth=depth,
+                sample_rate=rate,
             )
         except OSError:
             pass
@@ -494,7 +581,7 @@ class ConverterApp:
             preferred = FALLBACK_WAV_DIR
         path = filedialog.asksaveasfilename(
             title="Import XML",
-            initialfile=Path(current).name if current else "rekordbox-wav-import.xml",
+            initialfile=Path(current).name if current else IMPORT_XML_NAME,
             initialdir=self._browse_initial_dir(preferred),
             defaultextension=".xml",
             filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
@@ -666,6 +753,18 @@ class ConverterApp:
         output_format = self.format_var.get().strip().lower()
         if output_format not in ("wav", "aiff"):
             output_format = "wav"
+        try:
+            max_bit_depth = int(self.bit_depth_var.get().strip() or "16")
+        except ValueError:
+            max_bit_depth = 16
+        if max_bit_depth not in (16, 24):
+            max_bit_depth = 16
+        try:
+            max_sample_rate = int(self.sample_rate_var.get().strip() or "44100")
+        except ValueError:
+            max_sample_rate = 44100
+        if max_sample_rate not in (44100, 48000):
+            max_sample_rate = 44100
         xml_path = Path(xml_s).expanduser()
 
         self._set_busy(True)
@@ -688,6 +787,8 @@ class ConverterApp:
                         output,
                         playlist_folder=folder,
                         output_format=output_format,
+                        max_bit_depth=max_bit_depth,
+                        max_sample_rate=max_sample_rate,
                     )
                     if errors:
                         msg = "\n".join(errors)
@@ -894,7 +995,7 @@ class ConverterApp:
             if manual:
                 messagebox.showinfo(
                     "No updates",
-                    f"Rekordbox WAV Converter {__version__} is up to date.",
+                    f"Rekordbox Playlist Converter {__version__} is up to date.",
                 )
             return
         if result.is_update_available and result.release is not None:

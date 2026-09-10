@@ -20,6 +20,14 @@ class GuiUsageGuideTests(unittest.TestCase):
         self.assertIn("Export BeatGrid", text)
         self.assertIn("do not use file → import", text.casefold())
 
+    def test_usage_guide_explains_skip_without_overwrite_checkbox(self) -> None:
+        import usage_guide
+
+        text = usage_guide.USAGE_GUIDE
+        self.assertNotIn("Overwrite existing audio files", text)
+        self.assertIn("already match", text.casefold())
+        self.assertIn("--force", text)
+
 
 if __name__ == "__main__":
     unittest.main()

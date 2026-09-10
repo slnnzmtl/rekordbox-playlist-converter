@@ -255,7 +255,7 @@ class XmlFixtureTests(unittest.TestCase):
     def test_missing_source_file_does_not_abort_convert(self) -> None:
         self.c.unlink()
 
-        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
@@ -346,7 +346,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertTrue("café.wav" in joined or "cafe" in joined.casefold())
 
     def test_unknown_fields_preserved_and_ids_start_at_1(self) -> None:
-        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
@@ -403,7 +403,7 @@ class XmlFixtureTests(unittest.TestCase):
         playlists_root.set("Count", "2")
         ET.ElementTree(src).write(self.xml_path, encoding="UTF-8", xml_declaration=True)
 
-        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
@@ -441,7 +441,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(len(morning_pl.findall("TRACK")), 1)
 
     def test_location_reuse_and_rerun_extends_playlist(self) -> None:
-        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
@@ -668,23 +668,145 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(args.xml, Path("in.xml"))
         self.assertEqual(args.playlist, "P")
         self.assertEqual(args.wav_dir, Path("output"))
-        self.assertEqual(args.output, Path("output/rekordbox-wav-import.xml"))
+        self.assertEqual(args.output, Path("output/rekordbox-import.xml"))
         self.assertEqual(args.format, "wav")
+        self.assertEqual(args.bit_depth, 16)
+        self.assertEqual(args.sample_rate, 44100)
 
     def test_format_aiff_accepted(self) -> None:
         args = rb.parse_args(
             ["--xml", "in.xml", "--playlist", "P", "--format", "aiff"]
         )
         self.assertEqual(args.format, "aiff")
+        self.assertEqual(args.bit_depth, 16)
+        self.assertEqual(args.sample_rate, 44100)
+
+    def test_bit_depth_and_sample_rate_accepted(self) -> None:
+        args = rb.parse_args(
+            [
+                "--xml",
+                "in.xml",
+                "--playlist",
+                "P",
+                "--format",
+                "aiff",
+                "--bit-depth",
+                "24",
+                "--sample-rate",
+                "48000",
+            ]
+        )
+        self.assertEqual(args.bit_depth, 24)
+        self.assertEqual(args.sample_rate, 48000)
 
     def test_format_invalid_exits(self) -> None:
         with self.assertRaises(SystemExit):
             rb.parse_args(["--xml", "in.xml", "--playlist", "P", "--format", "mp3"])
 
+    def test_bit_depth_invalid_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            rb.parse_args(
+                ["--xml", "in.xml", "--playlist", "P", "--bit-depth", "32"]
+            )
+
+    def test_sample_rate_invalid_exits(self) -> None:
+        with self.assertRaises(SystemExit):
+            rb.parse_args(
+                ["--xml", "in.xml", "--playlist", "P", "--sample-rate", "96000"]
+            )
+
     def test_optional_xml_playlist_defaults_none(self) -> None:
         args = rb.parse_args([])
         self.assertIsNone(args.xml)
         self.assertIsNone(args.playlist)
+
+
+class TargetFromStreamTests(unittest.TestCase):
+    """Quality is a ceiling: never raise depth or rate above the source."""
+
+    def test_ceiling_table_from_issue(self) -> None:
+        cases = [
+            # source bits/rate, max bits/rate, expected bits/rate
+            (16, 44100, 24, 48000, 16, 44100),
+            (24, 44100, 24, 48000, 24, 44100),
+            (16, 48000, 24, 48000, 16, 48000),
+            (24, 48000, 16, 44100, 16, 44100),
+            (24, 96000, 24, 48000, 24, 48000),
+        ]
+        for src_bits, src_rate, max_bits, max_rate, exp_bits, exp_rate in cases:
+            with self.subTest(
+                src=(src_bits, src_rate), max_=(max_bits, max_rate)
+            ):
+                stream = {
+                    "sample_fmt": f"s{src_bits}",
+                    "bits_per_raw_sample": str(src_bits),
+                    "sample_rate": str(src_rate),
+                }
+                bits, rate = rb.target_from_stream(
+                    stream, max_bit_depth=max_bits, max_sample_rate=max_rate
+                )
+                self.assertEqual((bits, rate), (exp_bits, exp_rate))
+
+
+class PlanQualityFieldsTests(unittest.TestCase):
+    def test_build_plan_stores_selected_and_effective_quality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "hi.flac"
+            write_flac(src)
+            xml_path = root / "c.xml"
+            xml_path.write_text(
+                f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="1">
+    <TRACK TrackID="1" Name="Hi" Location="{rb.encode_location(src)}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="P" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+""",
+                encoding="utf-8",
+            )
+            with patch.object(rb, "require_tools", return_value=[]), patch.object(
+                rb,
+                "run_ffprobe",
+                return_value={
+                    "streams": [
+                        {
+                            "codec_name": "flac",
+                            "sample_fmt": "s32",
+                            "bits_per_raw_sample": "24",
+                            "sample_rate": "96000",
+                            "channels": "2",
+                        }
+                    ]
+                },
+            ):
+                plan, errors = rb.prepare(
+                    xml_path,
+                    "P",
+                    root / "out",
+                    root / "import.xml",
+                    output_format="wav",
+                    max_bit_depth=24,
+                    max_sample_rate=48000,
+                )
+            self.assertEqual(errors, [])
+            assert plan is not None
+            self.assertEqual(plan.output_format, "wav")
+            self.assertEqual(plan.max_bit_depth, 24)
+            self.assertEqual(plan.max_sample_rate, 48000)
+            self.assertEqual(len(plan.unique), 1)
+            self.assertEqual(plan.unique[0].bit_depth, 24)
+            self.assertEqual(plan.unique[0].sample_rate, 48000)
+            self.assertEqual(plan.unique[0].codec, "pcm_s24le")
 
 
 class ProgressTests(unittest.TestCase):
@@ -866,7 +988,7 @@ class WizardHelperTests(unittest.TestCase):
             beside = mac_os / "ffprobe"
             beside.write_text("")
             beside.chmod(0o755)
-            fake_exe = mac_os / "Rekordbox WAV Converter"
+            fake_exe = mac_os / "Rekordbox Playlist Converter"
             fake_exe.write_text("")
             with patch.object(rb.sys, "frozen", True, create=True), patch.object(
                 rb.sys, "_MEIPASS", str(Path(tmp) / "missing"), create=True

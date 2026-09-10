@@ -42,6 +42,7 @@ from cdj_wav import (
     CDJ_SAFE_SAMPLE_RATE,
     WAVE_FORMAT_PCM,
     WavInfo,
+    _rewrite_wav_pcm,
     is_cdj_safe_wav,
     parse_wav_info,
 )
@@ -66,7 +67,7 @@ from rekordbox_xml import (
 )
 
 DEFAULT_WAV_DIR = Path("output")
-DEFAULT_OUTPUT = Path("output") / "rekordbox-wav-import.xml"
+DEFAULT_OUTPUT = Path("output") / "rekordbox-import.xml"
 WAV_SUFFIX = " [WAV]"
 SUPPORTED_LOSSLESS_EXT = {".flac", ".aiff", ".aif", ".wav", ".wave", ".m4a", ".caf"}
 WAV_EXT = {".wav", ".wave"}
@@ -134,6 +135,8 @@ class PlannedTrack:
     codec: str | None  # None means copy WAV (or no-op)
     copy_wav: bool
     noop: bool
+    bit_depth: int = 16
+    sample_rate: int = 44100
 
 
 @dataclass
@@ -149,6 +152,9 @@ class Plan:
     output_root: ET.Element
     output_existed: bool
     warnings: list[str] = field(default_factory=list)
+    output_format: str = "wav"
+    max_bit_depth: int = 16
+    max_sample_rate: int = 44100
 
 
 @dataclass
@@ -162,8 +168,9 @@ class ConvertStats:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Convert a Rekordbox playlist to CDJ-safe WAV (16-bit / 44.1 kHz / "
-            "stereo PCM) and write import XML. "
+            "Convert a Rekordbox playlist to stereo PCM WAV or AIFF "
+            "(selectable max bit depth / sample rate; never upconvert) "
+            "and write import XML. "
             "Omit --xml/--playlist in a terminal for an interactive wizard."
         )
     )
@@ -188,13 +195,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--output",
         type=Path,
         default=DEFAULT_OUTPUT,
-        help="Output Rekordbox XML (default: ./output/rekordbox-wav-import.xml)",
+        help="Output Rekordbox XML (default: ./output/rekordbox-import.xml)",
     )
     parser.add_argument(
         "--format",
         choices=("wav", "aiff"),
         default="wav",
-        help="Output format: wav (16-bit/44.1 kHz universal) or aiff (Pioneer 24/48 ceiling)",
+        help=(
+            "Output format: wav or aiff "
+            "(quality ceiling from --bit-depth / --sample-rate; never upconvert)"
+        ),
+    )
+    parser.add_argument(
+        "--bit-depth",
+        type=int,
+        choices=(16, 24),
+        default=16,
+        help=(
+            "Maximum bit depth (16 or 24). Default 16. "
+            "16-bit tracks are not upconverted to 24-bit."
+        ),
+    )
+    parser.add_argument(
+        "--sample-rate",
+        type=int,
+        choices=(44100, 48000),
+        default=44100,
+        help=(
+            "Maximum sample rate (44100 or 48000). Default 44100. "
+            "44.1 kHz tracks are not upconverted to 48 kHz."
+        ),
     )
     parser.add_argument(
         "--force",
@@ -322,7 +352,7 @@ def print_import_hints(output: Path, *, output_format: str = "wav") -> None:
 
 def prompt_wizard(
     args: argparse.Namespace,
-) -> tuple[Path, list[tuple[str | None, str]], Path, Path, str]:
+) -> tuple[Path, list[tuple[str | None, str]], Path, Path, str, int, int]:
     xml_path = prompt_xml_path(args.xml)
     root = load_dj_playlists(xml_path)
     names = prompt_playlists(root, args.playlist)
@@ -332,7 +362,27 @@ def prompt_wizard(
     while output_format not in ("wav", "aiff"):
         print("  choose wav or aiff", file=sys.stderr)
         output_format = prompt_line("Format (wav/aiff)", "wav").strip().lower()
-    return xml_path, names, wav_dir, output, output_format
+    bit_s = prompt_line(
+        "Max bit depth (16/24)", str(getattr(args, "bit_depth", 16))
+    )
+    while bit_s.strip() not in ("16", "24"):
+        print("  choose 16 or 24", file=sys.stderr)
+        bit_s = prompt_line("Max bit depth (16/24)", "16")
+    rate_s = prompt_line(
+        "Max sample rate (44100/48000)", str(getattr(args, "sample_rate", 44100))
+    )
+    while rate_s.strip() not in ("44100", "48000"):
+        print("  choose 44100 or 48000", file=sys.stderr)
+        rate_s = prompt_line("Max sample rate (44100/48000)", "44100")
+    return (
+        xml_path,
+        names,
+        wav_dir,
+        output,
+        output_format,
+        int(bit_s.strip()),
+        int(rate_s.strip()),
+    )
 
 
 def run_convert_one(
@@ -345,6 +395,8 @@ def run_convert_one(
     dry_run: bool,
     playlist_folder: str | None = None,
     output_format: str = "wav",
+    max_bit_depth: int = 16,
+    max_sample_rate: int = 44100,
 ) -> int:
     plan, errors = prepare(
         xml_path,
@@ -353,6 +405,8 @@ def run_convert_one(
         output,
         playlist_folder=playlist_folder,
         output_format=output_format,
+        max_bit_depth=max_bit_depth,
+        max_sample_rate=max_sample_rate,
     )
     if errors:
         print_errors(errors)
@@ -480,11 +534,21 @@ def bit_depth_of_codec(codec: str) -> int:
     raise CliError(f"unknown codec {codec}")
 
 
-def aiff_target_from_stream(stream: dict) -> tuple[str, int]:
-    """Return (pcm_s16be|pcm_s24be, sample_rate) under the Pioneer 24/48 ceiling.
+def target_from_stream(
+    stream: dict,
+    *,
+    max_bit_depth: int = 16,
+    max_sample_rate: int = 44100,
+) -> tuple[int, int]:
+    """Return (bit_depth, sample_rate) under the selected ceiling.
 
     Never raises bit depth or sample rate above the source (within the ceiling).
     """
+    if max_bit_depth not in (16, 24):
+        max_bit_depth = 16
+    if max_sample_rate not in (44100, 48000):
+        max_sample_rate = 44100
+
     fmt = str(stream.get("sample_fmt") or "")
     raw = stream.get("bits_per_raw_sample")
     bits: int | None = None
@@ -509,47 +573,68 @@ def aiff_target_from_stream(stream: dict) -> tuple[str, int]:
         bits = 24
     elif bits not in (16, 24):
         bits = 16 if bits <= 16 else 24
+    if bits > max_bit_depth:
+        bits = max_bit_depth
 
     try:
         rate = int(float(stream.get("sample_rate") or 0))
     except (TypeError, ValueError):
         rate = 0
-    if rate > 48000:
-        rate = 48000
-    elif rate in (44100, 48000):
+    if rate > max_sample_rate:
+        rate = max_sample_rate
+    elif rate in (44100, 48000) and rate <= max_sample_rate:
         pass
     else:
-        rate = 44100
+        rate = 44100 if 44100 <= max_sample_rate else max_sample_rate
 
-    codec = "pcm_s16be" if bits == 16 else "pcm_s24be"
-    return codec, rate
+    return bits, rate
+
+
+def pcm_codec_for_depth(bit_depth: int, *, output_format: str = "wav") -> str:
+    """Map effective bit depth to an ffmpeg PCM codec for the output container."""
+    if output_format == "aiff":
+        return "pcm_s16be" if bit_depth == 16 else "pcm_s24be"
+    return "pcm_s16le" if bit_depth == 16 else "pcm_s24le"
 
 
 def classify_source(
-    path: Path, stream: dict, *, output_format: str = "wav"
-) -> tuple[str, bool]:
-    """Return (ffmpeg_codec or 'copy', is_copy) for the selected output format."""
+    path: Path,
+    stream: dict,
+    *,
+    output_format: str = "wav",
+    max_bit_depth: int = 16,
+    max_sample_rate: int = 44100,
+) -> tuple[str, bool, int, int]:
+    """Return (ffmpeg_codec or 'copy', is_copy, bit_depth, sample_rate)."""
     ext = path.suffix.lower()
     codec_name = str(stream.get("codec_name") or "")
     if ext not in SUPPORTED_LOSSLESS_EXT:
         raise CliError(f"unsupported format: {path}")
+    bits, rate = target_from_stream(
+        stream, max_bit_depth=max_bit_depth, max_sample_rate=max_sample_rate
+    )
     if output_format == "aiff":
-        if ext in AIFF_EXT and is_cdj_safe_aiff(path):
-            return "copy", True
+        if ext in AIFF_EXT and is_cdj_safe_aiff(
+            path, bit_depth=bits, sample_rate=rate
+        ):
+            return "copy", True, bits, rate
         if ext in ALAC_EXT and codec_name != "alac":
             raise CliError(f"unsupported format: {path} (expected ALAC)")
-        codec, _rate = aiff_target_from_stream(stream)
-        return codec, False
+        codec = pcm_codec_for_depth(bits, output_format="aiff")
+        return codec, False, bits, rate
     if ext in ALAC_EXT:
         if codec_name != "alac":
             raise CliError(f"unsupported format: {path} (expected ALAC)")
-        return "pcm_s16le", False
+        codec = pcm_codec_for_depth(bits, output_format="wav")
+        return codec, False, bits, rate
     if ext in WAV_EXT:
-        if is_cdj_safe_wav(path):
-            return "copy", True
-        return "pcm_s16le", False
+        if is_cdj_safe_wav(path, bit_depth=bits, sample_rate=rate):
+            return "copy", True, bits, rate
+        codec = pcm_codec_for_depth(bits, output_format="wav")
+        return codec, False, bits, rate
     if ext in {".flac", ".aiff", ".aif"}:
-        return "pcm_s16le", False
+        codec = pcm_codec_for_depth(bits, output_format="wav")
+        return codec, False, bits, rate
     raise CliError(f"unsupported format: {path}")
 
 
@@ -570,9 +655,15 @@ def build_plan(
     output_existed: bool,
     *,
     output_format: str = "wav",
+    max_bit_depth: int = 16,
+    max_sample_rate: int = 44100,
 ) -> tuple[Plan | None, list[str]]:
     if output_format not in ("wav", "aiff"):
         output_format = "wav"
+    if max_bit_depth not in (16, 24):
+        max_bit_depth = 16
+    if max_sample_rate not in (44100, 48000):
+        max_sample_rate = 44100
     errors: list[str] = []
     tracks_el, resolve_errors = resolve_playlist_tracks(source_root, playlist_el)
     errors.extend(resolve_errors)
@@ -647,19 +738,31 @@ def build_plan(
             errors.append(f"unsupported format: {item.source_path} (no audio stream)")
             continue
         try:
-            codec, is_copy = classify_source(
-                item.source_path, stream, output_format=output_format
+            codec, is_copy, bits, rate = classify_source(
+                item.source_path,
+                stream,
+                output_format=output_format,
+                max_bit_depth=max_bit_depth,
+                max_sample_rate=max_sample_rate,
             )
         except CliError as exc:
             errors.append(str(exc))
             continue
         item.copy_wav = is_copy
         item.codec = None if is_copy else codec
+        item.bit_depth = bits
+        item.sample_rate = rate
         in_place = same_file(item.source_path, item.dest_path)
         if output_format == "aiff":
             if in_place:
                 cover = extract_cover_jpeg(item.source_path)
-                if _is_canonical_aiff_output(item.dest_path, item.source_el, cover):
+                if _is_canonical_aiff_output(
+                    item.dest_path,
+                    item.source_el,
+                    cover,
+                    bit_depth=bits,
+                    sample_rate=rate,
+                ):
                     item.noop = True
                 else:
                     errors.append(
@@ -690,6 +793,9 @@ def build_plan(
         output_root=output_root,
         output_existed=output_existed,
         warnings=warnings,
+        output_format=output_format,
+        max_bit_depth=max_bit_depth,
+        max_sample_rate=max_sample_rate,
     )
     if errors:
         return plan, errors
@@ -721,21 +827,34 @@ def run_ffmpeg(
     force: bool,
     *,
     sample_rate: int | None = None,
+    bit_depth: int | None = None,
 ) -> None:
-    """Encode dest as CDJ-safe WAV or Pioneer-ceiling AIFF PCM (no ID3)."""
+    """Encode dest as PCM WAV or AIFF at the planned depth/rate (no ID3)."""
     exe = tool_path("ffmpeg")
     if exe is None:
         raise CliError(
             "ffmpeg not found on PATH (install with: brew install ffmpeg)"
         )
     is_aiff = dest.suffix.lower() == ".aiff"
-    if is_aiff:
-        audio_codec = codec if codec in ("pcm_s16be", "pcm_s24be") else "pcm_s16be"
-        rate = sample_rate if sample_rate in (44100, 48000) else 44100
+    rate = sample_rate if sample_rate in (44100, 48000) else 44100
+    if bit_depth in (16, 24):
+        depth = bit_depth
+    elif codec in ("pcm_s16le", "pcm_s16be", "pcm_s24le", "pcm_s24be"):
+        depth = bit_depth_of_codec(codec)
     else:
-        audio_codec = "pcm_s16le"
-        rate = CDJ_SAFE_SAMPLE_RATE
-        del codec
+        depth = 16
+    if is_aiff:
+        audio_codec = (
+            codec
+            if codec in ("pcm_s16be", "pcm_s24be")
+            else pcm_codec_for_depth(depth, output_format="aiff")
+        )
+    else:
+        audio_codec = (
+            codec
+            if codec in ("pcm_s16le", "pcm_s24le")
+            else pcm_codec_for_depth(depth, output_format="wav")
+        )
     cmd = [
         exe,
         "-y" if force or dest.exists() else "-n",
@@ -772,14 +891,45 @@ def run_ffmpeg(
         err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
         raise CliError(f"ffmpeg conversion failed for {source}: {err}")
     if is_aiff:
-        if not is_cdj_safe_aiff(dest):
-            raise CliError(
-                f"ffmpeg produced a non-CDJ-safe AIFF for {source}: {dest}"
+        if not is_cdj_safe_aiff(dest, bit_depth=depth, sample_rate=rate):
+            # Muxer may leave extras; normalize then re-check.
+            fd, tmp_name = tempfile.mkstemp(
+                dir=dest.parent, prefix=".aiff-ff-", suffix=".tmp.aiff"
             )
-    elif not is_cdj_safe_wav(dest):
-        raise CliError(
-            f"ffmpeg produced a non-CDJ-safe WAV for {source}: {dest}"
+            os.close(fd)
+            tmp = Path(tmp_name)
+            try:
+                _normalize_aiff_audio_chunks(dest, tmp)
+                os.replace(tmp, dest)
+            except Exception:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+            if not is_cdj_safe_aiff(dest, bit_depth=depth, sample_rate=rate):
+                raise CliError(
+                    f"ffmpeg produced a non-CDJ-safe AIFF for {source}: {dest}"
+                )
+    else:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=dest.parent, prefix=".wav-ff-", suffix=".tmp.wav"
         )
+        os.close(fd)
+        tmp = Path(tmp_name)
+        try:
+            _rewrite_wav_pcm(dest, tmp)
+            os.replace(tmp, dest)
+        except Exception:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        if not is_cdj_safe_wav(dest, bit_depth=depth, sample_rate=rate):
+            raise CliError(
+                f"ffmpeg produced a non-CDJ-safe WAV for {source}: {dest}"
+            )
 
 
 def write_aiff_output(
@@ -789,6 +939,8 @@ def write_aiff_output(
     *,
     passthrough: bool,
     codec: str | None,
+    bit_depth: int = 16,
+    sample_rate: int = 44100,
 ) -> None:
     """Atomically write AIFF: PCM then ID3, validate, os.replace."""
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -804,12 +956,15 @@ def write_aiff_output(
         else:
             if not codec:
                 raise CliError(f"no codec planned for {source}")
-            # Probe for rate when needed
-            probe = run_ffprobe(source)
-            stream = first_stream(probe) or {}
-            _codec, rate = aiff_target_from_stream(stream)
-            run_ffmpeg(source, tmp, codec or _codec, force=True, sample_rate=rate)
-            if not is_cdj_safe_aiff(tmp):
+            run_ffmpeg(
+                source,
+                tmp,
+                codec,
+                force=True,
+                sample_rate=sample_rate,
+                bit_depth=bit_depth,
+            )
+            if not is_cdj_safe_aiff(tmp, bit_depth=bit_depth, sample_rate=sample_rate):
                 raise CliError(f"AIFF audio stage failed for {source}")
             # Re-normalize in case the muxer added anything unexpected.
             fd2, tmp2_name = tempfile.mkstemp(
@@ -827,7 +982,9 @@ def write_aiff_output(
                     pass
                 raise
         write_aiff_id3(tmp, source_el, cover)
-        if not _is_canonical_aiff_output(tmp, source_el, cover):
+        if not _is_canonical_aiff_output(
+            tmp, source_el, cover, bit_depth=bit_depth, sample_rate=sample_rate
+        ):
             raise CliError(f"AIFF failed canonical validation for {source}")
         os.replace(tmp, dest)
     except Exception:
@@ -860,7 +1017,11 @@ def convert_unique(
             if is_aiff:
                 cover = extract_cover_jpeg(item.source_path)
                 if not force and _is_canonical_aiff_output(
-                    item.dest_path, item.source_el, cover
+                    item.dest_path,
+                    item.source_el,
+                    cover,
+                    bit_depth=item.bit_depth,
+                    sample_rate=item.sample_rate,
                 ):
                     bar.update(i, "skip", name)
                     stats.skipped += 1
@@ -873,13 +1034,19 @@ def convert_unique(
                     item.source_el,
                     passthrough=item.copy_wav,
                     codec=item.codec,
+                    bit_depth=item.bit_depth,
+                    sample_rate=item.sample_rate,
                 )
                 if item.copy_wav:
                     stats.copied += 1
                 else:
                     stats.converted += 1
                 continue
-            if not force and is_cdj_safe_wav(item.dest_path):
+            if not force and is_cdj_safe_wav(
+                item.dest_path,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+            ):
                 bar.update(i, "skip", name)
                 stats.skipped += 1
                 continue
@@ -891,7 +1058,14 @@ def convert_unique(
             if not item.codec:
                 raise CliError(f"no codec planned for {item.source_path}")
             bar.update(i, "convert", name)
-            run_ffmpeg(item.source_path, item.dest_path, item.codec, force=True)
+            run_ffmpeg(
+                item.source_path,
+                item.dest_path,
+                item.codec,
+                force=True,
+                sample_rate=item.sample_rate,
+                bit_depth=item.bit_depth,
+            )
             stats.converted += 1
     finally:
         bar.close()
@@ -1153,6 +1327,8 @@ def prepare(
     *,
     playlist_folder: str | None = None,
     output_format: str = "wav",
+    max_bit_depth: int = 16,
+    max_sample_rate: int = 44100,
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(require_tools())
@@ -1195,6 +1371,8 @@ def prepare(
         output_root,
         output_existed,
         output_format=output_format,
+        max_bit_depth=max_bit_depth,
+        max_sample_rate=max_sample_rate,
     )
     errors.extend(plan_errors)
     return plan, errors
@@ -1204,6 +1382,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     need_wizard = args.xml is None or args.playlist is None
     output_format = args.format
+    max_bit_depth = args.bit_depth
+    max_sample_rate = args.sample_rate
     if need_wizard:
         if not sys.stdin.isatty():
             print(
@@ -1212,7 +1392,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         try:
-            xml_path, playlist_refs, wav_dir, output, output_format = prompt_wizard(args)
+            (
+                xml_path,
+                playlist_refs,
+                wav_dir,
+                output,
+                output_format,
+                max_bit_depth,
+                max_sample_rate,
+            ) = prompt_wizard(args)
         except CliError as exc:
             print(str(exc), file=sys.stderr)
             return 1
@@ -1237,6 +1425,8 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
             playlist_folder=folder,
             output_format=output_format,
+            max_bit_depth=max_bit_depth,
+            max_sample_rate=max_sample_rate,
         )
         if rc != 0:
             return rc

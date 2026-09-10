@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a universal2 Rekordbox WAV Converter.app (Intel + Apple Silicon).
+# Build a universal2 Rekordbox Playlist Converter.app (Intel + Apple Silicon).
 #
 # Requires:
 #   - macOS
@@ -17,8 +17,8 @@ cd "$ROOT"
 
 VENDOR="$ROOT/vendor/ffmpeg"
 VENV="$ROOT/.venv"
-APP="$ROOT/dist/Rekordbox WAV Converter.app"
-EXE="$APP/Contents/MacOS/Rekordbox WAV Converter"
+APP="$ROOT/dist/Rekordbox Playlist Converter.app"
+EXE="$APP/Contents/MacOS/Rekordbox Playlist Converter"
 # PyInstaller BUNDLE puts --add-binary helpers in Frameworks, not MacOS.
 BUNDLED_FFMPEG="$APP/Contents/Frameworks/ffmpeg"
 BUNDLED_FFPROBE="$APP/Contents/Frameworks/ffprobe"

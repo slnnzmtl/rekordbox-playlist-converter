@@ -614,6 +614,8 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 app.wav_dir_var.set("/tmp/typed-wav")
                 app.output_var.set("/tmp/typed-import.xml")
                 app.format_var.set("aiff")
+                app.bit_depth_var.set("24")
+                app.sample_rate_var.set("48000")
                 app._start_convert()
                 save_prefs.assert_called_once()
                 args = save_prefs.call_args[0]
@@ -622,6 +624,8 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 self.assertEqual(args[1], Path("/tmp/typed-import.xml"))
                 self.assertEqual(kwargs.get("source_xml"), Path("/tmp/test.xml"))
                 self.assertEqual(kwargs.get("output_format"), "aiff")
+                self.assertEqual(kwargs.get("bit_depth"), "24")
+                self.assertEqual(kwargs.get("sample_rate"), "48000")
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -633,7 +637,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        from rb_converter_gui import ConverterApp
+        from rb_converter_gui import ConverterApp, QUALITY_CEILING_CAPTION
 
         root = None
         try:
@@ -648,6 +652,87 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
                 self.assertEqual(app.format_var.get(), "wav")
+                self.assertEqual(app.bit_depth_var.get(), "16")
+                self.assertEqual(app.sample_rate_var.get(), "44100")
+                self.assertEqual(
+                    app.quality_caption.cget("text"),
+                    QUALITY_CEILING_CAPTION,
+                )
+                from rb_converter_gui import (
+                    BIT_DEPTH_24_TOOLTIP,
+                    SAMPLE_RATE_48_TOOLTIP,
+                )
+
+                self.assertEqual(
+                    BIT_DEPTH_24_TOOLTIP,
+                    "16-bit tracks are not upconverted to 24-bit.",
+                )
+                self.assertEqual(
+                    SAMPLE_RATE_48_TOOLTIP,
+                    "44.1 kHz tracks are not upconverted to 48 kHz.",
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_quality_prefs_restored_and_passed_to_prepare(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp, QUALITY_CEILING_CAPTION
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch(
+                "rb_converter_gui.load_preferences",
+                return_value={
+                    "output_format": "aiff",
+                    "bit_depth": "24",
+                    "sample_rate": "48000",
+                },
+            ), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch(
+                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
+            ), patch(
+                "rb_converter_gui.save_preferences"
+            ), patch.object(
+                ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
+            ), patch(
+                "rb_converter_gui.rb.prepare", return_value=(None, ["stop"])
+            ) as prepare, patch(
+                "rb_converter_gui.threading.Thread"
+            ) as thread_cls:
+
+                def capture_start():
+                    # Run worker synchronously for assertions.
+                    target = thread_cls.call_args.kwargs.get("target")
+                    if target is None:
+                        target = thread_cls.call_args[0][0]
+                    target()
+
+                thread_cls.return_value.start = capture_start
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                self.assertEqual(app.format_var.get(), "aiff")
+                self.assertEqual(app.bit_depth_var.get(), "24")
+                self.assertEqual(app.sample_rate_var.get(), "48000")
+                self.assertIn("maxima", QUALITY_CEILING_CAPTION)
+                app.xml_var.set("/tmp/test.xml")
+                app._start_convert()
+                prepare.assert_called()
+                kwargs = prepare.call_args.kwargs
+                self.assertEqual(kwargs.get("output_format"), "aiff")
+                self.assertEqual(kwargs.get("max_bit_depth"), 24)
+                self.assertEqual(kwargs.get("max_sample_rate"), 48000)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

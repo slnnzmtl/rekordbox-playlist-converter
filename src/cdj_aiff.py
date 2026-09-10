@@ -16,6 +16,10 @@ AIFF_SAFE_RATES = {
     bytes.fromhex("400eac44000000000000"),  # 44100
     bytes.fromhex("400ebb80000000000000"),  # 48000
 }
+AIFF_RATE_BYTES = {
+    44100: bytes.fromhex("400eac44000000000000"),
+    48000: bytes.fromhex("400ebb80000000000000"),
+}
 AIFF_SAFE_BIT_DEPTHS = {16, 24}
 
 
@@ -110,12 +114,22 @@ def _parse_aiff_audio(path: Path) -> _AiffAudioInfo:
     )
 
 
-def is_cdj_safe_aiff(path: Path) -> bool:
-    """True if path is stereo PCM AIFF within the Pioneer 24-bit/48 kHz ceiling.
+def is_cdj_safe_aiff(
+    path: Path,
+    *,
+    bit_depth: int = 16,
+    sample_rate: int = 44100,
+) -> bool:
+    """True if path is stereo PCM AIFF at the given bit depth and sample rate.
 
-    Harmless extra chunks such as NAME are allowed; AIFC and out-of-profile
-    rates/depths are not.
+    Harmless extra chunks such as NAME are allowed; AIFC is not.
     """
+    if bit_depth not in AIFF_SAFE_BIT_DEPTHS:
+        bit_depth = 16
+    rate_bytes = AIFF_RATE_BYTES.get(sample_rate)
+    if rate_bytes is None:
+        rate_bytes = AIFF_RATE_BYTES[44100]
+        bit_depth = 16
     if not path.is_file():
         return False
     try:
@@ -125,8 +139,8 @@ def is_cdj_safe_aiff(path: Path) -> bool:
     return (
         info.form_ok
         and info.channels == CDJ_SAFE_CHANNELS
-        and info.bits_per_sample in AIFF_SAFE_BIT_DEPTHS
-        and info.sample_rate_bytes in AIFF_SAFE_RATES
+        and info.bits_per_sample == bit_depth
+        and info.sample_rate_bytes == rate_bytes
         and info.comm_count == 1
         and info.ssnd_count == 1
         and info.id3_count <= 1
@@ -393,9 +407,12 @@ def _is_canonical_aiff_output(
     path: Path,
     source_el: ET.Element,
     expected_cover: bytes | None,
+    *,
+    bit_depth: int = 16,
+    sample_rate: int = 44100,
 ) -> bool:
     """True if dest is audio-safe with exactly COMM+SSND+ID3 matching XML+cover."""
-    if not is_cdj_safe_aiff(path):
+    if not is_cdj_safe_aiff(path, bit_depth=bit_depth, sample_rate=sample_rate):
         return False
     try:
         info = _parse_aiff_audio(path)

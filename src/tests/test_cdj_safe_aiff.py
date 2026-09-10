@@ -83,13 +83,19 @@ class CdjSafeAiffTests(unittest.TestCase):
             self.assertTrue(rb.is_cdj_safe_aiff(a16))
             a24 = root / "a24.aiff"
             write_pcm_aiff(a24, sample_rate_bytes=RATE_48000, bits=24)
-            self.assertTrue(rb.is_cdj_safe_aiff(a24))
+            self.assertTrue(
+                rb.is_cdj_safe_aiff(a24, bit_depth=24, sample_rate=48000)
+            )
             a16_48 = root / "a16_48.aiff"
             write_pcm_aiff(a16_48, sample_rate_bytes=RATE_48000, bits=16)
-            self.assertTrue(rb.is_cdj_safe_aiff(a16_48))
+            self.assertTrue(
+                rb.is_cdj_safe_aiff(a16_48, bit_depth=16, sample_rate=48000)
+            )
             a24_44 = root / "a24_44.aiff"
             write_pcm_aiff(a24_44, sample_rate_bytes=RATE_44100, bits=24)
-            self.assertTrue(rb.is_cdj_safe_aiff(a24_44))
+            self.assertTrue(
+                rb.is_cdj_safe_aiff(a24_44, bit_depth=24, sample_rate=44100)
+            )
 
     def test_name_chunk_still_audio_safe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -134,15 +140,16 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
 
             write_pcm_wav(wav)
 
-            codec, is_copy = rb.classify_source(
+            codec, is_copy, bits, rate = rb.classify_source(
                 safe,
                 {"codec_name": "pcm_s16be", "sample_fmt": "s16"},
                 output_format="aiff",
             )
             self.assertTrue(is_copy)
             self.assertEqual(codec, "copy")
+            self.assertEqual((bits, rate), (16, 44100))
 
-            codec, is_copy = rb.classify_source(
+            codec, is_copy, bits, rate = rb.classify_source(
                 flac,
                 {
                     "codec_name": "flac",
@@ -157,7 +164,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             self.assertEqual(codec, "pcm_s16be")
 
             # CDJ-safe WAV must not be copied when outputting AIFF.
-            codec, is_copy = rb.classify_source(
+            codec, is_copy, bits, rate = rb.classify_source(
                 wav,
                 {"codec_name": "pcm_s16le", "sample_fmt": "s16"},
                 output_format="aiff",
@@ -166,7 +173,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             self.assertEqual(codec, "pcm_s16be")
 
             # WAV output still copies only CDJ-safe WAV.
-            codec, is_copy = rb.classify_source(
+            codec, is_copy, bits, rate = rb.classify_source(
                 wav, {"codec_name": "pcm_s16le", "sample_fmt": "s16"}
             )
             self.assertTrue(is_copy)
@@ -284,6 +291,97 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 1)
 
+    def test_aiff_24_48_dest_does_not_skip_when_effective_is_16_44100(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.aiff"
+            write_pcm_aiff(src, sample_rate_bytes=RATE_44100, bits=16)
+            dest = root / "out.aiff"
+            write_pcm_aiff(dest, sample_rate_bytes=RATE_48000, bits=24)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            rb.write_aiff_id3(dest, el, None)
+            self.assertTrue(
+                rb._is_canonical_aiff_output(
+                    dest, el, None, bit_depth=24, sample_rate=48000
+                )
+            )
+            self.assertFalse(
+                rb._is_canonical_aiff_output(
+                    dest, el, None, bit_depth=16, sample_rate=44100
+                )
+            )
+            plan_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=rb.encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16be",
+                copy_wav=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = rb.Plan(
+                playlist_name="P",
+                wav_playlist_name="P [AIFF]",
+                wav_dir=root,
+                playlist_dir=root,
+                output=root / "o.xml",
+                tracks=[plan_item],
+                unique=[plan_item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                output_format="aiff",
+            )
+            wrote: list[Path] = []
+
+            def fake_write(*_a, **_k):
+                wrote.append(dest)
+
+            with mock.patch.object(rb, "write_aiff_output", side_effect=fake_write):
+                stats = rb.convert_unique(plan, force=False)
+            self.assertEqual(stats.skipped, 0)
+            self.assertEqual(stats.converted, 1)
+            self.assertEqual(wrote, [dest])
+
+    def test_classify_aiff_default_ceiling_is_16_44100(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "hi.aiff"
+            write_pcm_aiff(src, sample_rate_bytes=RATE_48000, bits=24)
+            codec, is_copy, bits, rate = rb.classify_source(
+                src,
+                {
+                    "codec_name": "pcm_s24be",
+                    "sample_fmt": "s24",
+                    "bits_per_raw_sample": "24",
+                    "sample_rate": "48000",
+                    "channels": "2",
+                },
+                output_format="aiff",
+            )
+            self.assertFalse(is_copy)
+            self.assertEqual(codec, "pcm_s16be")
+            self.assertEqual((bits, rate), (16, 44100))
+
+            codec, is_copy, bits, rate = rb.classify_source(
+                src,
+                {
+                    "codec_name": "pcm_s24be",
+                    "sample_fmt": "s24",
+                    "bits_per_raw_sample": "24",
+                    "sample_rate": "48000",
+                    "channels": "2",
+                },
+                output_format="aiff",
+                max_bit_depth=24,
+                max_sample_rate=48000,
+            )
+            self.assertTrue(is_copy)
+            self.assertEqual((bits, rate), (24, 48000))
+
     def test_ffmpeg_16_44100_flac_stays_16_44100_aiff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -318,6 +416,56 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             self.assertEqual(info.bits_per_sample, 16)
             self.assertEqual(info.sample_rate_bytes, RATE_44100)
             self.assertTrue(rb._is_canonical_aiff_output(dest, el, None))
+
+    def test_ffmpeg_96k_24bit_flac_to_aiff_24_48000(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.flac"
+            dest = root / "out.aiff"
+            proc = __import__("subprocess").run(
+                [
+                    "ffmpeg",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "sine=f=440:d=0.2",
+                    "-ar",
+                    "96000",
+                    "-ac",
+                    "2",
+                    "-sample_fmt",
+                    "s32",
+                    str(src),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            el = ET.Element("TRACK", {"Name": "HiRes", "Artist": "Test"})
+            rb.write_aiff_output(
+                src,
+                dest,
+                el,
+                passthrough=False,
+                codec="pcm_s24be",
+                bit_depth=24,
+                sample_rate=48000,
+            )
+            info = rb._parse_aiff_audio(dest)
+            self.assertEqual(info.bits_per_sample, 24)
+            self.assertEqual(info.sample_rate_bytes, RATE_48000)
+            self.assertTrue(
+                rb._is_canonical_aiff_output(
+                    dest, el, None, bit_depth=24, sample_rate=48000
+                )
+            )
+            size, bitrate, sample_rate = rb.probe_dest_tech(dest)
+            self.assertEqual(sample_rate, "48000")
+            clone = rb.clone_track(el, "1", dest, rb.encode_location(dest))
+            self.assertEqual(clone.get("Kind"), "AIFF File")
+            self.assertEqual(clone.get("SampleRate"), "48000")
 
 
 class ApplyXmlRefreshTests(unittest.TestCase):

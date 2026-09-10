@@ -1,4 +1,4 @@
-"""Persistent GUI output-path preferences for the Rekordbox WAV converter."""
+"""Persistent GUI output-path preferences for the Rekordbox Playlist converter."""
 
 from __future__ import annotations
 
@@ -14,7 +14,8 @@ from typing import Any
 
 BUNDLE_ID = "io.github.slnnzmtl.rekordboxWavConverter"
 PREFERENCES_VERSION = 1
-IMPORT_XML_NAME = "rekordbox-wav-import.xml"
+OUTPUT_DIR_NAME = "rekordbox-converted"
+IMPORT_XML_NAME = "rekordbox-import.xml"
 DOCUMENTS_PROBE_TIMEOUT_SECONDS = 5.0
 SKIP_DIR_NAMES = frozenset(
     {
@@ -90,9 +91,9 @@ def default_output_paths(
     """Return default WAV dir and import XML based on Documents access."""
     base = home if home is not None else Path.home()
     if documents_accessible:
-        wav_dir = base / "Documents" / "rekordbox-wav"
+        wav_dir = base / "Documents" / OUTPUT_DIR_NAME
     else:
-        wav_dir = base / "rekordbox-wav"
+        wav_dir = base / OUTPUT_DIR_NAME
     return wav_dir, wav_dir / IMPORT_XML_NAME
 
 
@@ -272,6 +273,14 @@ def load_preferences(config_path: Path | None = None) -> dict[str, str]:
     fmt = raw.get("output_format")
     if isinstance(fmt, str) and fmt.strip().lower() in ("wav", "aiff"):
         result["output_format"] = fmt.strip().lower()
+    depth = raw.get("bit_depth")
+    if depth in (16, 24) or (isinstance(depth, str) and depth.strip() in ("16", "24")):
+        result["bit_depth"] = str(depth).strip()
+    rate = raw.get("sample_rate")
+    if rate in (44100, 48000) or (
+        isinstance(rate, str) and rate.strip() in ("44100", "48000")
+    ):
+        result["sample_rate"] = str(rate).strip()
     return result
 
 
@@ -281,6 +290,8 @@ def save_preferences(
     *,
     source_xml: Path | None = None,
     output_format: str | None = None,
+    bit_depth: int | str | None = None,
+    sample_rate: int | str | None = None,
     config_path: Path | None = None,
 ) -> None:
     path = config_path or default_config_path()
@@ -295,6 +306,14 @@ def save_preferences(
         payload["source_xml"] = str(source_xml.expanduser().resolve())
     if output_format is not None and output_format in ("wav", "aiff"):
         payload["output_format"] = output_format
+    if bit_depth is not None:
+        depth_s = str(bit_depth).strip()
+        if depth_s in ("16", "24"):
+            payload["bit_depth"] = depth_s
+    if sample_rate is not None:
+        rate_s = str(sample_rate).strip()
+        if rate_s in ("44100", "48000"):
+            payload["sample_rate"] = rate_s
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         dir=path.parent, prefix=".preferences-", suffix=".tmp"

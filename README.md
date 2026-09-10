@@ -1,7 +1,7 @@
 # Rekordbox playlist → WAV
 
 <p align="center">
-  <img src="assets/rpc-logo-white.png" alt="Rekordbox WAV Converter logo" width="160">
+  <img src="assets/rpc-logo-white.png" alt="Rekordbox Playlist Converter logo" width="160">
 </p>
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -18,20 +18,22 @@ Pre-built **macOS app** (universal2): see [GitHub Releases](https://github.com/s
 ## What gets converted
 
 
-| You have                               | WAV (default)                                                         | AIFF (`--format aiff`)                                      |
-| -------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------- |
-| FLAC / ALAC / AIFF / WAV               | CDJ-safe 16-bit / 44.1 kHz stereo PCM (`fmt `+`data` only)            | Pioneer ceiling: preserve ≤24-bit / ≤48 kHz; never upconvert |
-| Already in-profile dest                | Skip (unless `--force`)                                               | Skip when audio + ID3 match (unless `--force`)              |
+| You have                               | Output                                                                |
+| -------------------------------------- | --------------------------------------------------------------------- |
+| FLAC / ALAC / AIFF / WAV               | Stereo PCM at selected max bit depth (16/24) and sample rate (44.1/48 kHz); never upconvert |
+| Already matching dest                  | Skip when container + effective quality match (AIFF also ID3/art)     |
 
 
 MP3, AAC, and other lossy files are skipped with an error.
 
-**WAV profile:** uncompressed stereo PCM, 44.1 kHz, 16-bit, `WAVE_FORMAT_PCM` (not extensible), `fmt `+`data` only.
+Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are WAV / 16-bit / 44.1 kHz. Pioneer 24/48 is `--format aiff --bit-depth 24 --sample-rate 48000`.
 
-**AIFF profile:** uncompressed `FORM`/`AIFF` (not AIFC), stereo PCM at 16 or 24 bit and 44.1 or 48 kHz, plus ID3v2.3 text from the Rekordbox XML and an optional JPEG cover from the source file.
+**WAV profile:** uncompressed stereo `WAVE_FORMAT_PCM` (not extensible), `fmt `+`data` only, at the effective depth/rate.
+
+**AIFF profile:** uncompressed `FORM`/`AIFF` (not AIFC), stereo PCM at the effective depth/rate, plus ID3v2.3 text from the Rekordbox XML and an optional JPEG cover from the source file.
 ## macOS app (no Terminal)
 
-Download **Rekordbox WAV Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon). Defaults write to `~/Documents/rekordbox-wav` (a different folder than the CLI’s `./output`); the app remembers your last Rekordbox XML, WAV folder, and Import XML between launches. On launch it searches only your home folder (top-level files) and `~/Documents` for `*rekordbox*.xml` (skipping Desktop, Downloads, and iCloud) and auto-loads a single match, or asks you to choose if several are found. First launch: right-click → **Open** if Gatekeeper blocks it (ad-hoc signed). macOS may ask for Documents access on first open; if you decline, the app still opens and defaults to `~/rekordbox-wav` — Browse… can prompt again when you navigate into Documents.
+Download **Rekordbox Playlist Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon). Defaults write to `~/Documents/rekordbox-converted` (a different folder than the CLI’s `./output`); the app remembers your last Rekordbox XML, WAV folder, and Import XML between launches. On launch it searches only your home folder (top-level files) and `~/Documents` for `*rekordbox*.xml` (skipping Desktop, Downloads, and iCloud) and auto-loads a single match, or asks you to choose if several are found. First launch: right-click → **Open** if Gatekeeper blocks it (ad-hoc signed). macOS may ask for Documents access on first open; if you decline, the app still opens and defaults to `~/rekordbox-converted` — Browse… can prompt again when you navigate into Documents.
 
 Import into Rekordbox the same way as the CLI — point **Imported Library** at the app’s import XML. In the app, **Help → How to Use…** (or the **How to use** button) covers the full Rekordbox click-path. Same steps are also in **[USAGE.md](USAGE.md)**.
 
@@ -47,7 +49,7 @@ That script downloads static **release** `ffmpeg`/`ffprobe` for arm64 and amd64 
 
 Do **not** copy Homebrew’s ffmpeg (cellar dylibs). Static ffmpeg is GPL — see [third_party/ffmpeg/](third_party/ffmpeg/).
 
-The app lands in `dist/Rekordbox WAV Converter.app`. Confirm both slices: `lipo -archs "dist/Rekordbox WAV Converter.app/Contents/MacOS/Rekordbox WAV Converter"`.
+The app lands in `dist/Rekordbox Playlist Converter.app`. Confirm both slices: `lipo -archs "dist/Rekordbox Playlist Converter.app/Contents/MacOS/Rekordbox Playlist Converter"`.
 
 ## First time (CLI)
 
@@ -96,9 +98,11 @@ Most people can ignore this and use the prompts.
 | ------------ | ----------------------------------- | --------------------------------------------------------------- |
 | `--xml`      | asked                               | Your Rekordbox collection export                                |
 | `--playlist` | asked                               | Playlist name, exactly as in Rekordbox                          |
-| `--format`   | `wav`                               | `wav` (16/44.1 universal) or `aiff` (Pioneer 24/48 ceiling)     |
+| `--format`   | `wav`                               | `wav` or `aiff`                                                 |
+| `--bit-depth` | `16`                               | Max bit depth `16` or `24` (never upconvert 16-bit to 24-bit)   |
+| `--sample-rate` | `44100`                         | Max rate `44100` or `48000` (never upconvert 44.1 to 48 kHz)    |
 | `--wav-dir`  | `./output`                          | Folder for audio files (`output/<playlist>/`)                   |
-| `--output`   | `./output/rekordbox-wav-import.xml` | File Rekordbox should import (appended on re-run)               |
+| `--output`   | `./output/rekordbox-import.xml` | File Rekordbox should import (appended on re-run)               |
 | `--force`    | off                                 | Rebuild even if dest already matches the profile                |
 | `--dry-run`  | off                                 | Check only; write nothing                                       |
 

@@ -4,8 +4,11 @@
 
 Intended for **1.3.0** (app version remains 1.2.0 until release).
 
-- Opt-in **AIFF** output (`--format aiff`, wizard prompt, GUI radios): Pioneer **24-bit / 48 kHz ceiling** — preserve in-profile PCM, never upconvert; downsample only when over the cap.
-- AIFF files get **ID3v2.3** text from Rekordbox XML (UTF-16) and an optional JPEG cover from the source; WAV stays the stripped 16-bit / 44.1 kHz universal profile.
+- Selectable output quality: `--format wav|aiff`, `--bit-depth 16|24`, `--sample-rate 44100|48000` (GUI radios + prefs). Defaults remain WAV / 16 / 44100.
+- Quality is a **ceiling**: never upconvert 16-bit to 24-bit or 44.1 kHz to 48 kHz; preserve source when it fits; reduce only when over the cap.
+- WAV stays stripped `WAVE_FORMAT_PCM` with `fmt `+`data` only (including 24-bit); AIFF stays `FORM`/`AIFF` with ID3v2.3 from the XML and optional cover.
+- Skip dest only when it matches the **effective** quality and canonical container (AIFF also ID3/art), so raising 16/44.1 → 24/48 rebuilds previously reduced files when the source is higher quality.
+- Opt-in **AIFF** output (`--format aiff`, wizard prompt, GUI radios) with ID3v2.3 text/cover; import XML Kind/suffix follow format.
 - Import XML collection tracks are **refreshed** on rerun (same Location) while preserving TrackID / playlist keys.
 - GUI/docs say “audio files” where the format is selectable; `--wav-dir` and the app bundle name are unchanged.
 - Internal refactor: split conversion into `cdj_wav`, `cdj_aiff`, `rekordbox_xml`, and `cli_error` modules behind the existing `rb_playlist_to_wav` facade (no user-facing change).
@@ -36,6 +39,6 @@ Intended for **1.3.0** (app version remains 1.2.0 until release).
 First public release.
 
 - CLI (`rb-converter.py`) converts Rekordbox playlist lossless tracks to WAV and writes an import XML with cues, beatgrid, rating, BPM, and tags preserved.
-- macOS universal2 app (**Rekordbox WAV Converter**) with bundled static ffmpeg/ffprobe (ad-hoc signed).
+- macOS universal2 app (**Rekordbox Playlist Converter**) with bundled static ffmpeg/ffprobe (ad-hoc signed).
 - Supports Rekordbox 6 and 7 XML exports (FLAC, ALAC, AIFF; WAV copied as-is).
 - Licensed under GPL-3.0-or-later.

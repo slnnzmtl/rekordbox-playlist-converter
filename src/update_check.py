@@ -52,7 +52,7 @@ def _first_paragraph(body: str) -> str:
 def fetch_latest_release(timeout: float = 10.0) -> ReleaseInfo:
     request = urllib.request.Request(
         LATEST_RELEASE_URL,
-        headers={"Accept": "application/vnd.github+json", "User-Agent": "rekordbox-wav-converter"},
+        headers={"Accept": "application/vnd.github+json", "User-Agent": "rekordbox-playlist-converter"},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         payload: dict[str, Any] = json.loads(response.read().decode())
