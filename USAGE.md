@@ -48,16 +48,20 @@ You will be asked to:
 
 1. **Choose the XML** — common export paths are listed; type a number or a full path.
 2. **Choose playlists** — numbered list with folder and track count. Type `1`, `1,4,7`, or `all`.
-3. **Confirm folders** — defaults are `./output` for audio files and `./output/rekordbox-wav-import.xml` for the import file.
-4. **Format** — `wav` (default, 16-bit / 44.1 kHz universal) or `aiff` (Pioneer 24/48 ceiling + ID3v2.3).
+3. **Confirm folders** — defaults are `./output` for audio files and `./output/rekordbox-import.xml` for the import file.
+4. **Format** — `wav` (default) or `aiff`.
+5. **Max bit depth** — `24` (default) or `16`. 16-bit tracks are not upconverted to 24-bit.
+6. **Max sample rate** — `48000` (default) or `44100`. 44.1 kHz tracks are not upconverted to 48 kHz.
 
 **What you get**
 
 - Audio files in `output/<playlist name>/`
-  - WAV: 16-bit / 44.1 kHz / stereo `WAVE_FORMAT_PCM` (`fmt ` + `data` only)
-  - AIFF: stereo PCM within 24-bit / 48 kHz, plus ID3v2.3 from the XML and optional cover art
-- Import file `output/rekordbox-wav-import.xml`
+  - WAV: stereo `WAVE_FORMAT_PCM` (`fmt ` + `data` only) at the effective depth/rate
+  - AIFF: stereo PCM at the effective depth/rate, plus ID3v2.3 from the XML and optional cover art
+- Import file `output/rekordbox-import.xml`
 - Playlist named `{your playlist} [WAV]` or `{your playlist} [AIFF]`
+
+These quality settings are maxima, not targets. Defaults stay WAV / 24-bit / 48 kHz.
 
 Your original files stay where they are. Re-running with the same import file **adds** new tracks and refreshes metadata for existing dest paths.
 
@@ -71,7 +75,9 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 ./rb-converter.py \
   --xml ~/Documents/rekordbox/rekordbox.xml \
   --playlist "Dark forest duplicate" \
-  --format aiff
+  --format aiff \
+  --bit-depth 24 \
+  --sample-rate 48000
 ```
 
 | Option | Default | Meaning |
@@ -79,8 +85,10 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 | `--xml` | asked | Collection export |
 | `--playlist` | asked | Exact playlist name |
 | `--format` | `wav` | `wav` or `aiff` |
+| `--bit-depth` | `24` | Max `16` or `24` (no upconvert) |
+| `--sample-rate` | `48000` | Max `44100` or `48000` (no upconvert) |
 | `--wav-dir` | `./output` | Audio folder (`<this>/<playlist>/`) |
-| `--output` | `./output/rekordbox-wav-import.xml` | Import file for Rekordbox |
+| `--output` | `./output/rekordbox-import.xml` | Import file for Rekordbox |
 | `--force` | off | Rebuild files that already match the profile |
 | `--dry-run` | off | Check only; write nothing |
 
@@ -98,7 +106,7 @@ Do **not** use **File → Import**. Point Rekordbox at the **generated** XML, th
 ### Point Rekordbox at this tool’s XML
 
 1. **Preferences → Advanced → Database**.
-2. Under **rekordbox xml**, set **Imported Library** to `output/rekordbox-wav-import.xml` — the file this tool wrote, **not** your original collection export.
+2. Under **rekordbox xml**, set **Imported Library** to `output/rekordbox-import.xml` — the file this tool wrote, **not** your original collection export.
 3. Close Preferences. You should see **rekordbox xml** in the browser tree.
 
 If that pane already pointed at another XML, change **Imported Library** to this file. If tracks do not show up, use the refresh control on the rekordbox xml library.

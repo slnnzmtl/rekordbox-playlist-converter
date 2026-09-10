@@ -1,4 +1,4 @@
-"""In-app usage guide text for the Rekordbox WAV converter GUI."""
+"""In-app usage guide text for the Rekordbox Playlist converter GUI."""
 
 USAGE_GUIDE = """\
 How to convert a playlist (Rekordbox 6 and 7)
@@ -37,27 +37,29 @@ export.
    a short list.
 2. Select one or more playlists (hold ⌃ to multi-select). Search filters the
    list.
-3. Confirm output folder and Import XML. Defaults are ~/Documents/rekordbox-wav
-   and ~/Documents/rekordbox-wav/rekordbox-wav-import.xml when Documents access
-   is allowed. If you decline that request, defaults are ~/rekordbox-wav and
-   ~/rekordbox-wav/rekordbox-wav-import.xml; Browse… can prompt again when you
+3. Confirm output folder and Import XML. Defaults are ~/Documents/rekordbox-converted
+   and ~/Documents/rekordbox-converted/rekordbox-import.xml when Documents access
+   is allowed. If you decline that request, defaults are ~/rekordbox-converted and
+   ~/rekordbox-converted/rekordbox-import.xml; Browse… can prompt again when you
    open Documents. The app remembers your last-used output folder and Import XML
    between launches.
-4. Choose Format: WAV (16-bit / 44.1 kHz universal) or AIFF (Pioneer 24/48
-   ceiling, with ID3v2.3 tags from the XML and optional cover art).
-5. Click Convert.
+4. Choose Format: WAV or AIFF.
+5. Choose Sampling format (bit depth 16Bit/24Bit and rate 44.1KHz/48KHz).
+   These are maxima, not targets: 16-bit tracks stay 16-bit; 44.1 kHz tracks
+   stay 44.1 kHz. Defaults are 24Bit / 48KHz.
+6. Click Convert.
 
 What you get:
 • Audio files in <output folder>/<playlist name>/
-  — WAV: 16-bit / 44.1 kHz / stereo WAVE_FORMAT_PCM, fmt + data only
-  — AIFF: stereo PCM within 24-bit / 48 kHz, plus ID3v2.3 (COMM + SSND + ID3)
+  — WAV: stereo WAVE_FORMAT_PCM, fmt + data only, at the effective depth/rate
+  — AIFF: stereo PCM at the effective depth/rate, plus ID3v2.3 (COMM + SSND + ID3)
 • Import file at the Import XML path
 • Playlist inside that file named {your playlist} [WAV] or [AIFF]
 
 Your original files stay where they are. Re-running with the same import file
 adds new tracks and refreshes metadata for existing dest paths; it does not
-replace the playlist. Check “Overwrite existing audio files” only if you want
-to rebuild files that already match the chosen profile.
+replace the playlist. Dest files that already match the chosen profile are
+skipped unless you force a rebuild (CLI: --force).
 
 ────────────────────────────────────────
 3. Bring it into Rekordbox
@@ -73,7 +75,7 @@ Show the rekordbox xml pane (once):
 Point Rekordbox at this app’s XML:
 1. Preferences → Advanced → Database.
 2. Under rekordbox xml, set Imported Library to the Import XML this app wrote
-   (default: ~/Documents/rekordbox-wav/rekordbox-wav-import.xml) — not your
+   (default: ~/Documents/rekordbox-converted/rekordbox-import.xml) — not your
    original collection export.
 3. Close Preferences. You should see rekordbox xml in the browser tree.
 

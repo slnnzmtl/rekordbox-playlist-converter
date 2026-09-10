@@ -39,6 +39,8 @@ class LoadPreferencesTests(unittest.TestCase):
                 import_xml,
                 source_xml=source_xml,
                 output_format="aiff",
+                bit_depth=24,
+                sample_rate=48000,
                 config_path=config,
             )
             loaded = load_preferences(config_path=config)
@@ -46,6 +48,8 @@ class LoadPreferencesTests(unittest.TestCase):
             self.assertEqual(loaded["import_xml"], str(import_xml.resolve()))
             self.assertEqual(loaded["source_xml"], str(source_xml.resolve()))
             self.assertEqual(loaded["output_format"], "aiff")
+            self.assertEqual(loaded["bit_depth"], "24")
+            self.assertEqual(loaded["sample_rate"], "48000")
 
     def test_load_preferences_ignores_invalid_output_format(self) -> None:
         from gui_preferences import load_preferences
@@ -59,6 +63,8 @@ class LoadPreferencesTests(unittest.TestCase):
                         "wav_dir": "/tmp/x",
                         "import_xml": "/tmp/y.xml",
                         "output_format": "mp3",
+                        "bit_depth": "32",
+                        "sample_rate": "96000",
                     }
                 ),
                 encoding="utf-8",
@@ -66,6 +72,8 @@ class LoadPreferencesTests(unittest.TestCase):
             loaded = load_preferences(config_path=config)
             self.assertEqual(loaded["wav_dir"], "/tmp/x")
             self.assertNotIn("output_format", loaded)
+            self.assertNotIn("bit_depth", loaded)
+            self.assertNotIn("sample_rate", loaded)
 
     def test_save_without_source_xml_still_loads_wav_and_import(self) -> None:
         from gui_preferences import load_preferences, save_preferences
@@ -111,20 +119,20 @@ class DefaultOutputPathsTests(unittest.TestCase):
         from gui_preferences import default_output_paths
 
         wav_dir, import_xml = default_output_paths(documents_accessible=True)
-        self.assertEqual(wav_dir, Path.home() / "Documents" / "rekordbox-wav")
+        self.assertEqual(wav_dir, Path.home() / "Documents" / "rekordbox-converted")
         self.assertEqual(
             import_xml,
-            Path.home() / "Documents" / "rekordbox-wav" / "rekordbox-wav-import.xml",
+            Path.home() / "Documents" / "rekordbox-converted" / "rekordbox-import.xml",
         )
 
     def test_default_output_paths_uses_home_when_documents_not_accessible(self) -> None:
         from gui_preferences import default_output_paths
 
         wav_dir, import_xml = default_output_paths(documents_accessible=False)
-        self.assertEqual(wav_dir, Path.home() / "rekordbox-wav")
+        self.assertEqual(wav_dir, Path.home() / "rekordbox-converted")
         self.assertEqual(
             import_xml,
-            Path.home() / "rekordbox-wav" / "rekordbox-wav-import.xml",
+            Path.home() / "rekordbox-converted" / "rekordbox-import.xml",
         )
 
 
@@ -273,7 +281,7 @@ class IterRekordboxXmlFilesTests(unittest.TestCase):
                 bad = home / sibling / "rekordbox.xml"
                 bad.parent.mkdir(parents=True)
                 bad.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
-            import_xml = home / "Documents" / "rekordbox-wav-import.xml"
+            import_xml = home / "Documents" / "rekordbox-import.xml"
             import_xml.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
             library_hit = home / "Library" / "Caches" / "rekordbox.xml"
             library_hit.parent.mkdir(parents=True)
@@ -376,14 +384,14 @@ class ResolveStartupPathsTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            docs_wav = home / "Documents" / "rekordbox-wav"
+            docs_wav = home / "Documents" / "rekordbox-converted"
             docs_wav.mkdir(parents=True)
             fallback_wav, fallback_xml = default_output_paths(
                 documents_accessible=False, home=home
             )
             saved = {
                 "wav_dir": str(docs_wav),
-                "import_xml": str(docs_wav / "rekordbox-wav-import.xml"),
+                "import_xml": str(docs_wav / "rekordbox-import.xml"),
             }
             wav, xml = resolve_startup_paths(
                 saved,
@@ -439,7 +447,7 @@ class ResolveStartupPathsTests(unittest.TestCase):
                 default_import_xml=DEFAULT_OUTPUT,
             )
             self.assertEqual(wav, wav_dir.resolve())
-            self.assertEqual(xml, (wav_dir / "rekordbox-wav-import.xml").resolve())
+            self.assertEqual(xml, (wav_dir / "rekordbox-import.xml").resolve())
 
     def test_resolve_startup_paths_derives_import_xml_when_saved_xml_invalid(self) -> None:
         from gui_preferences import resolve_startup_paths
@@ -457,7 +465,7 @@ class ResolveStartupPathsTests(unittest.TestCase):
                 default_import_xml=DEFAULT_OUTPUT,
             )
             self.assertEqual(wav, wav_dir.resolve())
-            self.assertEqual(xml, (wav_dir / "rekordbox-wav-import.xml").resolve())
+            self.assertEqual(xml, (wav_dir / "rekordbox-import.xml").resolve())
 
 
 if __name__ == "__main__":

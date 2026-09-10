@@ -1,4 +1,4 @@
-"""CDJ-safe WAV parse and validation (16-bit / 44.1 kHz / stereo PCM)."""
+"""CDJ-safe WAV parse, profile validation, and PCM rewrite (fmt+data only)."""
 
 from __future__ import annotations
 
@@ -66,8 +66,17 @@ def parse_wav_info(path: Path) -> WavInfo:
     )
 
 
-def is_cdj_safe_wav(path: Path) -> bool:
-    """True if path is 16-bit / 44.1 kHz / stereo WAVE_FORMAT_PCM with fmt+data only."""
+def is_cdj_safe_wav(
+    path: Path,
+    *,
+    bit_depth: int = 24,
+    sample_rate: int = 48000,
+) -> bool:
+    """True if path is stereo WAVE_FORMAT_PCM with fmt+data only at the given quality."""
+    if bit_depth not in (16, 24):
+        bit_depth = 24
+    if sample_rate not in (44100, 48000):
+        sample_rate = 48000
     if not path.is_file():
         return False
     try:
@@ -78,7 +87,68 @@ def is_cdj_safe_wav(path: Path) -> bool:
         info.format_tag == WAVE_FORMAT_PCM
         and info.fmt_chunk_size == 16
         and info.channels == CDJ_SAFE_CHANNELS
-        and info.sample_rate == CDJ_SAFE_SAMPLE_RATE
-        and info.bits_per_sample == CDJ_SAFE_BIT_DEPTH
+        and info.sample_rate == sample_rate
+        and info.bits_per_sample == bit_depth
         and info.chunk_ids == CDJ_SAFE_CHUNK_IDS
     )
+
+
+def _rewrite_wav_pcm(source: Path, dest: Path) -> None:
+    """Rewrite as WAVE_FORMAT_PCM with only fmt + data (never EXTENSIBLE)."""
+    try:
+        data = source.read_bytes()
+    except OSError as exc:
+        raise CliError(f"cannot read WAV: {source}: {exc}") from exc
+    if len(data) < 12 or data[0:4] != b"RIFF" or data[8:12] != b"WAVE":
+        raise CliError(f"not a RIFF/WAVE file: {source}")
+    fmt_payload: bytes | None = None
+    pcm_data: bytes | None = None
+    offset = 12
+    while offset + 8 <= len(data):
+        cid = data[offset : offset + 4]
+        size = struct.unpack_from("<I", data, offset + 4)[0]
+        payload_start = offset + 8
+        payload_end = payload_start + size
+        if payload_end > len(data):
+            raise CliError(f"truncated WAV chunk {cid!r} in {source}")
+        if cid == b"fmt ":
+            if size < 16:
+                raise CliError(f"fmt chunk too small in {source}")
+            format_tag, channels, sample_rate, _br, _ba, bits = struct.unpack_from(
+                "<HHIIHH", data, payload_start
+            )
+            if format_tag not in (WAVE_FORMAT_PCM, 0xFFFE):
+                raise CliError(f"unsupported WAV format tag in {source}")
+            if channels != CDJ_SAFE_CHANNELS:
+                raise CliError(f"WAV must be stereo: {source}")
+            if bits not in (16, 24):
+                raise CliError(f"unsupported bit depth in {source}")
+            if sample_rate not in (44100, 48000):
+                raise CliError(f"unsupported sample rate in {source}")
+            block_align = channels * (bits // 8)
+            byte_rate = sample_rate * block_align
+            fmt_payload = struct.pack(
+                "<HHIIHH",
+                WAVE_FORMAT_PCM,
+                channels,
+                sample_rate,
+                byte_rate,
+                block_align,
+                bits,
+            )
+        elif cid == b"data":
+            pcm_data = data[payload_start:payload_end]
+        offset = payload_end + (size % 2)
+    if fmt_payload is None or pcm_data is None:
+        raise CliError(f"WAV missing fmt or data: {source}")
+    body = (
+        b"fmt "
+        + struct.pack("<I", len(fmt_payload))
+        + fmt_payload
+        + b"data"
+        + struct.pack("<I", len(pcm_data))
+        + pcm_data
+    )
+    if len(pcm_data) % 2:
+        body += b"\x00"
+    dest.write_bytes(b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WAVE" + body)
