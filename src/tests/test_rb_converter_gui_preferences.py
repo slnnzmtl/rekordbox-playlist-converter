@@ -911,5 +911,43 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
                 root.destroy()
 
 
+class GuiXmlRefreshTests(unittest.TestCase):
+    def test_refresh_reloads_xml_without_browse_dialog(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch(
+                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
+            ), patch(
+                "rb_converter_gui.filedialog.askopenfilename"
+            ) as ask_open, patch.object(ConverterApp, "_load_playlists") as load:
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app.xml_var.set("/tmp/rekordbox.xml")
+                load.reset_mock()
+                self.assertTrue(
+                    GuiPreferencesStartupTests._click_button(root, "Refresh")
+                )
+                ask_open.assert_not_called()
+                load.assert_called()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+
 if __name__ == "__main__":
     unittest.main()

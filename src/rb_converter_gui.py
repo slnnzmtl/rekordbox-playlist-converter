@@ -349,9 +349,15 @@ class ConverterApp:
         ttk.Entry(frm, textvariable=self.xml_var).grid(
             row=1, column=1, sticky="ew", **pad
         )
-        ttk.Button(frm, text="Browse…", command=self._browse_xml).grid(
-            row=1, column=2, **pad
+        xml_btns = ttk.Frame(frm)
+        xml_btns.grid(row=1, column=2, **pad)
+        ttk.Button(xml_btns, text="Browse…", command=self._browse_xml).pack(
+            side=tk.LEFT
         )
+        self.refresh_btn = ttk.Button(
+            xml_btns, text="Refresh", command=self._refresh_xml
+        )
+        self.refresh_btn.pack(side=tk.LEFT, padx=(4, 0))
 
         ttk.Label(frm, text="Playlists").grid(row=2, column=0, sticky="w", **pad)
         self.search_entry = ttk.Entry(frm, textvariable=self.search_var)
@@ -577,6 +583,15 @@ class ConverterApp:
         if path:
             self._adopt_source_xml(Path(path), persist=True)
 
+    def _refresh_xml(self) -> None:
+        if self._busy:
+            return
+        xml_s = self.xml_var.get().strip()
+        if not xml_s:
+            messagebox.showerror("Missing XML", "Choose a Rekordbox XML export.")
+            return
+        self._load_playlists()
+
     def _browse_wav_dir(self) -> None:
         current = self.wav_dir_var.get().strip()
         path = filedialog.askdirectory(
@@ -694,6 +709,7 @@ class ConverterApp:
         self._busy = busy
         state = tk.DISABLED if busy else tk.NORMAL
         self.convert_btn.configure(state=state)
+        self.refresh_btn.configure(state=state)
         if busy:
             self._cancel_progress_anim()
             self._progress_target = 0.0
