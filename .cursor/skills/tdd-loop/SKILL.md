@@ -29,7 +29,7 @@ Skip this skill for docs-only edits, packaging/build scripts with no testable Py
 | --- | --- |
 | Runner | `python3 -m unittest discover -s src/tests -v` (CI uses the same discover path) |
 | Tests | `src/tests/test_*.py` — `unittest.TestCase`, Given-When-Then in method names or docstrings |
-| Conversion / XML | `src/rb_playlist_to_wav.py` |
+| Conversion / XML | `src/rb_playlist_to_wav.py` (facade) plus `cdj_wav.py`, `cdj_aiff.py`, `rekordbox_xml.py`, `cli_error.py` |
 | Tk GUI | `src/rb_converter_gui.py` |
 | Shared help | `src/usage_guide.py` |
 | Version | `src/version.py` |
@@ -43,7 +43,7 @@ Optional phase subagents (if present): `.cursor/agents/tdd-red.md`, `tdd-green.m
 
 Test public behavior, not private helpers:
 
-- Playlist XML parse, playlist selection, import-XML write (`rb_playlist_to_wav`)
+- Playlist XML parse, playlist selection, import-XML write (`rb_playlist_to_wav` facade / `rekordbox_xml`)
 - Conversion stats and skip/copy/convert outcomes (including GUI helpers that wrap those stats)
 - Path / filename collision handling, NFC/NFD resolution
 - Version string shown in the GUI
@@ -86,8 +86,7 @@ python3 -m unittest discover -s src/tests -v
 
 ### 2. GREEN — minimal production code
 
-- Change the smallest production surface that makes the new test pass (`src/rb_playlist_to_wav.py`, `src/rb_converter_gui.py`, `src/usage_guide.py`, `src/version.py`, or the thin launcher only if the slice is launch behavior).
-- Re-run discover. Iterate on production code until green.
+- Change the smallest production surface that makes the new test pass (`src/rb_playlist_to_wav.py` or its leaf modules `cdj_wav.py` / `cdj_aiff.py` / `rekordbox_xml.py` / `cli_error.py`, `src/rb_converter_gui.py`, `src/usage_guide.py`, `src/version.py`, or the thin launcher only if the slice is launch behavior). Keep public names re-exported from `rb_playlist_to_wav` so `import rb_playlist_to_wav as rb` and existing patches keep working.- Re-run discover. Iterate on production code until green.
 - If GREEN needs more cases, go back to RED for **one** additional test — do not bulk-add coverage.
 
 ### 3. REFACTOR — cleanup under green

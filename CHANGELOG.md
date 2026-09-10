@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Intended for **1.3.0** (app version remains 1.2.0 until release).
+
+- Opt-in **AIFF** output (`--format aiff`, wizard prompt, GUI radios): Pioneer **24-bit / 48 kHz ceiling** — preserve in-profile PCM, never upconvert; downsample only when over the cap.
+- AIFF files get **ID3v2.3** text from Rekordbox XML (UTF-16) and an optional JPEG cover from the source; WAV stays the stripped 16-bit / 44.1 kHz universal profile.
+- Import XML collection tracks are **refreshed** on rerun (same Location) while preserving TrackID / playlist keys.
+- GUI/docs say “audio files” where the format is selectable; `--wav-dir` and the app bundle name are unchanged.
+- Internal refactor: split conversion into `cdj_wav`, `cdj_aiff`, `rekordbox_xml`, and `cli_error` modules behind the existing `rb_playlist_to_wav` facade (no user-facing change).
+
 ## 1.2.0
 
 - Output WAVs are always **CDJ-safe**: 16-bit / 44.1 kHz / stereo `WAVE_FORMAT_PCM` with only `fmt ` and `data` chunks (no `WAVE_FORMAT_EXTENSIBLE`, no LIST/INFO metadata).

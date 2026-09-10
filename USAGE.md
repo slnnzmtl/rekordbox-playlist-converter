@@ -1,6 +1,6 @@
 # How to convert a playlist (Rekordbox 6 and 7)
 
-Goal: new WAV copies of a playlist, with cues and beatgrid, **without touching your FLACs / ALACs / AIFFs**.
+Goal: new **WAV** or **AIFF** copies of a playlist, with cues and beatgrid, **without touching your FLACs / ALACs / AIFFs**.
 
 Menu names below match **Rekordbox 7**. Rekordbox 6 is the same idea: export the collection, then use the **rekordbox xml** pane — never **File → Import**.
 
@@ -48,19 +48,20 @@ You will be asked to:
 
 1. **Choose the XML** — common export paths are listed; type a number or a full path.
 2. **Choose playlists** — numbered list with folder and track count. Type `1`, `1,4,7`, or `all`.
-3. **Confirm folders** — defaults are `./output` for WAVs and `./output/rekordbox-wav-import.xml` for the import file.
-
-Then it converts to CDJ-safe WAV (or copies a source that already matches) and prints how to import.
+3. **Confirm folders** — defaults are `./output` for audio files and `./output/rekordbox-wav-import.xml` for the import file.
+4. **Format** — `wav` (default, 16-bit / 44.1 kHz universal) or `aiff` (Pioneer 24/48 ceiling + ID3v2.3).
 
 **What you get**
 
-- CDJ-safe WAVs in `output/<playlist name>/` — 16-bit / 44.1 kHz / stereo `WAVE_FORMAT_PCM` (`fmt ` + `data` only)
+- Audio files in `output/<playlist name>/`
+  - WAV: 16-bit / 44.1 kHz / stereo `WAVE_FORMAT_PCM` (`fmt ` + `data` only)
+  - AIFF: stereo PCM within 24-bit / 48 kHz, plus ID3v2.3 from the XML and optional cover art
 - Import file `output/rekordbox-wav-import.xml`
-- Playlist inside that file named `{your playlist} [WAV]`
+- Playlist named `{your playlist} [WAV]` or `{your playlist} [AIFF]`
 
-Your original files stay where they are. Existing WAVs are re-encoded when they are not already CDJ-safe (for example extensible headers or 48 kHz).
+Your original files stay where they are. Re-running with the same import file **adds** new tracks and refreshes metadata for existing dest paths.
 
-If two tracks would share a filename, nothing is written and you get an error. Re-running with the same import file **adds** new tracks; it does not replace the `[WAV]` playlist.
+If two tracks would share a filename, nothing is written and you get an error.
 
 ### Same thing with options (optional)
 
@@ -69,16 +70,18 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 ```bash
 ./rb-converter.py \
   --xml ~/Documents/rekordbox/rekordbox.xml \
-  --playlist "Dark forest duplicate"
+  --playlist "Dark forest duplicate" \
+  --format aiff
 ```
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--xml` | asked | Collection export |
 | `--playlist` | asked | Exact playlist name |
-| `--wav-dir` | `./output` | WAV folder (`<this>/<playlist>/`) |
+| `--format` | `wav` | `wav` or `aiff` |
+| `--wav-dir` | `./output` | Audio folder (`<this>/<playlist>/`) |
 | `--output` | `./output/rekordbox-wav-import.xml` | Import file for Rekordbox |
-| `--force` | off | Rebuild WAVs that already exist |
+| `--force` | off | Rebuild files that already match the profile |
 | `--dry-run` | off | Check only; write nothing |
 
 ---
@@ -103,20 +106,20 @@ If that pane already pointed at another XML, change **Imported Library** to this
 ### Copy into your collection
 
 1. Open **rekordbox xml** → **Playlists**.
-2. Find `{your playlist} [WAV]`.
+2. Find `{your playlist} [WAV]` or `{your playlist} [AIFF]`.
 3. Drag it onto **Playlists** in your main library, or right-click → **Import Playlist**.
-4. Tracks only: **rekordbox xml → All Tracks**, select the WAV rows, drag onto **Collection** (or right-click → **Import to Collection**).
+4. Tracks only: **rekordbox xml → All Tracks**, select the audio rows, drag onto **Collection** (or right-click → **Import to Collection**).
 
 If Rekordbox asks whether to load information from the library being imported, choose **Yes** so cues, grid, BPM, and key come across.
 
-Play one track. Confirm it is a WAV on a disk Rekordbox can read (internal drive or a mounted volume).
+Play one track. Confirm it is on a disk Rekordbox can read (internal drive or a mounted volume).
 
 ---
 
 ## 4. After import
 
 - Analyze again only if waveforms are missing; cues and grid should already be there.
-- **Do not move the WAV folder.** Rekordbox stores those paths. Convert again if you relocate files.
+- **Do not move the output folder.** Rekordbox stores those paths. Convert again if you relocate files.
 - Original lossless files are untouched.
 
 **New tracks later:** export XML from Rekordbox again, run `./rb-converter.py` with the same output folder and import file, refresh **Imported Library**, then import the new rows.

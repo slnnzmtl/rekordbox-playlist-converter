@@ -105,6 +105,10 @@ class ConverterApp:
         )
         self.wav_dir_var.set(str(startup_wav))
         self.output_var.set(str(startup_output))
+        saved_format = saved_prefs.get("output_format", "wav")
+        if saved_format not in ("wav", "aiff"):
+            saved_format = "wav"
+        self.format_var = tk.StringVar(value=saved_format)
         self.force_var = tk.BooleanVar(value=False)
         self.search_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
@@ -317,7 +321,7 @@ class ConverterApp:
         self.playlist_list.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
 
-        ttk.Label(frm, text="WAV folder").grid(row=4, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Output folder").grid(row=4, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.wav_dir_var).grid(
             row=4, column=1, sticky="ew", **pad
         )
@@ -335,8 +339,15 @@ class ConverterApp:
 
         opts = ttk.Frame(frm)
         opts.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
+        ttk.Label(opts, text="Format").pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            opts, text="WAV", variable=self.format_var, value="wav"
+        ).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Radiobutton(
+            opts, text="AIFF", variable=self.format_var, value="aiff"
+        ).pack(side=tk.LEFT, padx=(4, 12))
         ttk.Checkbutton(
-            opts, text="Overwrite existing WAV files", variable=self.force_var
+            opts, text="Overwrite existing audio files", variable=self.force_var
         ).pack(side=tk.LEFT)
         self.convert_btn = ttk.Button(opts, text="Convert", command=self._start_convert)
         self.convert_btn.pack(side=tk.RIGHT)
@@ -430,8 +441,13 @@ class ConverterApp:
         wav_dir, output = self._resolved_output_paths()
         source_s = self.xml_var.get().strip()
         source_xml = Path(source_s).expanduser() if source_s else None
+        fmt = self.format_var.get().strip().lower()
+        if fmt not in ("wav", "aiff"):
+            fmt = "wav"
         try:
-            save_preferences(wav_dir, output, source_xml=source_xml)
+            save_preferences(
+                wav_dir, output, source_xml=source_xml, output_format=fmt
+            )
         except OSError:
             pass
 
@@ -461,7 +477,7 @@ class ConverterApp:
     def _browse_wav_dir(self) -> None:
         current = self.wav_dir_var.get().strip()
         path = filedialog.askdirectory(
-            title="WAV output folder",
+            title="Audio output folder",
             initialdir=self._browse_initial_dir(
                 Path(current) if current else FALLBACK_WAV_DIR
             ),
@@ -647,6 +663,9 @@ class ConverterApp:
         wav_dir, output = self._resolved_output_paths()
         self._persist_output_preferences()
         force = bool(self.force_var.get())
+        output_format = self.format_var.get().strip().lower()
+        if output_format not in ("wav", "aiff"):
+            output_format = "wav"
         xml_path = Path(xml_s).expanduser()
 
         self._set_busy(True)
@@ -668,6 +687,7 @@ class ConverterApp:
                         wav_dir,
                         output,
                         playlist_folder=folder,
+                        output_format=output_format,
                     )
                     if errors:
                         msg = "\n".join(errors)
@@ -765,7 +785,7 @@ class ConverterApp:
     ) -> None:
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
-        self.status_var.set("Finished with no WAV files converted or copied.")
+        self.status_var.set("Finished with no audio files converted or copied.")
         body = "\n".join(summaries)
         if warnings:
             body += (
@@ -793,6 +813,8 @@ class ConverterApp:
                 "These files were missing and were skipped:\n\n"
                 + "\n".join(warnings),
             )
+        fmt = self.format_var.get().strip().lower()
+        suffix = "[AIFF]" if fmt == "aiff" else "[WAV]"
         message = (
             f"{body}\n\n"
             "Import into Rekordbox:\n"
@@ -800,7 +822,7 @@ class ConverterApp:
             "2. Preferences → Advanced → Database → Imported Library →\n"
             f"   {output}\n"
             "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
-            "   (or drag the [WAV] playlist into Playlists)"
+            f"   (or drag the {suffix} playlist into Playlists)"
         )
         self._show_done_dialog(message, open_dir)
 
