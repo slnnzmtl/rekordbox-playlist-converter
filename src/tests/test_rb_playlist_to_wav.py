@@ -650,12 +650,16 @@ class XmlFixtureTests(unittest.TestCase):
         joined = "\n".join(errors)
         self.assertIn("unsupported format", joined)
         self.assertNotIn("unknown bit depth", joined)
-        # FLAC without bits_per_raw_sample still plans as CDJ-safe 16-bit PCM.
+        # FLAC without bits_per_raw_sample still plans under the default ceiling.
         assert plan is not None
         flac_items = [t for t in plan.unique if t.source_path == mystery]
         self.assertEqual(len(flac_items), 1)
-        self.assertEqual(flac_items[0].codec, "pcm_s16le")
+        self.assertEqual(flac_items[0].codec, "pcm_s24le")
+        self.assertEqual(flac_items[0].bit_depth, 24)
+        self.assertEqual(flac_items[0].sample_rate, 44100)
         self.assertFalse(flac_items[0].copy_wav)
+        self.assertEqual(plan.max_bit_depth, 24)
+        self.assertEqual(plan.max_sample_rate, 48000)
 
     def test_playlist_dir_name_sanitizes_separators(self) -> None:
         self.assertEqual(rb.playlist_dir_name("Dark forest"), "Dark forest")
@@ -670,16 +674,16 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(args.wav_dir, Path("output"))
         self.assertEqual(args.output, Path("output/rekordbox-import.xml"))
         self.assertEqual(args.format, "wav")
-        self.assertEqual(args.bit_depth, 16)
-        self.assertEqual(args.sample_rate, 44100)
+        self.assertEqual(args.bit_depth, 24)
+        self.assertEqual(args.sample_rate, 48000)
 
     def test_format_aiff_accepted(self) -> None:
         args = rb.parse_args(
             ["--xml", "in.xml", "--playlist", "P", "--format", "aiff"]
         )
         self.assertEqual(args.format, "aiff")
-        self.assertEqual(args.bit_depth, 16)
-        self.assertEqual(args.sample_rate, 44100)
+        self.assertEqual(args.bit_depth, 24)
+        self.assertEqual(args.sample_rate, 48000)
 
     def test_bit_depth_and_sample_rate_accepted(self) -> None:
         args = rb.parse_args(

@@ -69,14 +69,14 @@ def parse_wav_info(path: Path) -> WavInfo:
 def is_cdj_safe_wav(
     path: Path,
     *,
-    bit_depth: int = CDJ_SAFE_BIT_DEPTH,
-    sample_rate: int = CDJ_SAFE_SAMPLE_RATE,
+    bit_depth: int = 24,
+    sample_rate: int = 48000,
 ) -> bool:
     """True if path is stereo WAVE_FORMAT_PCM with fmt+data only at the given quality."""
     if bit_depth not in (16, 24):
-        bit_depth = CDJ_SAFE_BIT_DEPTH
+        bit_depth = 24
     if sample_rate not in (44100, 48000):
-        sample_rate = CDJ_SAFE_SAMPLE_RATE
+        sample_rate = 48000
     if not path.is_file():
         return False
     try:

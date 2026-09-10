@@ -637,7 +637,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        from rb_converter_gui import ConverterApp, QUALITY_CEILING_CAPTION
+        from rb_converter_gui import ConverterApp
 
         root = None
         try:
@@ -652,12 +652,10 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
                 self.assertEqual(app.format_var.get(), "wav")
-                self.assertEqual(app.bit_depth_var.get(), "16")
-                self.assertEqual(app.sample_rate_var.get(), "44100")
-                self.assertEqual(
-                    app.quality_caption.cget("text"),
-                    QUALITY_CEILING_CAPTION,
-                )
+                self.assertEqual(app.bit_depth_var.get(), "24")
+                self.assertEqual(app.sample_rate_var.get(), "48000")
+                self.assertFalse(hasattr(app, "quality_caption"))
+                self.assertFalse(hasattr(app, "force_var"))
                 from rb_converter_gui import (
                     BIT_DEPTH_24_TOOLTIP,
                     SAMPLE_RATE_48_TOOLTIP,
@@ -682,7 +680,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        from rb_converter_gui import ConverterApp, QUALITY_CEILING_CAPTION
+        from rb_converter_gui import ConverterApp
 
         root = None
         try:
@@ -725,7 +723,6 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 self.assertEqual(app.format_var.get(), "aiff")
                 self.assertEqual(app.bit_depth_var.get(), "24")
                 self.assertEqual(app.sample_rate_var.get(), "48000")
-                self.assertIn("maxima", QUALITY_CEILING_CAPTION)
                 app.xml_var.set("/tmp/test.xml")
                 app._start_convert()
                 prepare.assert_called()

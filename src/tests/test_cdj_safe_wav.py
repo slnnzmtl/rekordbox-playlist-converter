@@ -93,7 +93,7 @@ class CdjSafeWavTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "safe.wav"
             write_pcm_wav(path)
-            self.assertTrue(rb.is_cdj_safe_wav(path))
+            self.assertTrue(rb.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100))
 
     def test_rejects_extensible_list_wrong_rate_depth_and_mono(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -156,7 +156,7 @@ class CdjSafeConvertTests(unittest.TestCase):
 
             rb.run_ffmpeg(src, dest, "pcm_s16le", force=True)
 
-            self.assertTrue(rb.is_cdj_safe_wav(dest))
+            self.assertTrue(rb.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100))
             out = rb.parse_wav_info(dest)
             self.assertEqual(out.format_tag, 1)
             self.assertEqual(out.sample_rate, 44100)
@@ -271,8 +271,8 @@ class ClassifyCdjSafeTests(unittest.TestCase):
                 },
             )
             self.assertFalse(is_copy)
-            self.assertEqual(codec, "pcm_s16le")
-            self.assertEqual((bits, rate), (16, 44100))
+            self.assertEqual(codec, "pcm_s24le")
+            self.assertEqual((bits, rate), (24, 44100))
 
 
 class SkipCdjSafeDestTests(unittest.TestCase):
@@ -301,6 +301,8 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                     codec="pcm_s16le",
                     copy_wav=False,
                     noop=False,
+                    bit_depth=16,
+                    sample_rate=44100,
                 )
 
             safe_item = make_item(safe_dest)
@@ -420,9 +422,9 @@ class NoopUnsafeInPlaceTests(unittest.TestCase):
             playlist = "Set"
             playlist_dir = wav_dir / playlist
             playlist_dir.mkdir(parents=True)
-            # Dest path is wav_dir/playlist/stem.wav — put unsafe source there.
+            # Dest path is wav_dir/playlist/stem.wav — put out-of-profile source there.
             src = playlist_dir / "track.wav"
-            write_pcm_wav(src, sample_rate=48000)
+            write_pcm_wav(src, sample_rate=96000)
             xml_path = root / "c.xml"
             xml_path.write_text(
                 f"""\

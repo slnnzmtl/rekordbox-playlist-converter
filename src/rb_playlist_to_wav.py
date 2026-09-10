@@ -135,8 +135,8 @@ class PlannedTrack:
     codec: str | None  # None means copy WAV (or no-op)
     copy_wav: bool
     noop: bool
-    bit_depth: int = 16
-    sample_rate: int = 44100
+    bit_depth: int = 24
+    sample_rate: int = 48000
 
 
 @dataclass
@@ -153,8 +153,8 @@ class Plan:
     output_existed: bool
     warnings: list[str] = field(default_factory=list)
     output_format: str = "wav"
-    max_bit_depth: int = 16
-    max_sample_rate: int = 44100
+    max_bit_depth: int = 24
+    max_sample_rate: int = 48000
 
 
 @dataclass
@@ -210,9 +210,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--bit-depth",
         type=int,
         choices=(16, 24),
-        default=16,
+        default=24,
         help=(
-            "Maximum bit depth (16 or 24). Default 16. "
+            "Maximum bit depth (16 or 24). Default 24. "
             "16-bit tracks are not upconverted to 24-bit."
         ),
     )
@@ -220,9 +220,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--sample-rate",
         type=int,
         choices=(44100, 48000),
-        default=44100,
+        default=48000,
         help=(
-            "Maximum sample rate (44100 or 48000). Default 44100. "
+            "Maximum sample rate (44100 or 48000). Default 48000. "
             "44.1 kHz tracks are not upconverted to 48 kHz."
         ),
     )
@@ -363,17 +363,17 @@ def prompt_wizard(
         print("  choose wav or aiff", file=sys.stderr)
         output_format = prompt_line("Format (wav/aiff)", "wav").strip().lower()
     bit_s = prompt_line(
-        "Max bit depth (16/24)", str(getattr(args, "bit_depth", 16))
+        "Max bit depth (16/24)", str(getattr(args, "bit_depth", 24))
     )
     while bit_s.strip() not in ("16", "24"):
         print("  choose 16 or 24", file=sys.stderr)
-        bit_s = prompt_line("Max bit depth (16/24)", "16")
+        bit_s = prompt_line("Max bit depth (16/24)", "24")
     rate_s = prompt_line(
-        "Max sample rate (44100/48000)", str(getattr(args, "sample_rate", 44100))
+        "Max sample rate (44100/48000)", str(getattr(args, "sample_rate", 48000))
     )
     while rate_s.strip() not in ("44100", "48000"):
         print("  choose 44100 or 48000", file=sys.stderr)
-        rate_s = prompt_line("Max sample rate (44100/48000)", "44100")
+        rate_s = prompt_line("Max sample rate (44100/48000)", "48000")
     return (
         xml_path,
         names,
@@ -395,8 +395,8 @@ def run_convert_one(
     dry_run: bool,
     playlist_folder: str | None = None,
     output_format: str = "wav",
-    max_bit_depth: int = 16,
-    max_sample_rate: int = 44100,
+    max_bit_depth: int = 24,
+    max_sample_rate: int = 48000,
 ) -> int:
     plan, errors = prepare(
         xml_path,
@@ -537,17 +537,17 @@ def bit_depth_of_codec(codec: str) -> int:
 def target_from_stream(
     stream: dict,
     *,
-    max_bit_depth: int = 16,
-    max_sample_rate: int = 44100,
+    max_bit_depth: int = 24,
+    max_sample_rate: int = 48000,
 ) -> tuple[int, int]:
     """Return (bit_depth, sample_rate) under the selected ceiling.
 
     Never raises bit depth or sample rate above the source (within the ceiling).
     """
     if max_bit_depth not in (16, 24):
-        max_bit_depth = 16
+        max_bit_depth = 24
     if max_sample_rate not in (44100, 48000):
-        max_sample_rate = 44100
+        max_sample_rate = 48000
 
     fmt = str(stream.get("sample_fmt") or "")
     raw = stream.get("bits_per_raw_sample")
@@ -602,8 +602,8 @@ def classify_source(
     stream: dict,
     *,
     output_format: str = "wav",
-    max_bit_depth: int = 16,
-    max_sample_rate: int = 44100,
+    max_bit_depth: int = 24,
+    max_sample_rate: int = 48000,
 ) -> tuple[str, bool, int, int]:
     """Return (ffmpeg_codec or 'copy', is_copy, bit_depth, sample_rate)."""
     ext = path.suffix.lower()
@@ -655,15 +655,15 @@ def build_plan(
     output_existed: bool,
     *,
     output_format: str = "wav",
-    max_bit_depth: int = 16,
-    max_sample_rate: int = 44100,
+    max_bit_depth: int = 24,
+    max_sample_rate: int = 48000,
 ) -> tuple[Plan | None, list[str]]:
     if output_format not in ("wav", "aiff"):
         output_format = "wav"
     if max_bit_depth not in (16, 24):
-        max_bit_depth = 16
+        max_bit_depth = 24
     if max_sample_rate not in (44100, 48000):
-        max_sample_rate = 44100
+        max_sample_rate = 48000
     errors: list[str] = []
     tracks_el, resolve_errors = resolve_playlist_tracks(source_root, playlist_el)
     errors.extend(resolve_errors)
@@ -939,8 +939,8 @@ def write_aiff_output(
     *,
     passthrough: bool,
     codec: str | None,
-    bit_depth: int = 16,
-    sample_rate: int = 44100,
+    bit_depth: int = 24,
+    sample_rate: int = 48000,
 ) -> None:
     """Atomically write AIFF: PCM then ID3, validate, os.replace."""
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -1327,8 +1327,8 @@ def prepare(
     *,
     playlist_folder: str | None = None,
     output_format: str = "wav",
-    max_bit_depth: int = 16,
-    max_sample_rate: int = 44100,
+    max_bit_depth: int = 24,
+    max_sample_rate: int = 48000,
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(require_tools())

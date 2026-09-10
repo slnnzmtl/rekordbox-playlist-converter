@@ -50,8 +50,8 @@ You will be asked to:
 2. **Choose playlists** — numbered list with folder and track count. Type `1`, `1,4,7`, or `all`.
 3. **Confirm folders** — defaults are `./output` for audio files and `./output/rekordbox-import.xml` for the import file.
 4. **Format** — `wav` (default) or `aiff`.
-5. **Max bit depth** — `16` (default) or `24`. 16-bit tracks are not upconverted to 24-bit.
-6. **Max sample rate** — `44100` (default) or `48000`. 44.1 kHz tracks are not upconverted to 48 kHz.
+5. **Max bit depth** — `24` (default) or `16`. 16-bit tracks are not upconverted to 24-bit.
+6. **Max sample rate** — `48000` (default) or `44100`. 44.1 kHz tracks are not upconverted to 48 kHz.
 
 **What you get**
 
@@ -61,7 +61,7 @@ You will be asked to:
 - Import file `output/rekordbox-import.xml`
 - Playlist named `{your playlist} [WAV]` or `{your playlist} [AIFF]`
 
-These quality settings are maxima, not targets. Defaults stay WAV / 16-bit / 44.1 kHz.
+These quality settings are maxima, not targets. Defaults stay WAV / 24-bit / 48 kHz.
 
 Your original files stay where they are. Re-running with the same import file **adds** new tracks and refreshes metadata for existing dest paths.
 
@@ -85,8 +85,8 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 | `--xml` | asked | Collection export |
 | `--playlist` | asked | Exact playlist name |
 | `--format` | `wav` | `wav` or `aiff` |
-| `--bit-depth` | `16` | Max `16` or `24` (no upconvert) |
-| `--sample-rate` | `44100` | Max `44100` or `48000` (no upconvert) |
+| `--bit-depth` | `24` | Max `16` or `24` (no upconvert) |
+| `--sample-rate` | `48000` | Max `44100` or `48000` (no upconvert) |
 | `--wav-dir` | `./output` | Audio folder (`<this>/<playlist>/`) |
 | `--output` | `./output/rekordbox-import.xml` | Import file for Rekordbox |
 | `--force` | off | Rebuild files that already match the profile |

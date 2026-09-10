@@ -26,7 +26,7 @@ Pre-built **macOS app** (universal2): see [GitHub Releases](https://github.com/s
 
 MP3, AAC, and other lossy files are skipped with an error.
 
-Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are WAV / 16-bit / 44.1 kHz. Pioneer 24/48 is `--format aiff --bit-depth 24 --sample-rate 48000`.
+Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are WAV / 24-bit / 48 kHz.
 
 **WAV profile:** uncompressed stereo `WAVE_FORMAT_PCM` (not extensible), `fmt `+`data` only, at the effective depth/rate.
 
@@ -99,8 +99,8 @@ Most people can ignore this and use the prompts.
 | `--xml`      | asked                               | Your Rekordbox collection export                                |
 | `--playlist` | asked                               | Playlist name, exactly as in Rekordbox                          |
 | `--format`   | `wav`                               | `wav` or `aiff`                                                 |
-| `--bit-depth` | `16`                               | Max bit depth `16` or `24` (never upconvert 16-bit to 24-bit)   |
-| `--sample-rate` | `44100`                         | Max rate `44100` or `48000` (never upconvert 44.1 to 48 kHz)    |
+| `--bit-depth` | `24`                               | Max bit depth `16` or `24` (never upconvert 16-bit to 24-bit)   |
+| `--sample-rate` | `48000`                         | Max rate `44100` or `48000` (never upconvert 44.1 to 48 kHz)    |
 | `--wav-dir`  | `./output`                          | Folder for audio files (`output/<playlist>/`)                   |
 | `--output`   | `./output/rekordbox-import.xml` | File Rekordbox should import (appended on re-run)               |
 | `--force`    | off                                 | Rebuild even if dest already matches the profile                |

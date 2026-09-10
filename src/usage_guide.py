@@ -46,7 +46,7 @@ export.
 4. Choose Format: WAV or AIFF.
 5. Choose max bit depth (16 or 24) and max sample rate (44.1 or 48 kHz).
    These are maxima, not targets: 16-bit tracks stay 16-bit; 44.1 kHz tracks
-   stay 44.1 kHz. Defaults are 16-bit / 44.1 kHz.
+   stay 44.1 kHz. Defaults are 24-bit / 48 kHz.
 6. Click Convert.
 
 What you get:
@@ -58,8 +58,8 @@ What you get:
 
 Your original files stay where they are. Re-running with the same import file
 adds new tracks and refreshes metadata for existing dest paths; it does not
-replace the playlist. Check “Overwrite existing audio files” only if you want
-to rebuild files that already match the chosen profile.
+replace the playlist. Dest files that already match the chosen profile are
+skipped unless you force a rebuild (CLI: --force).
 
 ────────────────────────────────────────
 3. Bring it into Rekordbox

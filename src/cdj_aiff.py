@@ -117,19 +117,19 @@ def _parse_aiff_audio(path: Path) -> _AiffAudioInfo:
 def is_cdj_safe_aiff(
     path: Path,
     *,
-    bit_depth: int = 16,
-    sample_rate: int = 44100,
+    bit_depth: int = 24,
+    sample_rate: int = 48000,
 ) -> bool:
     """True if path is stereo PCM AIFF at the given bit depth and sample rate.
 
     Harmless extra chunks such as NAME are allowed; AIFC is not.
     """
     if bit_depth not in AIFF_SAFE_BIT_DEPTHS:
-        bit_depth = 16
+        bit_depth = 24
     rate_bytes = AIFF_RATE_BYTES.get(sample_rate)
     if rate_bytes is None:
-        rate_bytes = AIFF_RATE_BYTES[44100]
-        bit_depth = 16
+        rate_bytes = AIFF_RATE_BYTES[48000]
+        bit_depth = 24
     if not path.is_file():
         return False
     try:
@@ -408,8 +408,8 @@ def _is_canonical_aiff_output(
     source_el: ET.Element,
     expected_cover: bytes | None,
     *,
-    bit_depth: int = 16,
-    sample_rate: int = 44100,
+    bit_depth: int = 24,
+    sample_rate: int = 48000,
 ) -> bool:
     """True if dest is audio-safe with exactly COMM+SSND+ID3 matching XML+cover."""
     if not is_cdj_safe_aiff(path, bit_depth=bit_depth, sample_rate=sample_rate):

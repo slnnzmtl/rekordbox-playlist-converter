@@ -42,10 +42,6 @@ FALLBACK_WAV_DIR, FALLBACK_OUTPUT = default_output_paths(documents_accessible=Fa
 SEARCH_PLACEHOLDER = "Search playlists…"
 APP_LOGO_NAME = "rpc-logo-white.png"
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
-QUALITY_CEILING_CAPTION = (
-    "These are maxima, not targets. "
-    "16-bit tracks stay 16-bit; 44.1 kHz tracks stay 44.1 kHz."
-)
 BIT_DEPTH_24_TOOLTIP = "16-bit tracks are not upconverted to 24-bit."
 SAMPLE_RATE_48_TOOLTIP = "44.1 kHz tracks are not upconverted to 48 kHz."
 
@@ -151,15 +147,14 @@ class ConverterApp:
         if saved_format not in ("wav", "aiff"):
             saved_format = "wav"
         self.format_var = tk.StringVar(value=saved_format)
-        saved_depth = saved_prefs.get("bit_depth", "16")
+        saved_depth = saved_prefs.get("bit_depth", "24")
         if saved_depth not in ("16", "24"):
-            saved_depth = "16"
+            saved_depth = "24"
         self.bit_depth_var = tk.StringVar(value=saved_depth)
-        saved_rate = saved_prefs.get("sample_rate", "44100")
+        saved_rate = saved_prefs.get("sample_rate", "48000")
         if saved_rate not in ("44100", "48000"):
-            saved_rate = "44100"
+            saved_rate = "48000"
         self.sample_rate_var = tk.StringVar(value=saved_rate)
-        self.force_var = tk.BooleanVar(value=False)
         self.search_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
         self._busy = False
@@ -395,10 +390,7 @@ class ConverterApp:
         ).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Radiobutton(
             opts, text="AIFF", variable=self.format_var, value="aiff"
-        ).pack(side=tk.LEFT, padx=(4, 12))
-        ttk.Checkbutton(
-            opts, text="Overwrite existing audio files", variable=self.force_var
-        ).pack(side=tk.LEFT)
+        ).pack(side=tk.LEFT, padx=(4, 0))
         self.convert_btn = ttk.Button(opts, text="Convert", command=self._start_convert)
         self.convert_btn.pack(side=tk.RIGHT)
         ttk.Button(opts, text="How to use", command=self._show_usage_guide).pack(
@@ -426,17 +418,12 @@ class ConverterApp:
         rate48.pack(side=tk.LEFT, padx=(4, 0))
         _HoverTooltip(rate48, SAMPLE_RATE_48_TOOLTIP)
 
-        self.quality_caption = ttk.Label(
-            frm, text=QUALITY_CEILING_CAPTION, wraplength=1000
-        )
-        self.quality_caption.grid(row=8, column=0, columnspan=3, sticky="w", **pad)
-
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=9, column=0, columnspan=3, sticky="ew", **pad)
+        self.progress.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
         self.progress["value"] = 0
 
         ttk.Label(frm, textvariable=self.status_var, wraplength=1000).grid(
-            row=10, column=0, columnspan=3, sticky="ew", **pad
+            row=9, column=0, columnspan=3, sticky="ew", **pad
         )
 
     def _build_menubar(self) -> None:
@@ -522,10 +509,10 @@ class ConverterApp:
             fmt = "wav"
         depth = self.bit_depth_var.get().strip()
         if depth not in ("16", "24"):
-            depth = "16"
+            depth = "24"
         rate = self.sample_rate_var.get().strip()
         if rate not in ("44100", "48000"):
-            rate = "44100"
+            rate = "48000"
         try:
             save_preferences(
                 wav_dir,
@@ -749,22 +736,21 @@ class ConverterApp:
             return
         wav_dir, output = self._resolved_output_paths()
         self._persist_output_preferences()
-        force = bool(self.force_var.get())
         output_format = self.format_var.get().strip().lower()
         if output_format not in ("wav", "aiff"):
             output_format = "wav"
         try:
-            max_bit_depth = int(self.bit_depth_var.get().strip() or "16")
+            max_bit_depth = int(self.bit_depth_var.get().strip() or "24")
         except ValueError:
-            max_bit_depth = 16
+            max_bit_depth = 24
         if max_bit_depth not in (16, 24):
-            max_bit_depth = 16
+            max_bit_depth = 24
         try:
-            max_sample_rate = int(self.sample_rate_var.get().strip() or "44100")
+            max_sample_rate = int(self.sample_rate_var.get().strip() or "48000")
         except ValueError:
-            max_sample_rate = 44100
+            max_sample_rate = 48000
         if max_sample_rate not in (44100, 48000):
-            max_sample_rate = 44100
+            max_sample_rate = 48000
         xml_path = Path(xml_s).expanduser()
 
         self._set_busy(True)
@@ -830,7 +816,7 @@ class ConverterApp:
                         on_progress(current, plan_total, action, track_name, base=b)
 
                     stats = rb.convert_unique(
-                        plan, force=force, progress=False, on_progress=tick
+                        plan, force=False, progress=False, on_progress=tick
                     )
                     all_stats.append(stats)
                     done_base += len(plan.unique)
