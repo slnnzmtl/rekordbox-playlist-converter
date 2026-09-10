@@ -613,6 +613,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 app.xml_var.set("/tmp/test.xml")
                 app.wav_dir_var.set("/tmp/typed-wav")
                 app.output_var.set("/tmp/typed-import.xml")
+                app.format_var.set("aiff")
                 app._start_convert()
                 save_prefs.assert_called_once()
                 args = save_prefs.call_args[0]
@@ -620,6 +621,33 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 self.assertEqual(args[0], Path("/tmp/typed-wav"))
                 self.assertEqual(args[1], Path("/tmp/typed-import.xml"))
                 self.assertEqual(kwargs.get("source_xml"), Path("/tmp/test.xml"))
+                self.assertEqual(kwargs.get("output_format"), "aiff")
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_format_defaults_to_wav(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                self.assertEqual(app.format_var.get(), "wav")
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

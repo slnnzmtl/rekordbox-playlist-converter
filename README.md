@@ -7,7 +7,7 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![CI](https://github.com/slnnzmtl/rekordbox-playlist-converter/actions/workflows/test.yml/badge.svg)](https://github.com/slnnzmtl/rekordbox-playlist-converter/actions/workflows/test.yml)
 
-Turn a Rekordbox playlist of lossless tracks into WAV files, **without changing your originals**. Cues, beatgrid, rating, BPM, and tags are copied into a new playlist named `{your playlist} [WAV]`.
+Turn a Rekordbox playlist of lossless tracks into **WAV** or **AIFF** files, **without changing your originals**. Cues, beatgrid, rating, BPM, and tags are copied into a new playlist named `{your playlist} [WAV]` or `{your playlist} [AIFF]`.
 
 Works with Rekordbox **6** and **7**.
 
@@ -18,18 +18,17 @@ Pre-built **macOS app** (universal2): see [GitHub Releases](https://github.com/s
 ## What gets converted
 
 
-| You have                               | What happens                                                                 |
-| -------------------------------------- | ---------------------------------------------------------------------------- |
-| FLAC (`.flac`)                         | New CDJ-safe WAV (16-bit / 44.1 kHz / stereo PCM)                             |
-| Apple Lossless / ALAC (`.m4a`, `.caf`) | New CDJ-safe WAV                                                             |
-| AIFF (`.aiff`, `.aif`)                 | New CDJ-safe WAV                                                             |
-| WAV (`.wav`, `.wave`)                  | Copied only if already CDJ-safe; otherwise re-encoded to the same profile    |
+| You have                               | WAV (default)                                                         | AIFF (`--format aiff`)                                      |
+| -------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------------- |
+| FLAC / ALAC / AIFF / WAV               | CDJ-safe 16-bit / 44.1 kHz stereo PCM (`fmt `+`data` only)            | Pioneer ceiling: preserve ≤24-bit / ≤48 kHz; never upconvert |
+| Already in-profile dest                | Skip (unless `--force`)                                               | Skip when audio + ID3 match (unless `--force`)              |
 
 
-MP3, AAC, and other lossy files are skipped with an error. Existing WAVs in the output folder are left alone when they already match the CDJ-safe profile, unless you pass `--force`.
+MP3, AAC, and other lossy files are skipped with an error.
 
-**CDJ-safe profile:** uncompressed stereo PCM, 44.1 kHz, 16-bit, `WAVE_FORMAT_PCM` (not extensible), with only `fmt ` and `data` chunks — so Pioneer/AlphaTheta players that reject `WAVE_FORMAT_EXTENSIBLE` stay happy.
+**WAV profile:** uncompressed stereo PCM, 44.1 kHz, 16-bit, `WAVE_FORMAT_PCM` (not extensible), `fmt `+`data` only.
 
+**AIFF profile:** uncompressed `FORM`/`AIFF` (not AIFC), stereo PCM at 16 or 24 bit and 44.1 or 48 kHz, plus ID3v2.3 text from the Rekordbox XML and an optional JPEG cover from the source file.
 ## macOS app (no Terminal)
 
 Download **Rekordbox WAV Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon). Defaults write to `~/Documents/rekordbox-wav` (a different folder than the CLI’s `./output`); the app remembers your last Rekordbox XML, WAV folder, and Import XML between launches. On launch it searches only your home folder (top-level files) and `~/Documents` for `*rekordbox*.xml` (skipping Desktop, Downloads, and iCloud) and auto-loads a single match, or asks you to choose if several are found. First launch: right-click → **Open** if Gatekeeper blocks it (ad-hoc signed). macOS may ask for Documents access on first open; if you decline, the app still opens and defaults to `~/rekordbox-wav` — Browse… can prompt again when you navigate into Documents.
@@ -80,7 +79,7 @@ cd rekordbox-playlist-converter
 3. Pick the XML export, pick one or more playlists (`1`, `1,4,7`, or `all`), and confirm the output folder (default `./output`).
 4. Follow the import steps printed at the end — or open **[USAGE.md](USAGE.md)** and do section 3.
 
-The new playlist in the import file is named `{original} [WAV]`. Running again **adds** tracks; it does not wipe the playlist.
+The new playlist in the import file is named `{original} [WAV]` or `{original} [AIFF]`. Running again **adds** tracks and refreshes metadata for existing dest paths; it does not wipe the playlist.
 
 ## Options (optional)
 
@@ -93,17 +92,18 @@ Most people can ignore this and use the prompts.
 ```
 
 
-| Option       | Default                             | Meaning                                           |
-| ------------ | ----------------------------------- | ------------------------------------------------- |
-| `--xml`      | asked                               | Your Rekordbox collection export                  |
-| `--playlist` | asked                               | Playlist name, exactly as in Rekordbox            |
-| `--wav-dir`  | `./output`                          | Folder for WAV files (`output/<playlist>/`)       |
-| `--output`   | `./output/rekordbox-wav-import.xml` | File Rekordbox should import (appended on re-run) |
-| `--force`    | off                                 | Rebuild WAVs even if they already exist           |
-| `--dry-run`  | off                                 | Check only; write nothing                         |
+| Option       | Default                             | Meaning                                                         |
+| ------------ | ----------------------------------- | --------------------------------------------------------------- |
+| `--xml`      | asked                               | Your Rekordbox collection export                                |
+| `--playlist` | asked                               | Playlist name, exactly as in Rekordbox                          |
+| `--format`   | `wav`                               | `wav` (16/44.1 universal) or `aiff` (Pioneer 24/48 ceiling)     |
+| `--wav-dir`  | `./output`                          | Folder for audio files (`output/<playlist>/`)                   |
+| `--output`   | `./output/rekordbox-wav-import.xml` | File Rekordbox should import (appended on re-run)               |
+| `--force`    | off                                 | Rebuild even if dest already matches the profile                |
+| `--dry-run`  | off                                 | Check only; write nothing                                       |
 
 
-If two tracks would get the same filename, the run stops before writing anything. Keep the WAV folder where it is after import — moving files later breaks the paths Rekordbox stored.
+If two tracks would get the same filename, the run stops before writing anything. Keep the output folder where it is after import — moving files later breaks the paths Rekordbox stored.
 
 ## Tests
 

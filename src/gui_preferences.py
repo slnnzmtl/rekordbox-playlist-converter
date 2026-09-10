@@ -269,6 +269,9 @@ def load_preferences(config_path: Path | None = None) -> dict[str, str]:
         value = raw.get(key)
         if isinstance(value, str) and value.strip():
             result[key] = value.strip()
+    fmt = raw.get("output_format")
+    if isinstance(fmt, str) and fmt.strip().lower() in ("wav", "aiff"):
+        result["output_format"] = fmt.strip().lower()
     return result
 
 
@@ -277,6 +280,7 @@ def save_preferences(
     import_xml: Path,
     *,
     source_xml: Path | None = None,
+    output_format: str | None = None,
     config_path: Path | None = None,
 ) -> None:
     path = config_path or default_config_path()
@@ -289,6 +293,8 @@ def save_preferences(
     }
     if source_xml is not None:
         payload["source_xml"] = str(source_xml.expanduser().resolve())
+    if output_format is not None and output_format in ("wav", "aiff"):
+        payload["output_format"] = output_format
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         dir=path.parent, prefix=".preferences-", suffix=".tmp"

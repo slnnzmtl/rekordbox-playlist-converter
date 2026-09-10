@@ -8,7 +8,6 @@ import copy
 import json
 import os
 import shutil
-import struct
 import subprocess
 import sys
 import tempfile
@@ -18,18 +17,57 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Iterable
-from urllib.parse import quote, unquote
+from typing import Callable
+
+from cdj_aiff import (
+    AIFF_SAFE_BIT_DEPTHS,
+    AIFF_SAFE_RATES,
+    _AiffAudioInfo,
+    _extract_id3_chunk,
+    _is_canonical_aiff_output,
+    _normalize_aiff_audio_chunks,
+    _parse_aiff_audio,
+    _read_id3_frames,
+    _ssnd_pcm_bytes,
+    build_id3v23_tag,
+    expected_id3_text_from_track,
+    extract_cover_jpeg,
+    is_cdj_safe_aiff,
+    write_aiff_id3,
+)
+from cdj_wav import (
+    CDJ_SAFE_BIT_DEPTH,
+    CDJ_SAFE_CHANNELS,
+    CDJ_SAFE_CHUNK_IDS,
+    CDJ_SAFE_SAMPLE_RATE,
+    WAVE_FORMAT_PCM,
+    WavInfo,
+    is_cdj_safe_wav,
+    parse_wav_info,
+)
+from cli_error import CliError
+from rekordbox_xml import (
+    XML_CANDIDATE_RELATIVE,
+    _walk_playlists,
+    collection_indexes,
+    decode_location,
+    discover_xml_candidates,
+    encode_location,
+    find_playlists_by_name,
+    iter_playlists,
+    load_dj_playlists,
+    parse_playlist_selection,
+    path_is_under_documents,
+    playlist_label,
+    playlist_track_count,
+    resolve_playlist,
+    resolve_playlist_tracks,
+    skeleton_from,
+)
 
 DEFAULT_WAV_DIR = Path("output")
 DEFAULT_OUTPUT = Path("output") / "rekordbox-wav-import.xml"
 WAV_SUFFIX = " [WAV]"
-XML_CANDIDATE_RELATIVE = (
-    Path("rekordbox.xml"),
-    Path("Rekordbox-collection.xml"),
-    Path.home() / "Documents" / "rekordbox" / "rekordbox.xml",
-    Path.home() / "Documents" / "rekordbox" / "Playlists" / "Rekordbox-collection.xml",
-)
 SUPPORTED_LOSSLESS_EXT = {".flac", ".aiff", ".aif", ".wav", ".wave", ".m4a", ".caf"}
 WAV_EXT = {".wav", ".wave"}
 ALAC_EXT = {".m4a", ".caf"}
@@ -40,84 +78,8 @@ CODEC_BY_DEPTH = {
     32: "pcm_s32le",
 }
 
-CDJ_SAFE_SAMPLE_RATE = 44100
-CDJ_SAFE_CHANNELS = 2
-CDJ_SAFE_BIT_DEPTH = 16
-WAVE_FORMAT_PCM = 1
-CDJ_SAFE_CHUNK_IDS = ("fmt ", "data")
-
-
-class CliError(Exception):
-    """Fatal error with a user-facing message."""
-
-
-@dataclass(frozen=True)
-class WavInfo:
-    format_tag: int
-    channels: int
-    sample_rate: int
-    bits_per_sample: int
-    fmt_chunk_size: int
-    chunk_ids: tuple[str, ...]
-
-
-def parse_wav_info(path: Path) -> WavInfo:
-    """Parse RIFF/WAVE chunk layout and the primary fmt fields."""
-    try:
-        data = path.read_bytes()
-    except OSError as exc:
-        raise CliError(f"cannot read WAV: {path}: {exc}") from exc
-    if len(data) < 12 or data[0:4] != b"RIFF" or data[8:12] != b"WAVE":
-        raise CliError(f"not a RIFF/WAVE file: {path}")
-    chunk_ids: list[str] = []
-    format_tag = channels = sample_rate = bits_per_sample = fmt_chunk_size = 0
-    found_fmt = False
-    offset = 12
-    while offset + 8 <= len(data):
-        cid = data[offset : offset + 4]
-        size = struct.unpack_from("<I", data, offset + 4)[0]
-        payload_start = offset + 8
-        payload_end = payload_start + size
-        if payload_end > len(data):
-            raise CliError(f"truncated WAV chunk {cid!r} in {path}")
-        chunk_ids.append(cid.decode("ascii", errors="replace"))
-        if cid == b"fmt ":
-            if size < 16:
-                raise CliError(f"fmt chunk too small in {path}")
-            format_tag, channels, sample_rate, _byte_rate, _align, bits_per_sample = (
-                struct.unpack_from("<HHIIHH", data, payload_start)
-            )
-            fmt_chunk_size = size
-            found_fmt = True
-        offset = payload_end + (size % 2)
-    if not found_fmt:
-        raise CliError(f"WAV missing fmt chunk: {path}")
-    return WavInfo(
-        format_tag=format_tag,
-        channels=channels,
-        sample_rate=sample_rate,
-        bits_per_sample=bits_per_sample,
-        fmt_chunk_size=fmt_chunk_size,
-        chunk_ids=tuple(chunk_ids),
-    )
-
-
-def is_cdj_safe_wav(path: Path) -> bool:
-    """True if path is 16-bit / 44.1 kHz / stereo WAVE_FORMAT_PCM with fmt+data only."""
-    if not path.is_file():
-        return False
-    try:
-        info = parse_wav_info(path)
-    except CliError:
-        return False
-    return (
-        info.format_tag == WAVE_FORMAT_PCM
-        and info.fmt_chunk_size == 16
-        and info.channels == CDJ_SAFE_CHANNELS
-        and info.sample_rate == CDJ_SAFE_SAMPLE_RATE
-        and info.bits_per_sample == CDJ_SAFE_BIT_DEPTH
-        and info.chunk_ids == CDJ_SAFE_CHUNK_IDS
-    )
+AIFF_SUFFIX = " [AIFF]"
+AIFF_EXT = {".aiff", ".aif"}
 
 
 class Progress:
@@ -220,7 +182,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--wav-dir",
         type=Path,
         default=DEFAULT_WAV_DIR,
-        help="Directory for WAV files (default: ./output)",
+        help="Directory for audio output files (default: ./output)",
     )
     parser.add_argument(
         "--output",
@@ -229,9 +191,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Output Rekordbox XML (default: ./output/rekordbox-wav-import.xml)",
     )
     parser.add_argument(
+        "--format",
+        choices=("wav", "aiff"),
+        default="wav",
+        help="Output format: wav (16-bit/44.1 kHz universal) or aiff (Pioneer 24/48 ceiling)",
+    )
+    parser.add_argument(
         "--force",
         action="store_true",
-        help="Reconvert even if a valid dest WAV already exists",
+        help="Reconvert even if a valid dest file already exists",
     )
     parser.add_argument(
         "--dry-run",
@@ -270,204 +238,6 @@ def abs_path(path: Path) -> Path:
     if not path.is_absolute():
         path = Path.cwd() / path
     return path
-
-
-def load_dj_playlists(path: Path) -> ET.Element:
-    try:
-        tree = ET.parse(path)
-    except ET.ParseError as exc:
-        raise CliError(f"Invalid XML: {path}: {exc}") from exc
-    root = tree.getroot()
-    if root.tag != "DJ_PLAYLISTS":
-        raise CliError(f"{path} is not a Rekordbox DJ_PLAYLISTS collection")
-    if root.find("COLLECTION") is None or root.find("PLAYLISTS") is None:
-        raise CliError(f"{path} is not a valid Rekordbox DJ_PLAYLISTS collection")
-    if root.find("PLAYLISTS/NODE") is None:
-        raise CliError(f"{path} is not a valid Rekordbox DJ_PLAYLISTS collection")
-    return root
-
-
-def skeleton_from(source_root: ET.Element) -> ET.Element:
-    version = source_root.get("Version", "1.0.0")
-    root = ET.Element("DJ_PLAYLISTS", {"Version": version})
-    product = source_root.find("PRODUCT")
-    if product is not None:
-        root.append(copy.deepcopy(product))
-    else:
-        ET.SubElement(root, "PRODUCT", {"Name": "rekordbox", "Version": "", "Company": ""})
-    ET.SubElement(root, "COLLECTION", {"Entries": "0"})
-    playlists = ET.SubElement(root, "PLAYLISTS")
-    ET.SubElement(playlists, "NODE", {"Type": "0", "Name": "ROOT", "Count": "0"})
-    return root
-
-
-def _walk_playlists(
-    node: ET.Element, folder_parts: list[str]
-) -> Iterable[tuple[str, str, ET.Element]]:
-    """Yield (folder_path, name, node) for playlist nodes under a folder tree."""
-    if node.tag != "NODE":
-        return
-    name = node.get("Name") or ""
-    if node.get("Type") == "1":
-        folder = " / ".join(folder_parts) if folder_parts else ""
-        yield folder, name, node
-        return
-    if node.get("Type") == "0":
-        next_parts = folder_parts if name == "ROOT" else [*folder_parts, name]
-        for child in node:
-            yield from _walk_playlists(child, next_parts)
-
-
-def iter_playlists(root: ET.Element) -> list[tuple[str, str, ET.Element]]:
-    """All playlists as (folder_path, name, node), depth-first."""
-    playlists = root.find("PLAYLISTS")
-    if playlists is None:
-        return []
-    found: list[tuple[str, str, ET.Element]] = []
-    for child in playlists:
-        found.extend(_walk_playlists(child, []))
-    return found
-
-
-def find_playlists_by_name(root: ET.Element, name: str) -> list[ET.Element]:
-    return [node for _folder, pl_name, node in iter_playlists(root) if pl_name == name]
-
-
-def playlist_label(folder: str, name: str) -> str:
-    return f"{folder} / {name}" if folder else name
-
-
-def resolve_playlist(
-    root: ET.Element,
-    playlist_name: str,
-    folder: str | None = None,
-) -> tuple[tuple[str, str, ET.Element] | None, list[str]]:
-    """
-    Find one playlist by leaf name, folder+name, or 'folder / name' path.
-    Ambiguous leaf names are an error unless folder (or a full path) is given.
-    """
-    entries = iter_playlists(root)
-    if folder is not None:
-        matches = [
-            entry for entry in entries if entry[0] == folder and entry[1] == playlist_name
-        ]
-        label = playlist_label(folder, playlist_name)
-        if not matches:
-            return None, [f"playlist not found: {label}"]
-        if len(matches) > 1:
-            return None, [f"duplicate playlist name: {label}"]
-        return matches[0], []
-
-    by_name = [entry for entry in entries if entry[1] == playlist_name]
-    if len(by_name) == 1:
-        return by_name[0], []
-    if len(by_name) > 1:
-        listed = "\n".join(f"  {playlist_label(f, n)}" for f, n, _ in by_name)
-        return None, [f"duplicate playlist name: {playlist_name}\n{listed}"]
-
-    by_path = [entry for entry in entries if playlist_label(entry[0], entry[1]) == playlist_name]
-    if len(by_path) == 1:
-        return by_path[0], []
-    if len(by_path) > 1:
-        return None, [f"duplicate playlist name: {playlist_name}"]
-    return None, [f"playlist not found: {playlist_name}"]
-
-
-def playlist_track_count(node: ET.Element) -> int:
-    return len(node.findall("TRACK"))
-
-
-def path_is_under_documents(path: Path, *, home: Path | None = None) -> bool:
-    """True if *path* is under ~/Documents without stating the filesystem."""
-    base = home if home is not None else Path.home()
-    documents = (base / "Documents").expanduser()
-    expanded = path.expanduser()
-    try:
-        expanded.relative_to(documents)
-        return True
-    except ValueError:
-        return False
-
-
-def discover_xml_candidates(
-    cwd: Path | None = None,
-    candidates: tuple[Path, ...] | None = None,
-    *,
-    documents_accessible: bool = True,
-    home: Path | None = None,
-) -> list[Path]:
-    """Existing XML paths from the default probe list (deduped, absolute).
-
-    When *documents_accessible* is False, candidates under Documents are skipped
-    without stating them (avoids hanging on macOS TCC dismiss).
-    """
-    base = cwd if cwd is not None else Path.cwd()
-    probe = candidates if candidates is not None else XML_CANDIDATE_RELATIVE
-    found: list[Path] = []
-    seen: set[Path] = set()
-    for rel in probe:
-        path = rel if rel.is_absolute() else (base / rel)
-        if not documents_accessible and path_is_under_documents(path, home=home):
-            continue
-        try:
-            resolved = path.expanduser().resolve()
-        except OSError:
-            continue
-        if not resolved.is_file() or resolved in seen:
-            continue
-        seen.add(resolved)
-        found.append(resolved)
-    return found
-
-
-def parse_playlist_selection(
-    text: str,
-    entries: list[tuple[str, str, ET.Element]],
-) -> tuple[list[tuple[str, str, ET.Element]], list[str]]:
-    """
-    Parse '1', '1,4,7', or 'all' into playlist entries.
-    Rejects selecting two playlists that share the same Name.
-    """
-    errors: list[str] = []
-    raw = text.strip().lower()
-    if not raw:
-        return [], ["empty selection"]
-    if raw == "all":
-        indices = list(range(len(entries)))
-    else:
-        indices = []
-        for part in text.replace(" ", "").split(","):
-            if not part:
-                continue
-            if not part.isdigit():
-                errors.append(f"invalid selection: {part!r}")
-                continue
-            n = int(part)
-            if n < 1 or n > len(entries):
-                errors.append(f"selection out of range: {n}")
-                continue
-            indices.append(n - 1)
-        if not indices and not errors:
-            errors.append("empty selection")
-    if errors:
-        return [], errors
-    chosen = [entries[i] for i in indices]
-    # Deduplicate by index order while keeping first occurrence
-    seen_idx: set[int] = set()
-    unique_chosen: list[tuple[str, str, ET.Element]] = []
-    for i, entry in zip(indices, chosen):
-        if i in seen_idx:
-            continue
-        seen_idx.add(i)
-        unique_chosen.append(entry)
-    names = [name for _f, name, _n in unique_chosen]
-    dupes = {n for n in names if names.count(n) > 1}
-    if dupes:
-        listed = ", ".join(sorted(dupes))
-        return [], [
-            f"cannot select multiple playlists with the same name: {listed}"
-        ]
-    return unique_chosen, []
 
 
 def prompt_line(message: str, default: str | None = None) -> str:
@@ -539,14 +309,30 @@ def prompt_paths(wav_dir: Path, output: Path) -> tuple[Path, Path]:
     return Path(wav_s).expanduser(), Path(out_s).expanduser()
 
 
-def print_import_hints(output: Path) -> None:
+def print_import_hints(output: Path, *, output_format: str = "wav") -> None:
+    suffix = " [AIFF]" if output_format == "aiff" else " [WAV]"
     print()
     print("Import into Rekordbox")
     print("  1. Preferences → View → Layout → enable rekordbox xml")
     print("  2. Preferences → Advanced → Database → Imported Library →")
     print(f"     {output}")
     print("  3. Browser → rekordbox xml → Playlists → Import Playlist")
-    print("     (or drag the [WAV] playlist into Playlists)")
+    print(f"     (or drag the{suffix} playlist into Playlists)")
+
+
+def prompt_wizard(
+    args: argparse.Namespace,
+) -> tuple[Path, list[tuple[str | None, str]], Path, Path, str]:
+    xml_path = prompt_xml_path(args.xml)
+    root = load_dj_playlists(xml_path)
+    names = prompt_playlists(root, args.playlist)
+    wav_dir, output = prompt_paths(args.wav_dir, args.output)
+    output_format = prompt_line("Format (wav/aiff)", getattr(args, "format", "wav"))
+    output_format = output_format.strip().lower()
+    while output_format not in ("wav", "aiff"):
+        print("  choose wav or aiff", file=sys.stderr)
+        output_format = prompt_line("Format (wav/aiff)", "wav").strip().lower()
+    return xml_path, names, wav_dir, output, output_format
 
 
 def run_convert_one(
@@ -558,6 +344,7 @@ def run_convert_one(
     force: bool,
     dry_run: bool,
     playlist_folder: str | None = None,
+    output_format: str = "wav",
 ) -> int:
     plan, errors = prepare(
         xml_path,
@@ -565,6 +352,7 @@ def run_convert_one(
         wav_dir,
         output,
         playlist_folder=playlist_folder,
+        output_format=output_format,
     )
     if errors:
         print_errors(errors)
@@ -588,61 +376,9 @@ def run_convert_one(
     return 0
 
 
-def prompt_wizard(
-    args: argparse.Namespace,
-) -> tuple[Path, list[tuple[str | None, str]], Path, Path]:
-    xml_path = prompt_xml_path(args.xml)
-    root = load_dj_playlists(xml_path)
-    names = prompt_playlists(root, args.playlist)
-    wav_dir, output = prompt_paths(args.wav_dir, args.output)
-    return xml_path, names, wav_dir, output
-
-
-def collection_indexes(root: ET.Element) -> tuple[dict[str, ET.Element], dict[str, ET.Element]]:
-    by_id: dict[str, ET.Element] = {}
-    by_location: dict[str, ET.Element] = {}
-    collection = root.find("COLLECTION")
-    if collection is None:
-        return by_id, by_location
-    for track in collection.findall("TRACK"):
-        tid = track.get("TrackID")
-        loc = track.get("Location")
-        if tid is not None:
-            by_id[tid] = track
-        if loc:
-            by_location[loc] = track
-    return by_id, by_location
-
-
-def decode_location(url: str) -> Path | None:
-    if not url:
-        return None
-    rest: str | None = None
-    if url.startswith("file://localhost"):
-        rest = url[len("file://localhost") :]
-    elif url.startswith("file://"):
-        rest = url[len("file://") :]
-    else:
-        return None
-    if not rest:
-        return None
-    path = unquote(rest)
-    if not path.startswith("/"):
-        # file://localhost/C:/... already has a slash before the drive.
-        return None
-    return Path(path)
-
-
-def encode_location(path: Path) -> str:
-    posix = unicodedata.normalize("NFC", path.as_posix())
-    quoted = quote(posix, safe="/:")
-    if quoted.startswith("/"):
-        return "file://localhost" + quoted
-    return "file://localhost/" + quoted
-
-
-def dest_name_for(source: Path) -> str:
-    return unicodedata.normalize("NFC", source.stem) + ".wav"
+def dest_name_for(source: Path, *, output_format: str = "wav") -> str:
+    ext = ".aiff" if output_format == "aiff" else ".wav"
+    return unicodedata.normalize("NFC", source.stem) + ext
 
 
 def playlist_dir_name(playlist_name: str) -> str:
@@ -735,21 +471,75 @@ def pcm_codec_for_stream(stream: dict) -> str:
 
 
 def bit_depth_of_codec(codec: str) -> int:
-    if codec == "pcm_s16le":
+    if codec in ("pcm_s16le", "pcm_s16be"):
         return 16
-    if codec == "pcm_s24le":
+    if codec in ("pcm_s24le", "pcm_s24be"):
         return 24
     if codec in ("pcm_s32le", "pcm_f32le"):
         return 32
     raise CliError(f"unknown codec {codec}")
 
 
-def classify_source(path: Path, stream: dict) -> tuple[str, bool]:
-    """Return (ffmpeg_codec or 'copy', is_copy) for CDJ-safe 16-bit output."""
+def aiff_target_from_stream(stream: dict) -> tuple[str, int]:
+    """Return (pcm_s16be|pcm_s24be, sample_rate) under the Pioneer 24/48 ceiling.
+
+    Never raises bit depth or sample rate above the source (within the ceiling).
+    """
+    fmt = str(stream.get("sample_fmt") or "")
+    raw = stream.get("bits_per_raw_sample")
+    bits: int | None = None
+    if raw not in (None, "", "0", "N/A"):
+        try:
+            bits = int(raw)
+        except (TypeError, ValueError):
+            bits = None
+    if bits is None and fmt in ("s16", "s16p"):
+        bits = 16
+    if bits is None and fmt in ("s24", "s24p", "s32", "s32p"):
+        bits = 24 if "24" in fmt else 32
+    if bits is None:
+        name = str(stream.get("codec_name") or "")
+        if "16" in name:
+            bits = 16
+        elif "24" in name:
+            bits = 24
+        else:
+            bits = 16
+    if bits > 24:
+        bits = 24
+    elif bits not in (16, 24):
+        bits = 16 if bits <= 16 else 24
+
+    try:
+        rate = int(float(stream.get("sample_rate") or 0))
+    except (TypeError, ValueError):
+        rate = 0
+    if rate > 48000:
+        rate = 48000
+    elif rate in (44100, 48000):
+        pass
+    else:
+        rate = 44100
+
+    codec = "pcm_s16be" if bits == 16 else "pcm_s24be"
+    return codec, rate
+
+
+def classify_source(
+    path: Path, stream: dict, *, output_format: str = "wav"
+) -> tuple[str, bool]:
+    """Return (ffmpeg_codec or 'copy', is_copy) for the selected output format."""
     ext = path.suffix.lower()
     codec_name = str(stream.get("codec_name") or "")
     if ext not in SUPPORTED_LOSSLESS_EXT:
         raise CliError(f"unsupported format: {path}")
+    if output_format == "aiff":
+        if ext in AIFF_EXT and is_cdj_safe_aiff(path):
+            return "copy", True
+        if ext in ALAC_EXT and codec_name != "alac":
+            raise CliError(f"unsupported format: {path} (expected ALAC)")
+        codec, _rate = aiff_target_from_stream(stream)
+        return codec, False
     if ext in ALAC_EXT:
         if codec_name != "alac":
             raise CliError(f"unsupported format: {path} (expected ALAC)")
@@ -761,29 +551,6 @@ def classify_source(path: Path, stream: dict) -> tuple[str, bool]:
     if ext in {".flac", ".aiff", ".aif"}:
         return "pcm_s16le", False
     raise CliError(f"unsupported format: {path}")
-
-
-def resolve_playlist_tracks(
-    source_root: ET.Element, playlist: ET.Element
-) -> tuple[list[ET.Element], list[str]]:
-    errors: list[str] = []
-    by_id, by_location = collection_indexes(source_root)
-    key_type = playlist.get("KeyType", "0")
-    resolved: list[ET.Element] = []
-    for entry in playlist.findall("TRACK"):
-        key = entry.get("Key")
-        if key is None or key == "":
-            errors.append("playlist entry missing Key")
-            continue
-        if key_type == "1":
-            track = by_location.get(key)
-        else:
-            track = by_id.get(key)
-        if track is None:
-            errors.append(f"missing collection track for Key={key}")
-            continue
-        resolved.append(track)
-    return resolved, errors
 
 
 def same_file(a: Path, b: Path) -> bool:
@@ -801,7 +568,11 @@ def build_plan(
     output: Path,
     output_root: ET.Element,
     output_existed: bool,
+    *,
+    output_format: str = "wav",
 ) -> tuple[Plan | None, list[str]]:
+    if output_format not in ("wav", "aiff"):
+        output_format = "wav"
     errors: list[str] = []
     tracks_el, resolve_errors = resolve_playlist_tracks(source_root, playlist_el)
     errors.extend(resolve_errors)
@@ -826,7 +597,7 @@ def build_plan(
             warnings.append(f"missing source file: {source_path}")
             continue
         source_path = resolved
-        dest_name = dest_name_for(source_path)
+        dest_name = dest_name_for(source_path, output_format=output_format)
         dest_path = playlist_dir / dest_name
         dest_location = encode_location(dest_path)
         planned.append(
@@ -876,19 +647,37 @@ def build_plan(
             errors.append(f"unsupported format: {item.source_path} (no audio stream)")
             continue
         try:
-            codec, is_copy = classify_source(item.source_path, stream)
+            codec, is_copy = classify_source(
+                item.source_path, stream, output_format=output_format
+            )
         except CliError as exc:
             errors.append(str(exc))
             continue
         item.copy_wav = is_copy
         item.codec = None if is_copy else codec
-        item.noop = is_copy and same_file(item.source_path, item.dest_path)
-        if (not is_copy) and same_file(item.source_path, item.dest_path):
-            errors.append(
-                f"refusing to convert in place (source is not CDJ-safe WAV): {item.source_path}"
-            )
+        in_place = same_file(item.source_path, item.dest_path)
+        if output_format == "aiff":
+            if in_place:
+                cover = extract_cover_jpeg(item.source_path)
+                if _is_canonical_aiff_output(item.dest_path, item.source_el, cover):
+                    item.noop = True
+                else:
+                    errors.append(
+                        "refusing to convert in place "
+                        f"(source is not a canonical AIFF output): {item.source_path}"
+                    )
+            else:
+                item.noop = False
+        else:
+            item.noop = is_copy and in_place
+            if (not is_copy) and in_place:
+                errors.append(
+                    "refusing to convert in place "
+                    f"(source is not CDJ-safe WAV): {item.source_path}"
+                )
 
-    wav_playlist_name = f"{playlist_name}{WAV_SUFFIX}"
+    suffix = AIFF_SUFFIX if output_format == "aiff" else WAV_SUFFIX
+    wav_playlist_name = f"{playlist_name}{suffix}"
     plan = Plan(
         playlist_name=playlist_name,
         wav_playlist_name=wav_playlist_name,
@@ -925,17 +714,28 @@ def ffmpeg_supports_soxr() -> bool:
     return "soxr" in text.lower()
 
 
-def run_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
-    """Encode dest as CDJ-safe 16-bit / 44.1 kHz / stereo WAVE_FORMAT_PCM.
-
-    ``codec`` is accepted for call-site compatibility; output is always pcm_s16le.
-    """
-    del codec  # CDJ-safe profile is fixed for this release (option B).
+def run_ffmpeg(
+    source: Path,
+    dest: Path,
+    codec: str,
+    force: bool,
+    *,
+    sample_rate: int | None = None,
+) -> None:
+    """Encode dest as CDJ-safe WAV or Pioneer-ceiling AIFF PCM (no ID3)."""
     exe = tool_path("ffmpeg")
     if exe is None:
         raise CliError(
             "ffmpeg not found on PATH (install with: brew install ffmpeg)"
         )
+    is_aiff = dest.suffix.lower() == ".aiff"
+    if is_aiff:
+        audio_codec = codec if codec in ("pcm_s16be", "pcm_s24be") else "pcm_s16be"
+        rate = sample_rate if sample_rate in (44100, 48000) else 44100
+    else:
+        audio_codec = "pcm_s16le"
+        rate = CDJ_SAFE_SAMPLE_RATE
+        del codec
     cmd = [
         exe,
         "-y" if force or dest.exists() else "-n",
@@ -954,11 +754,11 @@ def run_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
     cmd.extend(
         [
             "-ar",
-            str(CDJ_SAFE_SAMPLE_RATE),
+            str(rate),
             "-ac",
             str(CDJ_SAFE_CHANNELS),
             "-c:a",
-            "pcm_s16le",
+            audio_codec,
             str(dest),
         ]
     )
@@ -971,10 +771,71 @@ def run_ffmpeg(source: Path, dest: Path, codec: str, force: bool) -> None:
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
         raise CliError(f"ffmpeg conversion failed for {source}: {err}")
-    if not is_cdj_safe_wav(dest):
+    if is_aiff:
+        if not is_cdj_safe_aiff(dest):
+            raise CliError(
+                f"ffmpeg produced a non-CDJ-safe AIFF for {source}: {dest}"
+            )
+    elif not is_cdj_safe_wav(dest):
         raise CliError(
             f"ffmpeg produced a non-CDJ-safe WAV for {source}: {dest}"
         )
+
+
+def write_aiff_output(
+    source: Path,
+    dest: Path,
+    source_el: ET.Element,
+    *,
+    passthrough: bool,
+    codec: str | None,
+) -> None:
+    """Atomically write AIFF: PCM then ID3, validate, os.replace."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    cover = extract_cover_jpeg(source)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=dest.parent, prefix=".aiff-", suffix=".tmp.aiff"
+    )
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        if passthrough:
+            _normalize_aiff_audio_chunks(source, tmp)
+        else:
+            if not codec:
+                raise CliError(f"no codec planned for {source}")
+            # Probe for rate when needed
+            probe = run_ffprobe(source)
+            stream = first_stream(probe) or {}
+            _codec, rate = aiff_target_from_stream(stream)
+            run_ffmpeg(source, tmp, codec or _codec, force=True, sample_rate=rate)
+            if not is_cdj_safe_aiff(tmp):
+                raise CliError(f"AIFF audio stage failed for {source}")
+            # Re-normalize in case the muxer added anything unexpected.
+            fd2, tmp2_name = tempfile.mkstemp(
+                dir=dest.parent, prefix=".aiff-norm-", suffix=".tmp.aiff"
+            )
+            os.close(fd2)
+            tmp2 = Path(tmp2_name)
+            try:
+                _normalize_aiff_audio_chunks(tmp, tmp2)
+                os.replace(tmp2, tmp)
+            except Exception:
+                try:
+                    tmp2.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+        write_aiff_id3(tmp, source_el, cover)
+        if not _is_canonical_aiff_output(tmp, source_el, cover):
+            raise CliError(f"AIFF failed canonical validation for {source}")
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def convert_unique(
@@ -991,9 +852,32 @@ def convert_unique(
     try:
         for i, item in enumerate(items, 1):
             name = item.dest_name
+            is_aiff = item.dest_path.suffix.lower() == ".aiff"
             if item.noop:
                 bar.update(i, "skip", name)
                 stats.skipped += 1
+                continue
+            if is_aiff:
+                cover = extract_cover_jpeg(item.source_path)
+                if not force and _is_canonical_aiff_output(
+                    item.dest_path, item.source_el, cover
+                ):
+                    bar.update(i, "skip", name)
+                    stats.skipped += 1
+                    continue
+                action = "copy" if item.copy_wav else "convert"
+                bar.update(i, action, name)
+                write_aiff_output(
+                    item.source_path,
+                    item.dest_path,
+                    item.source_el,
+                    passthrough=item.copy_wav,
+                    codec=item.codec,
+                )
+                if item.copy_wav:
+                    stats.copied += 1
+                else:
+                    stats.converted += 1
                 continue
             if not force and is_cdj_safe_wav(item.dest_path):
                 bar.update(i, "skip", name)
@@ -1007,7 +891,6 @@ def convert_unique(
             if not item.codec:
                 raise CliError(f"no codec planned for {item.source_path}")
             bar.update(i, "convert", name)
-            # Existing invalid dest must be overwritten; force also overwrites.
             run_ffmpeg(item.source_path, item.dest_path, item.codec, force=True)
             stats.converted += 1
     finally:
@@ -1089,7 +972,9 @@ def probe_dest_tech(path: Path) -> tuple[str, str, str]:
         name = str(stream.get("codec_name") or "")
         depth_map = {
             "pcm_s16le": 16,
+            "pcm_s16be": 16,
             "pcm_s24le": 24,
+            "pcm_s24be": 24,
             "pcm_s32le": 32,
             "pcm_f32le": 32,
         }
@@ -1111,11 +996,30 @@ def clone_track(source_el: ET.Element, track_id: str, dest_path: Path, dest_loca
     size, bitrate, sample_rate = probe_dest_tech(dest_path)
     clone.set("TrackID", track_id)
     clone.set("Location", dest_location)
-    clone.set("Kind", "WAV File")
+    kind = "AIFF File" if dest_path.suffix.lower() == ".aiff" else "WAV File"
+    clone.set("Kind", kind)
     clone.set("Size", size)
     clone.set("BitRate", bitrate)
     clone.set("SampleRate", sample_rate)
     return clone
+
+
+def refresh_track(
+    existing: ET.Element,
+    source_el: ET.Element,
+    dest_path: Path,
+    dest_location: str,
+) -> None:
+    """Update an existing collection TRACK from source_el; keep TrackID."""
+    tid = existing.get("TrackID", "")
+    # Replace children and attributes from a fresh clone, then restore TrackID.
+    refreshed = clone_track(source_el, tid, dest_path, dest_location)
+    existing.clear()
+    existing.attrib.update(refreshed.attrib)
+    existing.set("TrackID", tid)
+    existing.set("Location", dest_location)
+    for child in list(refreshed):
+        existing.append(child)
 
 
 def playlist_keys(node: ET.Element) -> list[str]:
@@ -1133,6 +1037,9 @@ def apply_xml(plan: Plan) -> int:
     for item in plan.unique:
         existing = by_location.get(item.dest_location)
         if existing is not None:
+            refresh_track(
+                existing, item.source_el, item.dest_path, item.dest_location
+            )
             dest_to_id[item.dest_location] = existing.get("TrackID", "")
             continue
         tid = str(next_id)
@@ -1205,7 +1112,7 @@ def print_summary(
     if dry_run:
         print("Converted:")
         missing = f" ({len(plan.warnings)} missing skipped)" if plan.warnings else ""
-        print(f"{unique_n} WAV files → {plan.playlist_dir}{missing}")
+        print(f"{unique_n} audio files → {plan.playlist_dir}{missing}")
         print()
         print("Output:")
         print(plan.output)
@@ -1225,7 +1132,7 @@ def print_summary(
     if plan.warnings:
         parts.append(f"{len(plan.warnings)} missing skipped")
     if not parts:
-        parts.append(f"{unique_n} WAV files")
+        parts.append(f"{unique_n} audio files")
     print(f"{', '.join(parts)} → {plan.playlist_dir}")
     print()
     print("Output:")
@@ -1245,6 +1152,7 @@ def prepare(
     output: Path,
     *,
     playlist_folder: str | None = None,
+    output_format: str = "wav",
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(require_tools())
@@ -1286,6 +1194,7 @@ def prepare(
         output_path,
         output_root,
         output_existed,
+        output_format=output_format,
     )
     errors.extend(plan_errors)
     return plan, errors
@@ -1294,6 +1203,7 @@ def prepare(
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     need_wizard = args.xml is None or args.playlist is None
+    output_format = args.format
     if need_wizard:
         if not sys.stdin.isatty():
             print(
@@ -1302,7 +1212,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 2
         try:
-            xml_path, playlist_refs, wav_dir, output = prompt_wizard(args)
+            xml_path, playlist_refs, wav_dir, output, output_format = prompt_wizard(args)
         except CliError as exc:
             print(str(exc), file=sys.stderr)
             return 1
@@ -1326,11 +1236,12 @@ def main(argv: list[str] | None = None) -> int:
             force=args.force,
             dry_run=args.dry_run,
             playlist_folder=folder,
+            output_format=output_format,
         )
         if rc != 0:
             return rc
     if not args.dry_run:
-        print_import_hints(abs_path(output))
+        print_import_hints(abs_path(output), output_format=output_format)
     return 0
 
 

@@ -35,12 +35,37 @@ class LoadPreferencesTests(unittest.TestCase):
             source_xml = Path(tmp) / "Rekordbox-collection.xml"
             source_xml.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
             save_preferences(
-                wav_dir, import_xml, source_xml=source_xml, config_path=config
+                wav_dir,
+                import_xml,
+                source_xml=source_xml,
+                output_format="aiff",
+                config_path=config,
             )
             loaded = load_preferences(config_path=config)
             self.assertEqual(loaded["wav_dir"], str(wav_dir.resolve()))
             self.assertEqual(loaded["import_xml"], str(import_xml.resolve()))
             self.assertEqual(loaded["source_xml"], str(source_xml.resolve()))
+            self.assertEqual(loaded["output_format"], "aiff")
+
+    def test_load_preferences_ignores_invalid_output_format(self) -> None:
+        from gui_preferences import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "wav_dir": "/tmp/x",
+                        "import_xml": "/tmp/y.xml",
+                        "output_format": "mp3",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            loaded = load_preferences(config_path=config)
+            self.assertEqual(loaded["wav_dir"], "/tmp/x")
+            self.assertNotIn("output_format", loaded)
 
     def test_save_without_source_xml_still_loads_wav_and_import(self) -> None:
         from gui_preferences import load_preferences, save_preferences

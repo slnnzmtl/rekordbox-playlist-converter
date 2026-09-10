@@ -132,7 +132,7 @@ app = BUNDLE(
         "CFBundleDisplayName": "Rekordbox WAV Converter",
         "CFBundleShortVersionString": "1.2.0",
         "NSDocumentsFolderUsageDescription": (
-            "Writes converted WAV files and the Rekordbox import XML."
+            "Writes converted audio files and the Rekordbox import XML."
         ),
     },
 )

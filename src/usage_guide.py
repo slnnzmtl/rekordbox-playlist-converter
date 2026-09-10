@@ -3,8 +3,9 @@
 USAGE_GUIDE = """\
 How to convert a playlist (Rekordbox 6 and 7)
 
-This app makes new WAV copies of a playlist, with cues and beatgrid, without
-touching your originals. The import playlist is named {your playlist} [WAV].
+This app makes new audio copies of a playlist (WAV or AIFF), with cues and
+beatgrid, without touching your originals. The import playlist is named
+{your playlist} [WAV] or {your playlist} [AIFF].
 
 Menu names match Rekordbox 7. Rekordbox 6 is the same idea: export the
 collection, then use the rekordbox xml pane — never File → Import.
@@ -36,25 +37,27 @@ export.
    a short list.
 2. Select one or more playlists (hold ⌃ to multi-select). Search filters the
    list.
-3. Confirm WAV folder and Import XML. Defaults are ~/Documents/rekordbox-wav
+3. Confirm output folder and Import XML. Defaults are ~/Documents/rekordbox-wav
    and ~/Documents/rekordbox-wav/rekordbox-wav-import.xml when Documents access
    is allowed. If you decline that request, defaults are ~/rekordbox-wav and
    ~/rekordbox-wav/rekordbox-wav-import.xml; Browse… can prompt again when you
-   open Documents. The app remembers your last-used WAV folder and Import XML
+   open Documents. The app remembers your last-used output folder and Import XML
    between launches.
-4. Click Convert.
+4. Choose Format: WAV (16-bit / 44.1 kHz universal) or AIFF (Pioneer 24/48
+   ceiling, with ID3v2.3 tags from the XML and optional cover art).
+5. Click Convert.
 
 What you get:
-• CDJ-safe WAVs in <WAV folder>/<playlist name>/ (16-bit / 44.1 kHz / stereo
-  WAVE_FORMAT_PCM, fmt + data only — no extensible WAV headers)
+• Audio files in <output folder>/<playlist name>/
+  — WAV: 16-bit / 44.1 kHz / stereo WAVE_FORMAT_PCM, fmt + data only
+  — AIFF: stereo PCM within 24-bit / 48 kHz, plus ID3v2.3 (COMM + SSND + ID3)
 • Import file at the Import XML path
-• Playlist inside that file named {your playlist} [WAV]
+• Playlist inside that file named {your playlist} [WAV] or [AIFF]
 
-Your original files stay where they are. Source WAVs are copied only when they
-already match that profile; otherwise they are re-encoded. Re-running with the
-same import file adds new tracks; it does not replace the [WAV] playlist. Check
-“Overwrite existing WAV files” only if you want to rebuild WAVs that already
-exist and are CDJ-safe.
+Your original files stay where they are. Re-running with the same import file
+adds new tracks and refreshes metadata for existing dest paths; it does not
+replace the playlist. Check “Overwrite existing audio files” only if you want
+to rebuild files that already match the chosen profile.
 
 ────────────────────────────────────────
 3. Bring it into Rekordbox
@@ -80,16 +83,16 @@ library.
 
 Copy into your collection:
 1. Open rekordbox xml → Playlists.
-2. Find {your playlist} [WAV].
+2. Find {your playlist} [WAV] or [AIFF].
 3. Drag it onto Playlists in your main library, or right-click → Import
    Playlist.
-4. Tracks only: rekordbox xml → All Tracks, select the WAV rows, drag onto
+4. Tracks only: rekordbox xml → All Tracks, select the audio rows, drag onto
    Collection (or right-click → Import to Collection).
 
 If Rekordbox asks whether to load information from the library being imported,
 choose Yes so cues, grid, BPM, and key come across.
 
-Play one track. Confirm it is a WAV on a disk Rekordbox can read.
+Play one track. Confirm it is on a disk Rekordbox can read.
 
 ────────────────────────────────────────
 4. After import
@@ -97,10 +100,10 @@ Play one track. Confirm it is a WAV on a disk Rekordbox can read.
 
 • Analyze again only if waveforms are missing; cues and grid should already
   be there.
-• Do not move the WAV folder. Rekordbox stores those paths. Convert again if
+• Do not move the output folder. Rekordbox stores those paths. Convert again if
   you relocate files.
 • Original lossless files are untouched.
 
-New tracks later: export XML from Rekordbox again, convert with the same WAV
+New tracks later: export XML from Rekordbox again, convert with the same output
 folder and Import XML, refresh Imported Library, then import the new rows.
 """
