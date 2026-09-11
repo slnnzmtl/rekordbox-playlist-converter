@@ -8,8 +8,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 _SRC = Path(__file__).resolve().parents[1]
+_TESTS = Path(__file__).resolve().parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+if str(_TESTS) not in sys.path:
+    sys.path.insert(0, str(_TESTS))
+
+from test_preview_bit_depth import _flac_with_bit_depth
 
 from update_check import UpdateCheckResult
 
@@ -64,9 +69,11 @@ TRACKLIST_XML = """\
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="3">
     <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
-           Location="file://localhost/Users/me/music/Bestial.flac" Kind="FLAC File"/>
+           Location="file://localhost/Users/me/music/Bestial.flac"
+           Kind="FLAC File" SampleRate="44100"/>
     <TRACK TrackID="2" Name="Revelation" Artist="Shogan"
-           Location="file://localhost/Users/me/music/Revelation.aiff" Kind="AIFF File"/>
+           Location="file://localhost/Users/me/music/Revelation.aiff"
+           Kind="AIFF File" SampleRate="48000"/>
     <TRACK TrackID="3" Name="NoLoc" Artist="Ghost" Kind="WAV File"/>
   </COLLECTION>
   <PLAYLISTS>
@@ -284,14 +291,32 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 tree.event_generate("<<TreeviewSelect>>")
 
                 preview = app.tracklist_tree
+                self.assertEqual(
+                    preview.cget("columns"),
+                    ("format", "bit_depth", "sample_rate"),
+                )
+                self.assertEqual(preview.heading("#0", "text"), "Track")
+                self.assertEqual(preview.heading("format", "text"), "Format")
+                self.assertEqual(preview.heading("bit_depth", "text"), "Bit depth")
+                self.assertEqual(preview.heading("sample_rate", "text"), "Sample rate")
+
                 groups = preview.get_children("")
                 self.assertEqual(preview.item(groups[0], "text"), "Dark forest (3 tracks)")
+                leaves = preview.get_children(groups[0])
                 self.assertEqual(
-                    [preview.item(r, "text") for r in preview.get_children(groups[0])],
+                    [preview.item(r, "text") for r in leaves],
                     [
                         "ABSL - Bestial.flac",
                         "Shogan - Revelation.aiff",
                         "(missing track)",
+                    ],
+                )
+                self.assertEqual(
+                    [preview.item(r, "values") for r in leaves],
+                    [
+                        ("FLAC", "—", "44100"),
+                        ("AIFF", "—", "48000"),
+                        ("—", "—", "—"),
                     ],
                 )
                 self.assertEqual(
@@ -304,6 +329,14 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 self.assertEqual(
                     [preview.item(g, "text") for g in preview.get_children("")],
                     ["Dark forest (3 tracks)", "Morning (2 tracks)"],
+                )
+                morning_leaves = preview.get_children(preview.get_children("")[1])
+                self.assertEqual(
+                    [preview.item(r, "values") for r in morning_leaves],
+                    [
+                        ("FLAC", "—", "44100"),
+                        ("WAV", "—", "—"),
+                    ],
                 )
                 self.assertEqual(
                     app.status_var.get(),
@@ -478,6 +511,73 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     app.status_var.get(),
                     "4 unique tracks from 2 playlists",
                 )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_tracklist_bit_depth_from_on_disk_file(self) -> None:
+        """Bit depth paints as — then fills async; flush after(0) to apply."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import rb_playlist_to_wav as rb
+        from unittest.mock import patch
+
+        def run_inline(target=None, **_kwargs):
+            class _T:
+                def start(self_inner):
+                    target()
+
+            return _T()
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                flac = base / "Bestial.flac"
+                flac.write_bytes(_flac_with_bit_depth(24))
+                xml = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="1">
+    <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
+           Location="{rb.encode_location(flac)}"
+           Kind="FLAC File" SampleRate="44100"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="Crate" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+                source = _write_xml(base, xml)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                crate = tree.get_children("")[0]
+                with patch(
+                    "rb_converter_gui.threading.Thread", side_effect=run_inline
+                ):
+                    tree.selection_set(crate)
+                    tree.event_generate("<<TreeviewSelect>>")
+                    preview = app.tracklist_tree
+                    leaves = preview.get_children(preview.get_children("")[0])
+                    self.assertEqual(
+                        [preview.item(r, "values") for r in leaves],
+                        [("FLAC", "—", "44100")],
+                    )
+                    root.update()
+                    leaves = preview.get_children(preview.get_children("")[0])
+                    self.assertEqual(
+                        [preview.item(r, "values") for r in leaves],
+                        [("FLAC", "24", "44100")],
+                    )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

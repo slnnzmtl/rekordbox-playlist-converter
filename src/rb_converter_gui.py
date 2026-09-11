@@ -27,12 +27,14 @@ if FIND_REKORDBOX_XML_FLAG in sys.argv:
 
 import subprocess
 import threading
+import time
 import tkinter as tk
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import rb_playlist_to_wav as rb
+from preview_bit_depth import read_preview_bit_depth
 from update_check import ReleaseInfo, UpdateCheckResult, check_for_update
 from usage_guide import USAGE_GUIDE
 from version import __version__
@@ -57,6 +59,9 @@ BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items(
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
 ACTION_BUTTON_WIDTH = 9
 CANCELLED_STATUS_CLEAR_MS = 3000
+# One probe worker; apply this many depths per UI callback so Tk can paint.
+PREVIEW_BIT_DEPTH_BATCH = 24
+PREVIEW_BIT_DEPTH_YIELD_S = 0.02
 
 
 class _HoverTooltip:
@@ -310,7 +315,9 @@ class ConverterApp:
         self._playlist_iids: dict[str, tuple[str, str, str]] = {}
         # leaf iid -> (folder, name, key); group iids are absent
         self._tracklist_iids: dict[str, tuple[str, str, str]] = {}
+        self._tracklist_paths: dict[str, Path] = {}
         self._tracklist_selecting = False
+        self._tracklist_tech_gen = 0
 
         self._build()
         self.search_var.trace_add("write", lambda *_: self._apply_playlist_filter())
@@ -548,9 +555,22 @@ class ConverterApp:
         self._track_search.bind(self.track_search_entry)
         self.tracklist_tree = ttk.Treeview(
             right,
-            show="tree",
+            columns=("format", "bit_depth", "sample_rate"),
+            show="tree headings",
             selectmode="extended",
             height=12,
+        )
+        self.tracklist_tree.heading("#0", text="Track")
+        self.tracklist_tree.heading("format", text="Format")
+        self.tracklist_tree.heading("bit_depth", text="Bit depth")
+        self.tracklist_tree.heading("sample_rate", text="Sample rate")
+        self.tracklist_tree.column("#0", stretch=True, minwidth=120)
+        self.tracklist_tree.column("format", width=70, stretch=False, anchor="center")
+        self.tracklist_tree.column(
+            "bit_depth", width=70, stretch=False, anchor="center"
+        )
+        self.tracklist_tree.column(
+            "sample_rate", width=90, stretch=False, anchor="center"
         )
         track_scroll = ttk.Scrollbar(
             right, orient=tk.VERTICAL, command=self.tracklist_tree.yview
@@ -985,21 +1005,35 @@ class ConverterApp:
         return None
 
     @staticmethod
-    def _track_preview_label(track) -> str:
+    def _track_preview_row(track) -> tuple[str, str, str, str]:
+        """Return (label, format, bit_depth, sample_rate) from a collection TRACK.
+
+        Bit depth is always — here; file headers are filled asynchronously.
+        """
+        empty = "—"
         if track is None:
-            return "(missing track)"
+            return "(missing track)", empty, empty, empty
         artist = track.get("Artist") or ""
         title = track.get("Name") or ""
         label = f"{artist} - {title}" if artist else title
         loc = track.get("Location") or ""
         path = rb.decode_location(loc) if loc else None
         if path is not None and path.suffix:
-            return f"{label}{path.suffix.lower()}"
-        return label
+            label = f"{label}{path.suffix.lower()}"
+        kind = (track.get("Kind") or "").strip()
+        if kind.endswith(" File"):
+            fmt = kind[: -len(" File")].strip() or empty
+        else:
+            fmt = kind or empty
+        rate = (track.get("SampleRate") or "").strip() or empty
+        return label, fmt, empty, rate
 
     def _refresh_tracklist_preview(self) -> None:
+        self._tracklist_tech_gen += 1
+        gen = self._tracklist_tech_gen
         self.tracklist_tree.delete(*self.tracklist_tree.get_children())
         self._tracklist_iids = {}
+        self._tracklist_paths = {}
         if self._source_root is None:
             self._set_idle_status()
             return
@@ -1011,6 +1045,8 @@ class ConverterApp:
         by_id, by_location = rb.collection_indexes(self._source_root)
         leaf_iids: list[str] = []
         painted = 0
+        paths: list[Path] = []
+        seen_paths: set[Path] = set()
         for folder, name in selected:
             node = self._playlist_node(folder, name)
             if node is None:
@@ -1018,7 +1054,7 @@ class ConverterApp:
             count = rb.playlist_track_count(node)
             group_text = f"{name} ({count} tracks)"
             key_type = node.get("KeyType", "0")
-            matched: list[tuple[str, str]] = []
+            matched: list[tuple[str, str, tuple[str, str, str], Path | None]] = []
             for entry in node.findall("TRACK"):
                 key = entry.get("Key") or ""
                 track = None
@@ -1027,21 +1063,28 @@ class ConverterApp:
                         track = by_location.get(key)
                     else:
                         track = by_id.get(key)
-                label = self._track_preview_label(track)
+                label, fmt, depth, rate = self._track_preview_row(track)
                 if query and query not in label.casefold():
                     continue
-                matched.append((key, label))
+                loc = (track.get("Location") or "") if track is not None else ""
+                path = rb.decode_location(loc) if loc else None
+                matched.append((key, label, (fmt, depth, rate), path))
+                if path is not None and path not in seen_paths:
+                    seen_paths.add(path)
+                    paths.append(path)
             if not matched:
                 continue
             group_iid = self.tracklist_tree.insert(
-                "", tk.END, text=group_text, open=True
+                "", tk.END, text=group_text, open=True, values=("", "", "")
             )
             painted += 1
-            for key, label in matched:
+            for key, label, values, path in matched:
                 leaf_iid = self.tracklist_tree.insert(
-                    group_iid, tk.END, text=label
+                    group_iid, tk.END, text=label, values=values
                 )
                 self._tracklist_iids[leaf_iid] = (folder, name, key)
+                if path is not None:
+                    self._tracklist_paths[leaf_iid] = path
                 leaf_iids.append(leaf_iid)
         if not painted:
             self._set_idle_status()
@@ -1053,6 +1096,49 @@ class ConverterApp:
         finally:
             self._tracklist_selecting = False
         self._set_idle_status(self._tracklist_selection_summary())
+        if paths:
+            threading.Thread(
+                target=lambda: self._fill_preview_bit_depths(gen, paths),
+                daemon=True,
+            ).start()
+
+    def _fill_preview_bit_depths(self, gen: int, paths: list[Path]) -> None:
+        batch: dict[Path, str] = {}
+
+        def flush() -> None:
+            if not batch or gen != self._tracklist_tech_gen:
+                batch.clear()
+                return
+            snapshot = dict(batch)
+            batch.clear()
+            self._ui(lambda b=snapshot, g=gen: self._apply_preview_bit_depths(g, b))
+
+        for path in paths:
+            if gen != self._tracklist_tech_gen:
+                return
+            try:
+                bits = read_preview_bit_depth(path)
+            except Exception:
+                continue
+            if bits is not None:
+                batch[path] = str(bits)
+            if len(batch) >= PREVIEW_BIT_DEPTH_BATCH:
+                flush()
+                time.sleep(PREVIEW_BIT_DEPTH_YIELD_S)
+        flush()
+
+    def _apply_preview_bit_depths(self, gen: int, depths: dict[Path, str]) -> None:
+        if gen != self._tracklist_tech_gen or not depths:
+            return
+        for iid, path in self._tracklist_paths.items():
+            depth = depths.get(path)
+            if depth is None:
+                continue
+            values = list(self.tracklist_tree.item(iid, "values"))
+            if len(values) < 3:
+                continue
+            values[1] = depth
+            self.tracklist_tree.item(iid, values=values)
 
     def _selected_playlists(self, *, unique_names: bool = True) -> list[tuple[str, str]]:
         chosen: list[tuple[str, str]] = []

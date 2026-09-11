@@ -4,7 +4,7 @@ description: >-
   Run a vertical-slice TDD loop (red → green → refactor) with this repo’s
   unittest suite. Use when the user asks for TDD, test-first work, red-green-refactor,
   a failing test then implementation, or /tdd-loop; also when adding or changing
-  behavior in the Rekordbox Playlist converter.
+  behavior in Simple Rekordbox Converter.
 icon: beaker
 color: green
 ---
