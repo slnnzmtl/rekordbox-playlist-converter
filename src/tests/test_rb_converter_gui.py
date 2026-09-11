@@ -11,7 +11,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 import rb_playlist_to_wav as rb
-from rb_converter_gui import total_successful_conversions
+from rb_converter_gui import fit_window_geometry, total_successful_conversions
 from update_check import UpdateCheckResult
 
 
@@ -53,6 +53,14 @@ class TotalSuccessfulConversionsTests(unittest.TestCase):
             0,
         )
         self.assertEqual(total_successful_conversions([]), 0)
+
+
+class FitWindowGeometryTests(unittest.TestCase):
+    def test_fit_window_geometry_centers_inside_nonzero_origin_rect(self) -> None:
+        # Secondary-display-style rect: not at virtual (0,0).
+        # 1440x900 usable; 1120x720 centered at +2080+115.
+        geom = fit_window_geometry(1120, 720, 1920, 25, 3360, 925)
+        self.assertEqual(geom, "1120x720+2080+115")
 
 
 class MissingFilesDialogTests(unittest.TestCase):

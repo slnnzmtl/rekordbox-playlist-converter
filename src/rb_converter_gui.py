@@ -121,6 +121,75 @@ def total_successful_conversions(stats_list: list[rb.ConvertStats]) -> int:
     return sum(s.converted + s.copied for s in stats_list)
 
 
+def fit_window_geometry(
+    width: int,
+    height: int,
+    left: int,
+    top: int,
+    right: int,
+    bottom: int,
+) -> str:
+    """Return WxH+X+Y centered and fully inside the given display rect."""
+    avail_w = max(1, right - left)
+    avail_h = max(1, bottom - top)
+    w = min(width, avail_w)
+    h = min(height, avail_h)
+    x = left + (avail_w - w) // 2
+    y = top + (avail_h - h) // 2
+    return f"{w}x{h}+{x}+{y}"
+
+
+def _active_display_bounds() -> tuple[int, int, int, int] | None:
+    """Usable bounds of the display under the pointer (Tk left, top, right, bottom)."""
+    if sys.platform != "darwin":
+        return None
+    script = (
+        "ObjC.import('AppKit');\n"
+        "var screens = $.NSScreen.screens;\n"
+        "var primary = screens.objectAtIndex(0);\n"
+        "var ph = primary.frame.size.height;\n"
+        "var mouse = $.NSEvent.mouseLocation;\n"
+        "var chosen = primary;\n"
+        "for (var i = 0; i < screens.count; i++) {\n"
+        "  var s = screens.objectAtIndex(i);\n"
+        "  var f = s.frame;\n"
+        "  if (mouse.x >= f.origin.x && mouse.x <= f.origin.x + f.size.width &&\n"
+        "      mouse.y >= f.origin.y && mouse.y <= f.origin.y + f.size.height) {\n"
+        "    chosen = s;\n"
+        "    break;\n"
+        "  }\n"
+        "}\n"
+        "var vf = chosen.visibleFrame;\n"
+        "var tkL = Math.round(vf.origin.x);\n"
+        "var tkT = Math.round(ph - vf.origin.y - vf.size.height);\n"
+        "var tkR = Math.round(tkL + vf.size.width);\n"
+        "var tkB = Math.round(tkT + vf.size.height);\n"
+        "tkL + ',' + tkT + ',' + tkR + ',' + tkB;\n"
+    )
+    try:
+        proc = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", script],
+            capture_output=True,
+            text=True,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    parts = (proc.stdout or "").strip().split(",")
+    if len(parts) != 4:
+        return None
+    try:
+        left, top, right, bottom = (int(p.strip()) for p in parts)
+    except ValueError:
+        return None
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
 def open_in_finder(path: Path) -> None:
     """Reveal a folder in Finder (macOS) or the platform file browser."""
     target = path if path.is_dir() else path.parent
@@ -139,7 +208,11 @@ class ConverterApp:
         self.root = root
         root.title(f"Rekordbox Playlist Converter {__version__}")
         root.minsize(560, 480)
-        root.geometry("1120x720")
+        bounds = _active_display_bounds()
+        if bounds is not None:
+            root.geometry(fit_window_geometry(1120, 720, *bounds))
+        else:
+            root.geometry("1120x720")
         self.logo_image = self._apply_window_icon()
 
         self.xml_var = tk.StringVar()
@@ -713,12 +786,14 @@ class ConverterApp:
         if not path.is_file():
             self._refresh_tracklist_preview()
             self.status_var.set(f"XML not found: {path}")
+            self._refresh_tracklist_preview()
             return
         try:
             root = rb.load_dj_playlists(path)
         except rb.CliError as exc:
             self._refresh_tracklist_preview()
             self.status_var.set(str(exc))
+            self._refresh_tracklist_preview()
             return
         self._source_root = root
         nodes = rb.iter_playlist_nodes(root)
