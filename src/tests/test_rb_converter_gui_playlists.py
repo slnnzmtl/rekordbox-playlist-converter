@@ -247,7 +247,6 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 source = _write_xml(Path(tmp), NESTED_XML)
                 root, app = self._make_app(source)
-                app._search_showing_placeholder = False
                 app.search_var.set("nested")
                 tree = app.playlist_tree
                 top = tree.get_children("")
@@ -317,6 +316,237 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 self.assertEqual(
                     app.status_var.get(),
                     "Loaded 2 playlist(s). Select and Convert.",
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_tracklist_selection_auto_selects_status_and_group_header(self) -> None:
+        """Listed leaves start selected; status follows Keys; group header remaps."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark, morning = tree.get_children("")
+                tree.selection_set(dark)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app.tracklist_tree
+                self.assertEqual(str(preview.cget("selectmode")), "extended")
+                groups = preview.get_children("")
+                leaves = preview.get_children(groups[0])
+                self.assertEqual(set(preview.selection()), set(leaves))
+                self.assertNotIn(groups[0], preview.selection())
+                self.assertEqual(
+                    app.status_var.get(),
+                    "3 unique tracks from 1 playlist",
+                )
+
+                tree.selection_set(dark, morning)
+                tree.event_generate("<<TreeviewSelect>>")
+                groups = preview.get_children("")
+                dark_leaves = list(preview.get_children(groups[0]))
+                morning_leaves = list(preview.get_children(groups[1]))
+                all_leaves = dark_leaves + morning_leaves
+                self.assertEqual(set(preview.selection()), set(all_leaves))
+                self.assertEqual(
+                    app.status_var.get(),
+                    "4 unique tracks from 2 playlists",
+                )
+
+                # Deselect Dark forest's Key "2" → unique Keys left: 1, 999, 3.
+                preview.selection_set(*[l for l in all_leaves if l != dark_leaves[1]])
+                preview.event_generate("<<TreeviewSelect>>")
+                self.assertEqual(
+                    app.status_var.get(),
+                    "3 unique tracks from 2 playlists",
+                )
+
+                # Group header remaps to that group's leaves (not the header).
+                preview.selection_set(groups[0])
+                preview.event_generate("<<TreeviewSelect>>")
+                self.assertEqual(set(preview.selection()), set(dark_leaves))
+                self.assertNotIn(groups[0], preview.selection())
+                self.assertEqual(
+                    app.status_var.get(),
+                    "3 unique tracks from 1 playlist",
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_convert_passes_selected_track_keys_to_prepare(self) -> None:
+        """Deselected (including missing) Keys are not prepared; empty errors."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from unittest.mock import patch
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark, morning = tree.get_children("")
+                tree.selection_set(dark, morning)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                dark_leaves = list(preview.get_children(groups[0]))
+                morning_leaves = list(preview.get_children(groups[1]))
+                # Keep Key 1 + 2 from Dark forest; drop missing Key 999 and all Morning.
+                preview.selection_set(dark_leaves[0], dark_leaves[1])
+                preview.event_generate("<<TreeviewSelect>>")
+
+                prepare_calls: list[tuple] = []
+
+                def fake_prepare(*args, **kwargs):
+                    prepare_calls.append((args, kwargs))
+                    return (None, ["stop"])
+
+                def run_inline(target=None, **_kwargs):
+                    class _T:
+                        def start(self_inner):
+                            target()
+
+                    return _T()
+
+                with patch(
+                    "rb_converter_gui.rb.prepare", side_effect=fake_prepare
+                ), patch(
+                    "rb_converter_gui.threading.Thread", side_effect=run_inline
+                ), patch("rb_converter_gui.messagebox.showerror"):
+                    app._start_convert()
+                    root.update()  # _finish_error while showerror is patched
+
+                self.assertEqual(len(prepare_calls), 1)
+                args, kwargs = prepare_calls[0]
+                self.assertEqual(args[1], "Dark forest")
+                self.assertEqual(kwargs.get("playlist_folder"), "")
+                self.assertEqual(set(kwargs.get("track_keys") or ()), {"1", "2"})
+                self.assertFalse(app._busy)
+
+                preview.selection_remove(*preview.selection())
+                preview.event_generate("<<TreeviewSelect>>")
+                prepare_calls.clear()
+                with patch(
+                    "rb_converter_gui.rb.prepare", side_effect=fake_prepare
+                ) as prepare, patch(
+                    "rb_converter_gui.messagebox.showerror"
+                ) as showerror:
+                    app._start_convert()
+                    prepare.assert_not_called()
+                    showerror.assert_called()
+                    self.assertIn("track", str(showerror.call_args).lower())
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_track_search_filters_listed_preview_labels(self) -> None:
+        """Track search matches preview labels; omits empty groups; selects remaining."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark = tree.get_children("")[0]
+                tree.selection_set(dark)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                app.track_search_var.set("bestial")
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                self.assertEqual(len(groups), 1)
+                self.assertEqual(preview.item(groups[0], "text"), "Dark forest (3 tracks)")
+                leaves = preview.get_children(groups[0])
+                self.assertEqual(
+                    [preview.item(r, "text") for r in leaves],
+                    ["ABSL - Bestial.flac"],
+                )
+                self.assertEqual(set(preview.selection()), set(leaves))
+                self.assertEqual(
+                    app.status_var.get(),
+                    "1 unique tracks from 1 playlist",
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_track_search_clear_restores_full_listed_tracklist(self) -> None:
+        """Clearing track search rebuilds all listed groups and re-selects leaves."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark, morning = tree.get_children("")
+                tree.selection_set(dark, morning)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app.tracklist_tree
+                app.track_search_var.set("revelation")
+                groups = preview.get_children("")
+                self.assertEqual(len(groups), 1)
+                self.assertEqual(
+                    [preview.item(r, "text") for r in preview.get_children(groups[0])],
+                    ["Shogan - Revelation.aiff"],
+                )
+
+                app.track_search_var.set("")
+                groups = preview.get_children("")
+                self.assertEqual(
+                    [preview.item(g, "text") for g in groups],
+                    ["Dark forest (3 tracks)", "Morning (2 tracks)"],
+                )
+                dark_leaves = list(preview.get_children(groups[0]))
+                morning_leaves = list(preview.get_children(groups[1]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in dark_leaves],
+                    [
+                        "ABSL - Bestial.flac",
+                        "Shogan - Revelation.aiff",
+                        "(missing track)",
+                    ],
+                )
+                self.assertEqual(
+                    [preview.item(r, "text") for r in morning_leaves],
+                    ["ABSL - Bestial.flac", "Ghost - NoLoc"],
+                )
+                all_leaves = dark_leaves + morning_leaves
+                self.assertEqual(set(preview.selection()), set(all_leaves))
+                self.assertEqual(
+                    app.status_var.get(),
+                    "4 unique tracks from 2 playlists",
                 )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")

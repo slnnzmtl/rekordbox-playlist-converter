@@ -22,6 +22,15 @@ def _tk_available() -> bool:
     return True
 
 
+def _seed_track_selection(app, folder="ROOT", name="Test", key="1"):
+    import tkinter as tk
+
+    leaf = app.tracklist_tree.insert("", tk.END, text="seed")
+    app._tracklist_iids[leaf] = (folder, name, key)
+    app.tracklist_tree.selection_set(leaf)
+    return leaf
+
+
 class GuiPreferencesStartupTests(unittest.TestCase):
     def test_startup_restores_saved_output_paths(self) -> None:
         if not _tk_available():
@@ -624,6 +633,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 app.format_var.set("aiff")
                 app.bit_depth_var.set("24")
                 app.sample_rate_var.set("48000")
+                _seed_track_selection(app)
                 app._start_convert()
                 save_prefs.assert_called_once()
                 args = save_prefs.call_args[0]
@@ -689,6 +699,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 self.assertEqual(app.bit_depth_var.get(), "24")
                 self.assertEqual(app.sample_rate_var.get(), "48000")
                 app.xml_var.set("/tmp/test.xml")
+                _seed_track_selection(app)
                 app._start_convert()
                 prepare.assert_called()
                 kwargs = prepare.call_args.kwargs
@@ -762,6 +773,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 app.xml_var.set("/tmp/test.xml")
                 app.wav_dir_var.set("/tmp/typed-wav")
                 app.output_var.set("/tmp/typed-import.xml")
+                _seed_track_selection(app)
                 app._start_convert()
                 self.assertEqual(thread_cls.call_count, 2)
         except tk.TclError:

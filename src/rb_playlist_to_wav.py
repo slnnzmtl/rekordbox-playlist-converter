@@ -18,7 +18,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Collection
 
 from cdj_aiff import (
     AIFF_SAFE_BIT_DEPTHS,
@@ -1334,6 +1334,7 @@ def prepare(
     output_format: str = "wav",
     max_bit_depth: int = 24,
     max_sample_rate: int = 48000,
+    track_keys: Collection[str] | None = None,
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(require_tools())
@@ -1354,6 +1355,13 @@ def prepare(
         return None, errors
     assert found is not None
     _folder, resolved_name, playlist_el = found
+
+    if track_keys is not None:
+        allowed = set(track_keys)
+        playlist_el = copy.deepcopy(playlist_el)
+        for entry in list(playlist_el.findall("TRACK")):
+            if (entry.get("Key") or "") not in allowed:
+                playlist_el.remove(entry)
 
     output_path = abs_path(output)
     output_existed = output_path.is_file()
