@@ -270,17 +270,17 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(plan.tracks[0].source_path, self.a)
 
     def test_convert_unique_stops_remaining_tracks_when_cancel_event_set(self) -> None:
-        """Cancel mid-playlist: finish the current track, skip the rest, keep files."""
+        """Cancel during encode: drop in-flight dest, skip the rest."""
         import threading
 
         cancel = threading.Event()
-        written: list[Path] = []
 
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(b"RIFF")
-            written.append(dest)
+            dest.write_bytes(b"partial")
             cancel.set()
+            dest.unlink(missing_ok=True)
+            raise rb.CancelledError(f"conversion cancelled for {source}")
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
@@ -297,11 +297,52 @@ class XmlFixtureTests(unittest.TestCase):
                 plan, force=False, progress=False, cancel_event=cancel
             )
 
-        self.assertEqual(stats.converted, 1)
-        self.assertEqual(len(written), 1)
-        self.assertTrue(written[0].is_file())
-        for item in plan.unique[1:]:
+        self.assertEqual(stats.converted, 0)
+        for item in plan.unique:
             self.assertFalse(item.dest_path.exists())
+
+    def test_run_ffmpeg_kills_process_when_cancel_event_set(self) -> None:
+        import threading
+
+        cancel = threading.Event()
+        cancel.set()
+        killed: list[bool] = []
+
+        class FakeProc:
+            def __init__(self, *_a: object, **_k: object) -> None:
+                self.returncode: int | None = None
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def kill(self) -> None:
+                killed.append(True)
+                self.returncode = -9
+
+            def wait(self, timeout: float | None = None) -> int:
+                return self.returncode if self.returncode is not None else -9
+
+            def communicate(self) -> tuple[str, str]:
+                return "", ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src.flac"
+            dest = Path(tmp) / "out.wav"
+            src.write_bytes(b"flac")
+            dest.write_bytes(b"partial")
+            with patch.object(
+                ffmpeg_tools, "tool_path", return_value="/bin/ffmpeg"
+            ), patch.object(
+                ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
+            ), patch.object(convert_plan.subprocess, "Popen", FakeProc), patch.object(
+                convert_plan.time, "sleep", lambda _s: None
+            ):
+                with self.assertRaises(rb.CancelledError):
+                    convert_plan.run_ffmpeg(
+                        src, dest, "pcm_s16le", force=True, cancel_event=cancel
+                    )
+            self.assertTrue(killed)
+            self.assertFalse(dest.exists())
 
     def test_prepare_stops_probing_when_cancel_event_set(self) -> None:
         import threading
@@ -794,6 +835,9 @@ class TargetFromStreamTests(unittest.TestCase):
             (16, 48000, 24, 48000, 16, 48000),
             (24, 48000, 16, 44100, 16, 44100),
             (24, 96000, 24, 48000, 24, 48000),
+            (24, 88200, 24, 48000, 24, 44100),
+            (24, 176400, 24, 48000, 24, 44100),
+            (16, 22050, 24, 48000, 16, 44100),
         ]
         for src_bits, src_rate, max_bits, max_rate, exp_bits, exp_rate in cases:
             with self.subTest(
@@ -935,7 +979,21 @@ class SubprocessTimeoutTests(unittest.TestCase):
         self.assertIn(str(path), str(ctx.exception))
 
     def test_run_ffmpeg_maps_timeout_to_cli_error(self) -> None:
-        import subprocess
+        class FakeProc:
+            def __init__(self, *_a: object, **_k: object) -> None:
+                self.returncode: int | None = None
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+            def wait(self, timeout: float | None = None) -> int:
+                return -9
+
+            def communicate(self) -> tuple[str, str]:
+                return "", ""
 
         src = Path("/tmp/src.flac")
         dest = Path("/tmp/out.wav")
@@ -944,10 +1002,10 @@ class SubprocessTimeoutTests(unittest.TestCase):
         ), patch.object(
             ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
         ), patch.object(
-            convert_plan.subprocess,
-            "run",
-            side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=600),
-        ):
+            ffmpeg_tools, "FFMPEG_CONVERT_TIMEOUT_S", 0.01
+        ), patch.object(convert_plan.subprocess, "Popen", FakeProc), patch.object(
+            convert_plan.time, "sleep", lambda _s: None
+        ), patch.object(convert_plan.time, "monotonic", side_effect=[0.0, 0.02]):
             with self.assertRaises(rb.CliError) as ctx:
                 convert_plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
         self.assertIn("timed out", str(ctx.exception).lower())

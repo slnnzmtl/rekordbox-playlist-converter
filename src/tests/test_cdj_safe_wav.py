@@ -89,6 +89,31 @@ class WavHeaderParseTests(unittest.TestCase):
             self.assertEqual(info.fmt_chunk_size, 40)
             self.assertEqual(info.chunk_ids, ("fmt ", "LIST", "data"))
 
+    def test_trailing_bytes_after_chunks_raise(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trail.wav"
+            write_pcm_wav(path)
+            path.write_bytes(path.read_bytes() + b"\x00\x01")
+            with self.assertRaises(rb.CliError):
+                rb.parse_wav_info(path)
+            self.assertFalse(
+                rb.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100)
+            )
+
+    def test_wrong_riff_declared_size_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "badsize.wav"
+            write_pcm_wav(path)
+            data = bytearray(path.read_bytes())
+            # Corrupt RIFF size so declared + 8 != len(data)
+            data[4:8] = struct.pack("<I", struct.unpack_from("<I", data, 4)[0] + 10)
+            path.write_bytes(data)
+            with self.assertRaises(rb.CliError):
+                rb.parse_wav_info(path)
+            self.assertFalse(
+                rb.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100)
+            )
+
 
 class CdjSafeWavTests(unittest.TestCase):
     def test_safe_16bit_stereo_44100_pcm_only(self) -> None:
