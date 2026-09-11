@@ -548,9 +548,22 @@ class ConverterApp:
         self._track_search.bind(self.track_search_entry)
         self.tracklist_tree = ttk.Treeview(
             right,
-            show="tree",
+            columns=("format", "bit_depth", "sample_rate"),
+            show="tree headings",
             selectmode="extended",
             height=12,
+        )
+        self.tracklist_tree.heading("#0", text="Track")
+        self.tracklist_tree.heading("format", text="Format")
+        self.tracklist_tree.heading("bit_depth", text="Bit depth")
+        self.tracklist_tree.heading("sample_rate", text="Sample rate")
+        self.tracklist_tree.column("#0", stretch=True, minwidth=120)
+        self.tracklist_tree.column("format", width=70, stretch=False, anchor="center")
+        self.tracklist_tree.column(
+            "bit_depth", width=70, stretch=False, anchor="center"
+        )
+        self.tracklist_tree.column(
+            "sample_rate", width=90, stretch=False, anchor="center"
         )
         track_scroll = ttk.Scrollbar(
             right, orient=tk.VERTICAL, command=self.tracklist_tree.yview
@@ -985,17 +998,25 @@ class ConverterApp:
         return None
 
     @staticmethod
-    def _track_preview_label(track) -> str:
+    def _track_preview_row(track) -> tuple[str, str, str, str]:
+        """Return (label, format, bit_depth, sample_rate) from a collection TRACK."""
+        empty = "—"
         if track is None:
-            return "(missing track)"
+            return "(missing track)", empty, empty, empty
         artist = track.get("Artist") or ""
         title = track.get("Name") or ""
         label = f"{artist} - {title}" if artist else title
         loc = track.get("Location") or ""
         path = rb.decode_location(loc) if loc else None
         if path is not None and path.suffix:
-            return f"{label}{path.suffix.lower()}"
-        return label
+            label = f"{label}{path.suffix.lower()}"
+        kind = (track.get("Kind") or "").strip()
+        if kind.endswith(" File"):
+            fmt = kind[: -len(" File")].strip() or empty
+        else:
+            fmt = kind or empty
+        rate = (track.get("SampleRate") or "").strip() or empty
+        return label, fmt, empty, rate
 
     def _refresh_tracklist_preview(self) -> None:
         self.tracklist_tree.delete(*self.tracklist_tree.get_children())
@@ -1018,7 +1039,7 @@ class ConverterApp:
             count = rb.playlist_track_count(node)
             group_text = f"{name} ({count} tracks)"
             key_type = node.get("KeyType", "0")
-            matched: list[tuple[str, str]] = []
+            matched: list[tuple[str, str, tuple[str, str, str]]] = []
             for entry in node.findall("TRACK"):
                 key = entry.get("Key") or ""
                 track = None
@@ -1027,19 +1048,19 @@ class ConverterApp:
                         track = by_location.get(key)
                     else:
                         track = by_id.get(key)
-                label = self._track_preview_label(track)
+                label, fmt, depth, rate = self._track_preview_row(track)
                 if query and query not in label.casefold():
                     continue
-                matched.append((key, label))
+                matched.append((key, label, (fmt, depth, rate)))
             if not matched:
                 continue
             group_iid = self.tracklist_tree.insert(
-                "", tk.END, text=group_text, open=True
+                "", tk.END, text=group_text, open=True, values=("", "", "")
             )
             painted += 1
-            for key, label in matched:
+            for key, label, values in matched:
                 leaf_iid = self.tracklist_tree.insert(
-                    group_iid, tk.END, text=label
+                    group_iid, tk.END, text=label, values=values
                 )
                 self._tracklist_iids[leaf_iid] = (folder, name, key)
                 leaf_iids.append(leaf_iid)

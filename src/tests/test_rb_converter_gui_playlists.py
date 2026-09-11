@@ -64,9 +64,11 @@ TRACKLIST_XML = """\
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="3">
     <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
-           Location="file://localhost/Users/me/music/Bestial.flac" Kind="FLAC File"/>
+           Location="file://localhost/Users/me/music/Bestial.flac"
+           Kind="FLAC File" SampleRate="44100"/>
     <TRACK TrackID="2" Name="Revelation" Artist="Shogan"
-           Location="file://localhost/Users/me/music/Revelation.aiff" Kind="AIFF File"/>
+           Location="file://localhost/Users/me/music/Revelation.aiff"
+           Kind="AIFF File" SampleRate="48000"/>
     <TRACK TrackID="3" Name="NoLoc" Artist="Ghost" Kind="WAV File"/>
   </COLLECTION>
   <PLAYLISTS>
@@ -284,14 +286,32 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 tree.event_generate("<<TreeviewSelect>>")
 
                 preview = app.tracklist_tree
+                self.assertEqual(
+                    preview.cget("columns"),
+                    ("format", "bit_depth", "sample_rate"),
+                )
+                self.assertEqual(preview.heading("#0", "text"), "Track")
+                self.assertEqual(preview.heading("format", "text"), "Format")
+                self.assertEqual(preview.heading("bit_depth", "text"), "Bit depth")
+                self.assertEqual(preview.heading("sample_rate", "text"), "Sample rate")
+
                 groups = preview.get_children("")
                 self.assertEqual(preview.item(groups[0], "text"), "Dark forest (3 tracks)")
+                leaves = preview.get_children(groups[0])
                 self.assertEqual(
-                    [preview.item(r, "text") for r in preview.get_children(groups[0])],
+                    [preview.item(r, "text") for r in leaves],
                     [
                         "ABSL - Bestial.flac",
                         "Shogan - Revelation.aiff",
                         "(missing track)",
+                    ],
+                )
+                self.assertEqual(
+                    [preview.item(r, "values") for r in leaves],
+                    [
+                        ("FLAC", "—", "44100"),
+                        ("AIFF", "—", "48000"),
+                        ("—", "—", "—"),
                     ],
                 )
                 self.assertEqual(
@@ -304,6 +324,14 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 self.assertEqual(
                     [preview.item(g, "text") for g in preview.get_children("")],
                     ["Dark forest (3 tracks)", "Morning (2 tracks)"],
+                )
+                morning_leaves = preview.get_children(preview.get_children("")[1])
+                self.assertEqual(
+                    [preview.item(r, "values") for r in morning_leaves],
+                    [
+                        ("FLAC", "—", "44100"),
+                        ("WAV", "—", "—"),
+                    ],
                 )
                 self.assertEqual(
                     app.status_var.get(),

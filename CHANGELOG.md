@@ -10,7 +10,7 @@ Intended for **1.3.0** (app version remains 1.2.0 until release).
 - Playlist search and track search sit over each pane (follow the splitter). Track search filters the currently listed preview by artist/title/filename; Convert still uses the selected visible tracks.
 - Convert uses the tracklist preview selection: listed tracks start selected; hold ⌃ to refine a subset across playlists. Import XML and audio output include only those tracks.
 - Convert sits beside the progress bar; Cancel replaces it while a run is in progress. Cancel stops after the current track (completed files kept; interrupted playlist is not written to Import XML). “Cancelled.” clears after 3 seconds and resets the progress bar.
-- GUI shows a tracklist preview beside the playlist tree (`Artist - Title.ext`); the unique-track selection summary appears on the bottom status line when idle.
+- GUI shows a tracklist table beside the playlist tree (Track, Format, Bit depth, Sample rate from the Rekordbox XML; bit depth is — when unknown); the unique-track selection summary appears on the bottom status line when idle.
 - Main window opens centered on the display under the pointer instead of straddling dual-monitor layouts.
 - Missing skipped tracks open in a scrollable list dialog instead of a flat warning alert.
 - App version is shown in the window title; the in-window title label is removed.
