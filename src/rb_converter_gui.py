@@ -1118,13 +1118,15 @@ class ConverterApp:
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Finished with no audio files converted or copied.")
-        body = "\n".join(summaries)
         if warnings:
-            body += (
-                "\n\nThese files were missing and were skipped:\n\n"
-                + "\n".join(warnings)
+            self._show_missing_files_dialog(
+                "No conversions",
+                "These files were missing and were skipped:",
+                warnings,
+                summary="\n".join(summaries),
             )
-        messagebox.showwarning("No conversions", body)
+            return
+        messagebox.showwarning("No conversions", "\n".join(summaries))
 
     def _finish_ok(
         self,
@@ -1140,10 +1142,10 @@ class ConverterApp:
             f"Done. Point Rekordbox Imported Library at:\n{output}"
         )
         if warnings:
-            messagebox.showwarning(
+            self._show_missing_files_dialog(
                 "Skipped missing tracks",
-                "These files were missing and were skipped:\n\n"
-                + "\n".join(warnings),
+                "These files were missing and were skipped:",
+                warnings,
             )
         fmt = self.format_var.get().strip().lower()
         suffix = "[AIFF]" if fmt == "aiff" else "[WAV]"
@@ -1157,6 +1159,71 @@ class ConverterApp:
             f"   (or drag the {suffix} playlist into Playlists)"
         )
         self._show_done_dialog(message, open_dir)
+
+    def _show_missing_files_dialog(
+        self,
+        title: str,
+        intro: str,
+        warnings: list[str],
+        *,
+        summary: str | None = None,
+    ) -> None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(True, True)
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.grid(row=0, column=0, sticky="nsew")
+        dlg.columnconfigure(0, weight=1)
+        dlg.rowconfigure(0, weight=1)
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(2 if summary else 1, weight=1)
+
+        row = 0
+        if summary:
+            ttk.Label(frm, text=summary, justify=tk.LEFT, wraplength=520).grid(
+                row=row, column=0, sticky="w", pady=(0, 8)
+            )
+            row += 1
+
+        ttk.Label(frm, text=intro, wraplength=520).grid(
+            row=row, column=0, sticky="w", pady=(0, 8)
+        )
+        row += 1
+
+        list_frame = ttk.Frame(frm)
+        list_frame.grid(row=row, column=0, sticky="nsew")
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+        listbox = tk.Listbox(
+            list_frame, height=min(12, max(4, len(warnings))), width=72
+        )
+        scroll = ttk.Scrollbar(
+            list_frame, orient=tk.VERTICAL, command=listbox.yview
+        )
+        listbox.configure(yscrollcommand=scroll.set)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        for line in warnings:
+            listbox.insert(tk.END, line)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=row + 1, column=0, sticky="e", pady=(12, 0))
+
+        def close() -> None:
+            dlg.destroy()
+
+        ttk.Button(btns, text="OK", command=close).pack(side=tk.RIGHT)
+        dlg.bind("<Return>", lambda _e: close())
+        dlg.bind("<Escape>", lambda _e: close())
+        dlg.protocol("WM_DELETE_WINDOW", close)
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        dlg.wait_window()
 
     def _show_done_dialog(self, message: str, open_dir: Path | None) -> None:
         dlg = tk.Toplevel(self.root)

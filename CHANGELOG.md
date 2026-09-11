@@ -5,6 +5,7 @@
 Intended for **1.3.0** (app version remains 1.2.0 until release).
 
 - GUI shows a tracklist preview beside the playlist tree (`Artist - Title.ext`, unique track count at the bottom).
+- Missing skipped tracks open in a scrollable list dialog instead of a flat warning alert.
 - App version is shown in the window title; the in-window title label is removed.
 - Convert aligns with the Browse column; the redundant How to use button is removed (Help menu unchanged).
 - GUI playlist picker is a Rekordbox-style folder tree (expand/collapse); selecting a folder converts all playlists under it. Search still filters the tree.
