@@ -296,7 +296,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     ],
                 )
                 self.assertEqual(
-                    app.tracklist_total_var.get(),
+                    app.status_var.get(),
                     "3 unique tracks from 1 playlist",
                 )
 
@@ -307,14 +307,17 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     ["Dark forest (3 tracks)", "Morning (2 tracks)"],
                 )
                 self.assertEqual(
-                    app.tracklist_total_var.get(),
+                    app.status_var.get(),
                     "4 unique tracks from 2 playlists",
                 )
 
                 tree.selection_set()
                 tree.event_generate("<<TreeviewSelect>>")
                 self.assertEqual(preview.get_children(""), ())
-                self.assertEqual(app.tracklist_total_var.get(), "No tracks selected")
+                self.assertEqual(
+                    app.status_var.get(),
+                    "Loaded 2 playlist(s). Select and Convert.",
+                )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

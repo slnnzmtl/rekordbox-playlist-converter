@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unicodedata
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -1002,6 +1003,7 @@ def convert_unique(
     *,
     progress: bool = False,
     on_progress: Callable[[int, int, str, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> ConvertStats:
     stats = ConvertStats()
     plan.playlist_dir.mkdir(parents=True, exist_ok=True)
@@ -1009,6 +1011,8 @@ def convert_unique(
     bar = Progress(len(items), progress, on_progress=on_progress)
     try:
         for i, item in enumerate(items, 1):
+            if cancel_event is not None and cancel_event.is_set():
+                break
             name = item.dest_name
             is_aiff = item.dest_path.suffix.lower() == ".aiff"
             if item.noop:
