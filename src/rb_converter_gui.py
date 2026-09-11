@@ -54,6 +54,7 @@ BIT_DEPTH_LABELS = {"16": "16Bit", "24": "24Bit"}
 SAMPLE_RATE_LABELS = {"44100": "44.1KHz", "48000": "48KHz"}
 BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items()}
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
+ACTION_BUTTON_WIDTH = 9
 
 
 class _HoverTooltip:
@@ -135,7 +136,7 @@ class ConverterApp:
         documents_accessible: bool | None = None,
     ) -> None:
         self.root = root
-        root.title("Rekordbox Playlist Converter")
+        root.title(f"Rekordbox Playlist Converter {__version__}")
         root.minsize(560, 480)
         root.geometry("1120x720")
         self.logo_image = self._apply_window_icon()
@@ -347,40 +348,36 @@ class ConverterApp:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         frm.columnconfigure(1, weight=1)
-        frm.rowconfigure(3, weight=1)
+        frm.rowconfigure(2, weight=1)
 
-        header = ttk.Frame(frm)
-        header.grid(row=0, column=0, columnspan=3, sticky="w", **pad)
-        self.title_label = ttk.Label(header, text="Rekordbox Playlist Converter")
-        self.title_label.grid(row=0, column=0, sticky="w")
-        self.version_label = ttk.Label(header, text=__version__)
-        self.version_label.grid(row=1, column=0, sticky="w")
-
-        ttk.Label(frm, text="Rekordbox XML").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Rekordbox XML").grid(row=0, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.xml_var).grid(
-            row=1, column=1, sticky="ew", **pad
+            row=0, column=1, sticky="ew", **pad
         )
         xml_btns = ttk.Frame(frm)
-        xml_btns.grid(row=1, column=2, **pad)
-        ttk.Button(xml_btns, text="Browse…", command=self._browse_xml).pack(
-            side=tk.LEFT
-        )
+        xml_btns.grid(row=0, column=2, sticky="e", **pad)
+        ttk.Button(
+            xml_btns,
+            text="Browse…",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._browse_xml,
+        ).pack(side=tk.LEFT)
         self.refresh_btn = ttk.Button(
             xml_btns, text="Refresh", command=self._refresh_xml
         )
         self.refresh_btn.pack(side=tk.LEFT, padx=(4, 0))
 
-        ttk.Label(frm, text="Playlists").grid(row=2, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Playlists").grid(row=1, column=0, sticky="w", **pad)
         self.search_entry = ttk.Entry(frm, textvariable=self.search_var)
-        self.search_entry.grid(row=2, column=1, sticky="ew", **pad)
+        self.search_entry.grid(row=1, column=1, sticky="ew", **pad)
         self.search_entry.bind("<FocusIn>", self._on_search_focus_in)
         self.search_entry.bind("<FocusOut>", self._on_search_focus_out)
         ttk.Label(frm, text="Hold ⌃ to multi-select").grid(
-            row=2, column=2, sticky="e", **pad
+            row=1, column=2, sticky="e", **pad
         )
 
         list_frame = ttk.Frame(frm)
-        list_frame.grid(row=3, column=0, columnspan=3, sticky="nsew", **pad)
+        list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", **pad)
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
 
@@ -427,39 +424,47 @@ class ConverterApp:
         panes.add(right, weight=1)
         self._refresh_tracklist_preview()
 
-        ttk.Label(frm, text="Output folder").grid(row=4, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Output folder").grid(row=3, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.wav_dir_var).grid(
+            row=3, column=1, sticky="ew", **pad
+        )
+        ttk.Button(
+            frm,
+            text="Browse…",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._browse_wav_dir,
+        ).grid(row=3, column=2, sticky="e", **pad)
+
+        ttk.Label(frm, text="Import XML").grid(row=4, column=0, sticky="w", **pad)
+        ttk.Entry(frm, textvariable=self.output_var).grid(
             row=4, column=1, sticky="ew", **pad
         )
-        ttk.Button(frm, text="Browse…", command=self._browse_wav_dir).grid(
-            row=4, column=2, **pad
-        )
+        ttk.Button(
+            frm,
+            text="Browse…",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._browse_output,
+        ).grid(row=4, column=2, sticky="e", **pad)
 
-        ttk.Label(frm, text="Import XML").grid(row=5, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.output_var).grid(
-            row=5, column=1, sticky="ew", **pad
-        )
-        ttk.Button(frm, text="Browse…", command=self._browse_output).grid(
-            row=5, column=2, **pad
-        )
-
-        opts = ttk.Frame(frm)
-        opts.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
-        ttk.Label(opts, text="Format").pack(side=tk.LEFT)
+        ttk.Label(frm, text="Format").grid(row=5, column=0, sticky="w", **pad)
+        format_opts = ttk.Frame(frm)
+        format_opts.grid(row=5, column=1, sticky="w", **pad)
         ttk.Radiobutton(
-            opts, text="WAV", variable=self.format_var, value="wav"
+            format_opts, text="WAV", variable=self.format_var, value="wav"
+        ).pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            format_opts, text="AIFF", variable=self.format_var, value="aiff"
         ).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Radiobutton(
-            opts, text="AIFF", variable=self.format_var, value="aiff"
-        ).pack(side=tk.LEFT, padx=(4, 0))
-        self.convert_btn = ttk.Button(opts, text="Convert", command=self._start_convert)
-        self.convert_btn.pack(side=tk.RIGHT)
-        ttk.Button(opts, text="How to use", command=self._show_usage_guide).pack(
-            side=tk.RIGHT, padx=(0, 8)
+        self.convert_btn = ttk.Button(
+            frm,
+            text="Convert",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._start_convert,
         )
+        self.convert_btn.grid(row=5, column=2, sticky="e", **pad)
 
         quality = ttk.Frame(frm)
-        quality.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        quality.grid(row=6, column=0, columnspan=2, sticky="w", **pad)
         ttk.Label(quality, text="Sampling format").pack(side=tk.LEFT)
         self.bit_depth_combo = ttk.Combobox(
             quality,
@@ -491,11 +496,11 @@ class ConverterApp:
         _HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
 
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
+        self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
         self.progress["value"] = 0
 
         ttk.Label(frm, textvariable=self.status_var, wraplength=1000).grid(
-            row=9, column=0, columnspan=3, sticky="ew", **pad
+            row=8, column=0, columnspan=3, sticky="ew", **pad
         )
 
     def _build_menubar(self) -> None:
