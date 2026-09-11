@@ -73,15 +73,6 @@ def _walk_playlist_nodes(
             yield from _walk_playlist_nodes(child, next_parts)
 
 
-def _walk_playlists(
-    node: ET.Element, folder_parts: list[str]
-) -> Iterable[tuple[str, str, ET.Element]]:
-    """Yield (folder_path, name, node) for playlist leaves under a folder tree."""
-    for kind, folder, name, el in _walk_playlist_nodes(node, folder_parts):
-        if kind == "playlist":
-            yield folder, name, el
-
-
 def iter_playlist_nodes(root: ET.Element) -> list[tuple[str, str, str, ET.Element]]:
     """All folders and playlists as (kind, folder_path, name, node), depth-first."""
     playlists = root.find("PLAYLISTS")

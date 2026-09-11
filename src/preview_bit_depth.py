@@ -5,6 +5,8 @@ from __future__ import annotations
 import struct
 from pathlib import Path
 
+import iff_chunks
+
 _FLAC_READ = 256
 _RIFF_READ = 4096
 _CONTAINER = {b"moov", b"trak", b"mdia", b"minf", b"stbl"}
@@ -113,38 +115,28 @@ def _flac_bit_depth(data: bytes) -> int | None:
 
 
 def _wav_bit_depth(data: bytes) -> int | None:
-    offset = 12
-    while offset + 8 <= len(data):
-        cid = data[offset : offset + 4]
-        size = struct.unpack_from("<I", data, offset + 4)[0]
-        start = offset + 8
-        end = start + size
-        if end > len(data):
-            return None
-        if cid == b"fmt " and size >= 16:
-            bits = struct.unpack_from("<H", data, start + 14)[0]
-            if 8 <= bits <= 32:
-                return bits
-            return None
-        offset = end + (size % 2)
+    try:
+        for cid, size, start in iff_chunks.iter_chunks(data, endian="little", start=12):
+            if cid == b"fmt " and size >= 16:
+                bits = struct.unpack_from("<H", data, start + 14)[0]
+                if 8 <= bits <= 32:
+                    return bits
+                return None
+    except ValueError:
+        return None
     return None
 
 
 def _aiff_bit_depth(data: bytes) -> int | None:
-    offset = 12
-    while offset + 8 <= len(data):
-        cid = data[offset : offset + 4]
-        size = struct.unpack_from(">I", data, offset + 4)[0]
-        start = offset + 8
-        end = start + size
-        if end > len(data):
-            return None
-        if cid == b"COMM" and size >= 8:
-            bits = struct.unpack_from(">h", data, start + 6)[0]
-            if 8 <= bits <= 32:
-                return bits
-            return None
-        offset = end + (size % 2)
+    try:
+        for cid, size, start in iff_chunks.iter_chunks(data, endian="big", start=12):
+            if cid == b"COMM" and size >= 8:
+                bits = struct.unpack_from(">h", data, start + 6)[0]
+                if 8 <= bits <= 32:
+                    return bits
+                return None
+    except ValueError:
+        return None
     return None
 
 

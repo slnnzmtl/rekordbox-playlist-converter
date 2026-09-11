@@ -16,7 +16,6 @@ import ffmpeg_tools
 import xml_output
 from cdj_aiff import (
     AIFF_SAFE_BIT_DEPTHS,
-    AIFF_SAFE_RATES,
     _AiffAudioInfo,
     _extract_id3_chunk,
     _is_canonical_aiff_output,
@@ -31,10 +30,8 @@ from cdj_aiff import (
     write_aiff_id3,
 )
 from cdj_wav import (
-    CDJ_SAFE_BIT_DEPTH,
     CDJ_SAFE_CHANNELS,
     CDJ_SAFE_CHUNK_IDS,
-    CDJ_SAFE_SAMPLE_RATE,
     WAVE_FORMAT_PCM,
     WavInfo,
     _rewrite_wav_pcm,
@@ -44,7 +41,6 @@ from cdj_wav import (
 from cli_error import CliError
 from rekordbox_xml import (
     XML_CANDIDATE_RELATIVE,
-    _walk_playlists,
     collection_indexes,
     decode_location,
     discover_xml_candidates,
