@@ -11,7 +11,11 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from preview_bit_depth import cached_preview_bit_depth, read_preview_bit_depth
+from preview_bit_depth import (
+    cached_preview_bit_depth,
+    peek_cached_preview_bit_depth,
+    read_preview_bit_depth,
+)
 
 
 def _box(typ: bytes, payload: bytes) -> bytes:
@@ -184,6 +188,35 @@ class PreviewBitDepthTests(unittest.TestCase):
                 cached_preview_bit_depth(path, cache, read=counting_read), 24
             )
             self.assertEqual(calls["n"], 1)
+
+    def test_cached_and_peek_honor_lock(self) -> None:
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "track.flac"
+            path.write_bytes(_flac_with_bit_depth(24))
+            cache: dict = {}
+            lock = threading.RLock()
+            held = {"n": 0}
+
+            class CountingLock:
+                def __enter__(self):
+                    held["n"] += 1
+                    return lock.__enter__()
+
+                def __exit__(self, *args):
+                    return lock.__exit__(*args)
+
+            tracker = CountingLock()
+            self.assertEqual(
+                cached_preview_bit_depth(path, cache, lock=tracker), 24
+            )
+            self.assertGreaterEqual(held["n"], 1)
+            before = held["n"]
+            hit, bits = peek_cached_preview_bit_depth(path, cache, lock=tracker)
+            self.assertTrue(hit)
+            self.assertEqual(bits, 24)
+            self.assertGreater(held["n"], before)
 
 
 if __name__ == "__main__":

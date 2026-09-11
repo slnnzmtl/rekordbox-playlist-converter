@@ -6,12 +6,35 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
 _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 import rb_playlist_to_wav as rb
+
+
+class LoadDjPlaylistsTests(unittest.TestCase):
+    def test_permission_error_becomes_cli_error(self) -> None:
+        path = Path("/tmp/unreadable.xml")
+        with patch(
+            "rekordbox_xml.ET.parse",
+            side_effect=PermissionError("denied"),
+        ):
+            with self.assertRaises(rb.CliError) as ctx:
+                rb.load_dj_playlists(path)
+        self.assertIn(str(path), str(ctx.exception))
+
+    def test_file_not_found_becomes_cli_error(self) -> None:
+        path = Path("/tmp/missing-collection.xml")
+        with patch(
+            "rekordbox_xml.ET.parse",
+            side_effect=FileNotFoundError("no such file"),
+        ):
+            with self.assertRaises(rb.CliError) as ctx:
+                rb.load_dj_playlists(path)
+        self.assertIn(str(path), str(ctx.exception))
 
 
 class LocationTests(unittest.TestCase):

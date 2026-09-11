@@ -81,7 +81,7 @@ def _parse_aiff_audio(path: Path) -> _AiffAudioInfo:
                 ssnd_offset, ssnd_block_size = struct.unpack_from(
                     ">II", data, payload_start
                 )
-                ssnd_data_size = size - 8
+                ssnd_data_size = size - 8 - ssnd_offset
         elif cid == b"ID3 ":
             id3_count += 1
         offset = payload_end + (size % 2)
@@ -314,7 +314,10 @@ def _ssnd_pcm_bytes(path: Path) -> bytes:
     for cid in info.chunk_ids:
         size = struct.unpack_from(">I", data, offset + 4)[0]
         if cid == "SSND":
-            return data[offset + 16 : offset + 8 + size]
+            payload_start = offset + 8
+            pcm_start = payload_start + 8 + info.ssnd_offset
+            pcm_end = payload_start + size
+            return data[pcm_start:pcm_end]
         offset += 8 + size + (size % 2)
     raise CliError(f"SSND missing in {path}")
 
@@ -372,7 +375,7 @@ def write_aiff_id3(
 def extract_cover_jpeg(source: Path, *, max_side: int = 600) -> bytes | None:
     """Extract attached picture as JPEG ≤ max_side; None if absent."""
     # Late import: tool_path lives on the facade; avoid import cycle at load time.
-    from rb_playlist_to_wav import tool_path
+    from rb_playlist_to_wav import FFMPEG_COVER_TIMEOUT_S, tool_path
 
     exe = tool_path("ffmpeg")
     if exe is None:
@@ -392,8 +395,14 @@ def extract_cover_jpeg(source: Path, *, max_side: int = 600) -> bytes | None:
             str(out),
         ]
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        except FileNotFoundError:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=FFMPEG_COVER_TIMEOUT_S,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
             return None
         if proc.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
             return None
