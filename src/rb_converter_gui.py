@@ -322,6 +322,9 @@ class ConverterApp:
         self._tracklist_selecting = False
         self._tracklist_tech_gen = 0
         self._preview_bit_depth_cache: dict = {}
+        self._browser_sash_set = False
+        self._tracklist_sort_column: str | None = None
+        self._tracklist_sort_reverse = False
 
         self._build()
         self.search_var.trace_add("write", lambda *_: self._apply_playlist_filter())
@@ -530,6 +533,8 @@ class ConverterApp:
 
         panes = ttk.Panedwindow(list_frame, orient=tk.HORIZONTAL)
         panes.grid(row=0, column=0, sticky="nsew")
+        self.browser_panes = panes
+        panes.bind("<Configure>", self._on_browser_panes_configure, add="+")
 
         left = ttk.Frame(panes)
         left.columnconfigure(0, weight=1)
@@ -564,14 +569,31 @@ class ConverterApp:
             selectmode="extended",
             height=12,
         )
-        self.tracklist_tree.heading("#0", text="Track")
-        self.tracklist_tree.heading("format", text="Format")
-        self.tracklist_tree.heading("bit_depth", text="Bit depth")
-        self.tracklist_tree.heading("sample_rate", text="Sample rate")
+        self.tracklist_tree.heading(
+            "#0", text="Track", anchor="w", command=lambda: self._on_tracklist_sort("#0")
+        )
+        self.tracklist_tree.heading(
+            "format",
+            text="Format",
+            anchor="w",
+            command=lambda: self._on_tracklist_sort("format"),
+        )
+        self.tracklist_tree.heading(
+            "bit_depth",
+            text="Bit depth",
+            anchor="w",
+            command=lambda: self._on_tracklist_sort("bit_depth"),
+        )
+        self.tracklist_tree.heading(
+            "sample_rate",
+            text="Sample rate",
+            anchor="w",
+            command=lambda: self._on_tracklist_sort("sample_rate"),
+        )
         self.tracklist_tree.column("#0", stretch=True, minwidth=120)
         self.tracklist_tree.column("format", width=70, stretch=False, anchor="center")
         self.tracklist_tree.column(
-            "bit_depth", width=70, stretch=False, anchor="center"
+            "bit_depth", width=90, stretch=False, anchor="center"
         )
         self.tracklist_tree.column(
             "sample_rate", width=90, stretch=False, anchor="center"
@@ -752,6 +774,22 @@ class ConverterApp:
         dlg.protocol("WM_DELETE_WINDOW", close)
         self._place_dialog_over_app(dlg)
         dlg.focus_force()
+
+    def _on_browser_panes_configure(self, event: object = None) -> None:
+        if self._browser_sash_set:
+            return
+        widget = getattr(event, "widget", None) or self.browser_panes
+        try:
+            width = int(widget.winfo_width())
+        except tk.TclError:
+            return
+        if width <= 1:
+            return
+        try:
+            self.browser_panes.sashpos(0, round(width * 0.3))
+        except tk.TclError:
+            return
+        self._browser_sash_set = True
 
     def _on_bit_depth_selected(self, _event: object = None) -> None:
         label = self.bit_depth_combo.get().strip()
@@ -1056,8 +1094,6 @@ class ConverterApp:
             node = self._playlist_node(folder, name)
             if node is None:
                 continue
-            count = rb.playlist_track_count(node)
-            group_text = f"{name} ({count} tracks)"
             key_type = node.get("KeyType", "0")
             matched: list[tuple[str, str, tuple[str, str, str], Path | None]] = []
             for entry in node.findall("TRACK"):
@@ -1073,6 +1109,11 @@ class ConverterApp:
                     continue
                 loc = (track.get("Location") or "") if track is not None else ""
                 path = rb.decode_location(loc) if loc else None
+                if (
+                    path is not None
+                    and path.suffix.lower() not in rb.SUPPORTED_LOSSLESS_EXT
+                ):
+                    continue
                 if path is not None:
                     hit, bits = peek_cached_preview_bit_depth(
                         path, self._preview_bit_depth_cache
@@ -1085,6 +1126,7 @@ class ConverterApp:
                 matched.append((key, label, (fmt, depth, rate), path))
             if not matched:
                 continue
+            group_text = f"{name} ({len(matched)} tracks)"
             group_iid = self.tracklist_tree.insert(
                 "", tk.END, text=group_text, open=True, values=("", "", "")
             )
@@ -1107,11 +1149,65 @@ class ConverterApp:
         finally:
             self._tracklist_selecting = False
         self._set_idle_status(self._tracklist_selection_summary())
+        if self._tracklist_sort_column is not None:
+            self._apply_tracklist_sort()
         if paths:
             threading.Thread(
                 target=lambda: self._fill_preview_bit_depths(gen, paths),
                 daemon=True,
             ).start()
+
+    def _on_tracklist_sort(self, column: str) -> None:
+        if self._tracklist_sort_column == column:
+            self._tracklist_sort_reverse = not self._tracklist_sort_reverse
+        else:
+            self._tracklist_sort_column = column
+            self._tracklist_sort_reverse = False
+        self._apply_tracklist_sort()
+
+    def _tracklist_sort_key(self, iid: str, column: str):
+        preview = self.tracklist_tree
+        if column == "#0":
+            return preview.item(iid, "text").casefold()
+        values = list(preview.item(iid, "values"))
+        idx = {"format": 0, "bit_depth": 1, "sample_rate": 2}.get(column)
+        if idx is None or idx >= len(values):
+            return ""
+        raw = str(values[idx] or "")
+        if column in ("bit_depth", "sample_rate"):
+            try:
+                return (0, int(raw))
+            except ValueError:
+                return (1, 0)
+        return raw.casefold()
+
+    def _apply_tracklist_sort(self) -> None:
+        column = self._tracklist_sort_column
+        if column is None:
+            return
+        preview = self.tracklist_tree
+        reverse = self._tracklist_sort_reverse
+        for group_iid in preview.get_children(""):
+            leaves = list(preview.get_children(group_iid))
+            if column in ("bit_depth", "sample_rate"):
+                numbered: list[tuple[int, str]] = []
+                empty: list[str] = []
+                for iid in leaves:
+                    key = self._tracklist_sort_key(iid, column)
+                    if isinstance(key, tuple) and key[0] == 0:
+                        numbered.append((key[1], iid))
+                    else:
+                        empty.append(iid)
+                numbered.sort(key=lambda pair: pair[0], reverse=reverse)
+                ordered = [iid for _, iid in numbered] + empty
+            else:
+                ordered = sorted(
+                    leaves,
+                    key=lambda iid: self._tracklist_sort_key(iid, column),
+                    reverse=reverse,
+                )
+            for index, iid in enumerate(ordered):
+                preview.move(iid, group_iid, index)
 
     def _fill_preview_bit_depths(self, gen: int, paths: list[Path]) -> None:
         batch: dict[Path, str] = {}
@@ -1152,6 +1248,8 @@ class ConverterApp:
                 continue
             values[1] = depth
             self.tracklist_tree.item(iid, values=values)
+        if self._tracklist_sort_column == "bit_depth":
+            self._apply_tracklist_sort()
 
     def _selected_playlists(self, *, unique_names: bool = True) -> list[tuple[str, str]]:
         chosen: list[tuple[str, str]] = []

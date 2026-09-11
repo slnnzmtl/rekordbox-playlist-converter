@@ -650,6 +650,286 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_tracklist_hides_unsupported_formats_keeps_missing(self) -> None:
+        """Path rows outside SUPPORTED_LOSSLESS_EXT are hidden; missing stays."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from unittest.mock import patch
+
+        MIXED_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="3">
+    <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
+           Location="file://localhost/Users/me/music/Bestial.flac"
+           Kind="FLAC File" SampleRate="44100"/>
+    <TRACK TrackID="2" Name="Lossy" Artist="Skip"
+           Location="file://localhost/Users/me/music/Lossy.mp3"
+           Kind="MP3 File" SampleRate="44100"/>
+    <TRACK TrackID="3" Name="Aac" Artist="Skip"
+           Location="file://localhost/Users/me/music/Aac.aac"
+           Kind="AAC File" SampleRate="44100"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="Mixed" Type="1" KeyType="0" Entries="4">
+        <TRACK Key="1"/>
+        <TRACK Key="2"/>
+        <TRACK Key="3"/>
+        <TRACK Key="999"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), MIXED_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                mixed = tree.get_children("")[0]
+                tree.selection_set(mixed)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                self.assertEqual(len(groups), 1)
+                self.assertEqual(preview.item(groups[0], "text"), "Mixed (2 tracks)")
+                leaves = preview.get_children(groups[0])
+                self.assertEqual(
+                    [preview.item(r, "text") for r in leaves],
+                    ["ABSL - Bestial.flac", "(missing track)"],
+                )
+
+                preview.selection_set(*leaves)
+                preview.event_generate("<<TreeviewSelect>>")
+
+                prepare_calls: list[tuple] = []
+
+                def fake_prepare(*args, **kwargs):
+                    prepare_calls.append((args, kwargs))
+                    return (None, ["stop"])
+
+                def run_inline(target=None, **_kwargs):
+                    class _T:
+                        def start(self_inner):
+                            target()
+
+                    return _T()
+
+                with patch(
+                    "rb_converter_gui.rb.prepare", side_effect=fake_prepare
+                ), patch(
+                    "rb_converter_gui.threading.Thread", side_effect=run_inline
+                ), patch("rb_converter_gui.messagebox.showerror"):
+                    app._start_convert()
+                    root.update()
+
+                self.assertEqual(len(prepare_calls), 1)
+                _args, kwargs = prepare_calls[0]
+                keys = set(kwargs.get("track_keys") or ())
+                self.assertIn("1", keys)
+                self.assertNotIn("2", keys)
+                self.assertNotIn("3", keys)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_tracklist_heading_sorts_within_groups(self) -> None:
+        """Heading clicks sort leaves inside each group; reverse; survives search."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        SORT_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="4">
+    <TRACK TrackID="1" Name="Zebra" Artist="Z"
+           Location="file://localhost/Users/me/music/Zebra.flac"
+           Kind="FLAC File" SampleRate="48000"/>
+    <TRACK TrackID="2" Name="Alpha" Artist="A"
+           Location="file://localhost/Users/me/music/Alpha.aiff"
+           Kind="AIFF File" SampleRate="44100"/>
+    <TRACK TrackID="3" Name="Mid" Artist="M"
+           Location="file://localhost/Users/me/music/Mid.wav"
+           Kind="WAV File" SampleRate="48000"/>
+    <TRACK TrackID="4" Name="Only" Artist="O"
+           Location="file://localhost/Users/me/music/Only.flac"
+           Kind="FLAC File" SampleRate="44100"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="2">
+      <NODE Name="Crate" Type="1" KeyType="0" Entries="3">
+        <TRACK Key="1"/>
+        <TRACK Key="2"/>
+        <TRACK Key="3"/>
+      </NODE>
+      <NODE Name="Solo" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="4"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), SORT_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                crate, solo = tree.get_children("")
+                tree.selection_set(crate, solo)
+                tree.event_generate("<<TreeviewSelect>>")
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                crate_leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in crate_leaves],
+                    [
+                        "Z - Zebra.flac",
+                        "A - Alpha.aiff",
+                        "M - Mid.wav",
+                    ],
+                )
+
+                cmd = preview.heading("#0", "command")
+                preview.tk.call(cmd)
+                crate_leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in crate_leaves],
+                    [
+                        "A - Alpha.aiff",
+                        "M - Mid.wav",
+                        "Z - Zebra.flac",
+                    ],
+                )
+                solo_leaves = list(preview.get_children(groups[1]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in solo_leaves],
+                    ["O - Only.flac"],
+                )
+
+                preview.tk.call(cmd)
+                crate_leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in crate_leaves],
+                    [
+                        "Z - Zebra.flac",
+                        "M - Mid.wav",
+                        "A - Alpha.aiff",
+                    ],
+                )
+
+                app.track_search_var.set("alpha")
+                groups = preview.get_children("")
+                self.assertEqual(len(groups), 1)
+                leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in leaves],
+                    ["A - Alpha.aiff"],
+                )
+
+                app.track_search_var.set("")
+                groups = preview.get_children("")
+                crate_leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in crate_leaves],
+                    [
+                        "Z - Zebra.flac",
+                        "M - Mid.wav",
+                        "A - Alpha.aiff",
+                    ],
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_tracklist_bit_depth_sort_reorders_after_fill(self) -> None:
+        """Sorting by bit depth re-applies after async header fill."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import rb_playlist_to_wav as rb
+        from unittest.mock import patch
+
+        def run_inline(target=None, **_kwargs):
+            class _T:
+                def start(self_inner):
+                    target()
+
+            return _T()
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                deep = base / "Deep.flac"
+                shallow = base / "Shallow.flac"
+                deep.write_bytes(_flac_with_bit_depth(24))
+                shallow.write_bytes(_flac_with_bit_depth(16))
+                xml = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="2">
+    <TRACK TrackID="1" Name="Deep" Artist="D"
+           Location="{rb.encode_location(deep)}"
+           Kind="FLAC File" SampleRate="44100"/>
+    <TRACK TrackID="2" Name="Shallow" Artist="S"
+           Location="{rb.encode_location(shallow)}"
+           Kind="FLAC File" SampleRate="44100"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="Crate" Type="1" KeyType="0" Entries="2">
+        <TRACK Key="1"/>
+        <TRACK Key="2"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+                source = _write_xml(base, xml)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                crate = tree.get_children("")[0]
+                with patch(
+                    "rb_converter_gui.threading.Thread", side_effect=run_inline
+                ):
+                    tree.selection_set(crate)
+                    tree.event_generate("<<TreeviewSelect>>")
+                    preview = app.tracklist_tree
+                    preview.tk.call(preview.heading("bit_depth", "command"))
+                    root.update()
+                    leaves = list(preview.get_children(preview.get_children("")[0]))
+                    self.assertEqual(
+                        [preview.item(r, "values")[1] for r in leaves],
+                        ["16", "24"],
+                    )
+                    self.assertEqual(
+                        [preview.item(r, "text") for r in leaves],
+                        ["S - Shallow.flac", "D - Deep.flac"],
+                    )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()
