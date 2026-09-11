@@ -251,6 +251,22 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertIn("missing source file", plan.warnings[0])
         self.assertIn(str(self.c), plan.warnings[0])
 
+    def test_prepare_track_keys_filters_to_subset(self) -> None:
+        with patch.object(rb, "require_tools", return_value=[]), patch.object(
+            rb, "run_ffprobe", side_effect=self._probe
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+                track_keys={"219211420"},
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(len(plan.tracks), 1)
+        self.assertEqual(plan.tracks[0].source_path, self.a)
+
     def test_convert_unique_stops_remaining_tracks_when_cancel_event_set(self) -> None:
         """Cancel mid-playlist: finish the current track, skip the rest, keep files."""
         import threading

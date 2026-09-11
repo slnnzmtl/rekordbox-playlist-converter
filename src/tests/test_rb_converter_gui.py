@@ -35,6 +35,16 @@ def _find_listbox(widget):
     return None
 
 
+def _seed_track_selection(app, folder="ROOT", name="Test", key="1"):
+    """Paint one selected leaf so Convert can proceed without loading a real XML."""
+    import tkinter as tk
+
+    leaf = app.tracklist_tree.insert("", tk.END, text="seed")
+    app._tracklist_iids[leaf] = (folder, name, key)
+    app.tracklist_tree.selection_set(leaf)
+    return leaf
+
+
 class TotalSuccessfulConversionsTests(unittest.TestCase):
     def test_total_successful_conversions(self) -> None:
         self.assertEqual(
@@ -270,6 +280,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     root.withdraw()
                     app = ConverterApp(root, documents_accessible=False)
                     app.xml_var.set("/tmp/test.xml")
+                    _seed_track_selection(app)
 
                     def convert_and_cancel(*_args, **_kwargs):
                         app._cancel_event.set()

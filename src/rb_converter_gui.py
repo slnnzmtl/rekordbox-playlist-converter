@@ -40,6 +40,7 @@ from version import __version__
 DEFAULT_WAV_DIR, DEFAULT_OUTPUT = default_output_paths(documents_accessible=True)
 FALLBACK_WAV_DIR, FALLBACK_OUTPUT = default_output_paths(documents_accessible=False)
 SEARCH_PLACEHOLDER = "Search playlists…"
+TRACK_SEARCH_PLACEHOLDER = "Search tracks…"
 APP_LOGO_NAME = "rpc-logo-white.png"
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
 BIT_DEPTH_24_TOOLTIP = (
@@ -198,6 +199,39 @@ def open_in_finder(path: Path) -> None:
     subprocess.run(["open", str(target)], check=False)
 
 
+class _SearchPlaceholder:
+    """Grey hint text for a StringVar; query ignores the hint itself."""
+
+    def __init__(self, var: tk.StringVar, text: str) -> None:
+        self.var = var
+        self.text = text
+        self.showing = False
+
+    def show(self) -> None:
+        self.showing = True
+        self.var.set(self.text)
+
+    def clear(self) -> None:
+        if not self.showing:
+            return
+        self.showing = False
+        self.var.set("")
+
+    def query(self) -> str:
+        raw = self.var.get()
+        if self.showing and raw == self.text:
+            return ""
+        self.showing = False
+        return raw.strip()
+
+    def bind(self, entry: ttk.Entry) -> None:
+        entry.bind("<FocusIn>", lambda _e: self.clear())
+        entry.bind(
+            "<FocusOut>",
+            lambda _e: self.show() if not self.var.get().strip() else None,
+        )
+
+
 class ConverterApp:
     def __init__(
         self,
@@ -241,10 +275,14 @@ class ConverterApp:
             saved_rate = "48000"
         self.sample_rate_var = tk.StringVar(value=saved_rate)
         self.search_var = tk.StringVar()
+        self.track_search_var = tk.StringVar()
+        self._playlist_search = _SearchPlaceholder(self.search_var, SEARCH_PLACEHOLDER)
+        self._track_search = _SearchPlaceholder(
+            self.track_search_var, TRACK_SEARCH_PLACEHOLDER
+        )
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
         self._busy = False
         self._cancel_event = threading.Event()
-        self._search_showing_placeholder = False
         self._usage_window: tk.Toplevel | None = None
         self._update_modal_shown = False
         self._progress_target = 0.0
@@ -256,11 +294,19 @@ class ConverterApp:
         self._playlist_entries: list[tuple[str, str, str, int, object]] = []
         # iid -> (kind, folder, name) for rows currently in the tree
         self._playlist_iids: dict[str, tuple[str, str, str]] = {}
+        # leaf iid -> (folder, name, key); group iids are absent
+        self._tracklist_iids: dict[str, tuple[str, str, str]] = {}
+        self._tracklist_selecting = False
 
         self._build()
         self.search_var.trace_add("write", lambda *_: self._apply_playlist_filter())
+        self.track_search_var.trace_add(
+            "write", lambda *_: self._refresh_tracklist_preview()
+        )
         if not self.search_var.get():
-            self._show_search_placeholder()
+            self._playlist_search.show()
+        if not self.track_search_var.get():
+            self._track_search.show()
         # Prefs key, not xml_var: skip first-launch search even if Documents
         # restore has not filled the field yet.
         self._has_saved_source_xml = bool(saved_prefs.get("source_xml", "").strip())
@@ -423,7 +469,7 @@ class ConverterApp:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         frm.columnconfigure(1, weight=1)
-        frm.rowconfigure(2, weight=1)
+        frm.rowconfigure(1, weight=1)
 
         ttk.Label(frm, text="Rekordbox XML").grid(row=0, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.xml_var).grid(
@@ -442,17 +488,8 @@ class ConverterApp:
         )
         self.refresh_btn.pack(side=tk.LEFT, padx=(4, 0))
 
-        ttk.Label(frm, text="Playlists").grid(row=1, column=0, sticky="w", **pad)
-        self.search_entry = ttk.Entry(frm, textvariable=self.search_var)
-        self.search_entry.grid(row=1, column=1, sticky="ew", **pad)
-        self.search_entry.bind("<FocusIn>", self._on_search_focus_in)
-        self.search_entry.bind("<FocusOut>", self._on_search_focus_out)
-        ttk.Label(frm, text="Hold ⌃ to multi-select").grid(
-            row=1, column=2, sticky="e", **pad
-        )
-
         list_frame = ttk.Frame(frm)
-        list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", **pad)
+        list_frame.grid(row=1, column=0, columnspan=3, sticky="nsew", **pad)
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
 
@@ -461,7 +498,10 @@ class ConverterApp:
 
         left = ttk.Frame(panes)
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(0, weight=1)
+        left.rowconfigure(1, weight=1)
+        self.search_entry = ttk.Entry(left, textvariable=self.search_var)
+        self.search_entry.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        self._playlist_search.bind(self.search_entry)
         self.playlist_tree = ttk.Treeview(
             left,
             show="tree",
@@ -472,55 +512,61 @@ class ConverterApp:
             left, orient=tk.VERTICAL, command=self.playlist_tree.yview
         )
         self.playlist_tree.configure(yscrollcommand=scroll.set)
-        self.playlist_tree.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
+        self.playlist_tree.grid(row=1, column=0, sticky="nsew")
+        scroll.grid(row=1, column=1, sticky="ns")
         self.playlist_tree.bind("<<TreeviewSelect>>", self._on_playlist_select, add="+")
 
         right = ttk.Frame(panes)
         right.columnconfigure(0, weight=1)
-        right.rowconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+        self.track_search_entry = ttk.Entry(right, textvariable=self.track_search_var)
+        self.track_search_entry.grid(row=0, column=0, sticky="ew", pady=(0, 4))
+        self._track_search.bind(self.track_search_entry)
         self.tracklist_tree = ttk.Treeview(
             right,
             show="tree",
-            selectmode="none",
+            selectmode="extended",
             height=12,
         )
         track_scroll = ttk.Scrollbar(
             right, orient=tk.VERTICAL, command=self.tracklist_tree.yview
         )
         self.tracklist_tree.configure(yscrollcommand=track_scroll.set)
-        self.tracklist_tree.grid(row=0, column=0, sticky="nsew")
-        track_scroll.grid(row=0, column=1, sticky="ns")
+        self.tracklist_tree.grid(row=1, column=0, sticky="nsew")
+        track_scroll.grid(row=1, column=1, sticky="ns")
+        self.tracklist_tree.bind(
+            "<<TreeviewSelect>>", self._on_tracklist_select, add="+"
+        )
 
         panes.add(left, weight=1)
         panes.add(right, weight=1)
         self._refresh_tracklist_preview()
 
-        ttk.Label(frm, text="Output folder").grid(row=3, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Output folder").grid(row=2, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.wav_dir_var).grid(
-            row=3, column=1, sticky="ew", **pad
+            row=2, column=1, sticky="ew", **pad
         )
         ttk.Button(
             frm,
             text="Browse…",
             width=ACTION_BUTTON_WIDTH,
             command=self._browse_wav_dir,
-        ).grid(row=3, column=2, sticky="e", **pad)
+        ).grid(row=2, column=2, sticky="e", **pad)
 
-        ttk.Label(frm, text="Import XML").grid(row=4, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Import XML").grid(row=3, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.output_var).grid(
-            row=4, column=1, sticky="ew", **pad
+            row=3, column=1, sticky="ew", **pad
         )
         ttk.Button(
             frm,
             text="Browse…",
             width=ACTION_BUTTON_WIDTH,
             command=self._browse_output,
-        ).grid(row=4, column=2, sticky="e", **pad)
+        ).grid(row=3, column=2, sticky="e", **pad)
 
-        ttk.Label(frm, text="Format").grid(row=5, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Format").grid(row=4, column=0, sticky="w", **pad)
         format_opts = ttk.Frame(frm)
-        format_opts.grid(row=5, column=1, sticky="w", **pad)
+        format_opts.grid(row=4, column=1, sticky="w", **pad)
         ttk.Radiobutton(
             format_opts, text="WAV", variable=self.format_var, value="wav"
         ).pack(side=tk.LEFT)
@@ -529,7 +575,7 @@ class ConverterApp:
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         quality = ttk.Frame(frm)
-        quality.grid(row=6, column=0, columnspan=2, sticky="w", **pad)
+        quality.grid(row=5, column=0, columnspan=2, sticky="w", **pad)
         ttk.Label(quality, text="Sampling format").pack(side=tk.LEFT)
         self.bit_depth_combo = ttk.Combobox(
             quality,
@@ -561,7 +607,7 @@ class ConverterApp:
         _HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
 
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=7, column=0, columnspan=2, sticky="ew", **pad)
+        self.progress.grid(row=6, column=0, columnspan=2, sticky="ew", **pad)
         self.progress["value"] = 0
         self.convert_btn = ttk.Button(
             frm,
@@ -569,7 +615,7 @@ class ConverterApp:
             width=ACTION_BUTTON_WIDTH,
             command=self._start_convert,
         )
-        self.convert_btn.grid(row=7, column=2, sticky="e", **pad)
+        self.convert_btn.grid(row=6, column=2, sticky="e", **pad)
         self.cancel_btn = ttk.Button(
             frm,
             text="Cancel",
@@ -577,11 +623,11 @@ class ConverterApp:
             command=self._request_cancel,
             state=tk.DISABLED,
         )
-        self.cancel_btn.grid(row=7, column=2, sticky="e", **pad)
+        self.cancel_btn.grid(row=6, column=2, sticky="e", **pad)
         self.cancel_btn.grid_remove()
 
         ttk.Label(frm, textvariable=self.status_var, wraplength=1000).grid(
-            row=8, column=0, columnspan=3, sticky="ew", **pad
+            row=7, column=0, columnspan=3, sticky="ew", **pad
         )
 
     def _build_menubar(self) -> None:
@@ -800,30 +846,9 @@ class ConverterApp:
         for kind, folder, name, node in nodes:
             count = rb.playlist_track_count(node) if kind == "playlist" else 0
             self._playlist_entries.append((kind, folder, name, count, node))
-        self._show_search_placeholder()
+        self._playlist_search.show()
+        self._track_search.show()
         self._apply_playlist_filter()
-
-    def _show_search_placeholder(self) -> None:
-        self._search_showing_placeholder = True
-        self.search_var.set(SEARCH_PLACEHOLDER)
-
-    def _clear_search_placeholder(self) -> None:
-        if not self._search_showing_placeholder:
-            return
-        self._search_showing_placeholder = False
-        self.search_var.set("")
-
-    def _on_search_focus_in(self, _event: object | None = None) -> None:
-        self._clear_search_placeholder()
-
-    def _on_search_focus_out(self, _event: object | None = None) -> None:
-        if not self.search_var.get().strip():
-            self._show_search_placeholder()
-
-    def _search_query(self) -> str:
-        if self._search_showing_placeholder:
-            return ""
-        return self.search_var.get().strip()
 
     @staticmethod
     def _playlist_iid(kind: str, folder: str, name: str) -> str:
@@ -836,7 +861,7 @@ class ConverterApp:
         return f"{name} ({count} tracks)"
 
     def _apply_playlist_filter(self) -> None:
-        query = self._search_query().casefold()
+        query = self._playlist_search.query().casefold()
         self.playlist_tree.delete(*self.playlist_tree.get_children())
         self._playlist_iids = {}
 
@@ -887,6 +912,54 @@ class ConverterApp:
     def _on_playlist_select(self, _event: object = None) -> None:
         self._refresh_tracklist_preview()
 
+    def _on_tracklist_select(self, _event: object = None) -> None:
+        if self._tracklist_selecting:
+            return
+        preview = self.tracklist_tree
+        selected = list(preview.selection())
+        leaf_iids: list[str] = []
+        remapped = False
+        for iid in selected:
+            if iid in self._tracklist_iids:
+                leaf_iids.append(iid)
+                continue
+            # Group header → that group's track leaves.
+            remapped = True
+            for child in preview.get_children(iid):
+                if child in self._tracklist_iids:
+                    leaf_iids.append(child)
+        # Preserve order, drop duplicates.
+        seen: set[str] = set()
+        unique_leaves: list[str] = []
+        for iid in leaf_iids:
+            if iid not in seen:
+                seen.add(iid)
+                unique_leaves.append(iid)
+        if remapped or set(selected) != set(unique_leaves):
+            self._tracklist_selecting = True
+            try:
+                preview.selection_set(unique_leaves)
+            finally:
+                self._tracklist_selecting = False
+        self._set_idle_status(self._tracklist_selection_summary())
+
+    def _tracklist_selection_summary(self) -> str | None:
+        unique_keys: set[str] = set()
+        playlists: set[tuple[str, str]] = set()
+        for iid in self.tracklist_tree.selection():
+            meta = self._tracklist_iids.get(iid)
+            if meta is None:
+                continue
+            folder, name, key = meta
+            playlists.add((folder, name))
+            if key:
+                unique_keys.add(key)
+        if not unique_keys or not playlists:
+            return None
+        painted = len(playlists)
+        playlist_word = "playlist" if painted == 1 else "playlists"
+        return f"{len(unique_keys)} unique tracks from {painted} {playlist_word}"
+
     def _playlist_node(self, folder: str, name: str):
         for kind, entry_folder, entry_name, _count, node in self._playlist_entries:
             if kind == "playlist" and entry_folder == folder and entry_name == name:
@@ -908,7 +981,7 @@ class ConverterApp:
 
     def _refresh_tracklist_preview(self) -> None:
         self.tracklist_tree.delete(*self.tracklist_tree.get_children())
-        unique_summary: str | None = None
+        self._tracklist_iids = {}
         if self._source_root is None:
             self._set_idle_status()
             return
@@ -916,8 +989,9 @@ class ConverterApp:
         if not selected:
             self._set_idle_status()
             return
+        query = self._track_search.query().casefold()
         by_id, by_location = rb.collection_indexes(self._source_root)
-        unique_keys: set[str] = set()
+        leaf_iids: list[str] = []
         painted = 0
         for folder, name in selected:
             node = self._playlist_node(folder, name)
@@ -925,29 +999,42 @@ class ConverterApp:
                 continue
             count = rb.playlist_track_count(node)
             group_text = f"{name} ({count} tracks)"
-            group_iid = self.tracklist_tree.insert(
-                "", tk.END, text=group_text, open=True
-            )
-            painted += 1
             key_type = node.get("KeyType", "0")
+            matched: list[tuple[str, str]] = []
             for entry in node.findall("TRACK"):
-                key = entry.get("Key")
+                key = entry.get("Key") or ""
                 track = None
                 if key:
-                    unique_keys.add(key)
                     if key_type == "1":
                         track = by_location.get(key)
                     else:
                         track = by_id.get(key)
-                self.tracklist_tree.insert(
-                    group_iid, tk.END, text=self._track_preview_label(track)
-                )
-        if unique_keys and painted:
-            playlist_word = "playlist" if painted == 1 else "playlists"
-            unique_summary = (
-                f"{len(unique_keys)} unique tracks from {painted} {playlist_word}"
+                label = self._track_preview_label(track)
+                if query and query not in label.casefold():
+                    continue
+                matched.append((key, label))
+            if not matched:
+                continue
+            group_iid = self.tracklist_tree.insert(
+                "", tk.END, text=group_text, open=True
             )
-        self._set_idle_status(unique_summary)
+            painted += 1
+            for key, label in matched:
+                leaf_iid = self.tracklist_tree.insert(
+                    group_iid, tk.END, text=label
+                )
+                self._tracklist_iids[leaf_iid] = (folder, name, key)
+                leaf_iids.append(leaf_iid)
+        if not painted:
+            self._set_idle_status()
+            return
+        self._tracklist_selecting = True
+        try:
+            if leaf_iids:
+                self.tracklist_tree.selection_set(leaf_iids)
+        finally:
+            self._tracklist_selecting = False
+        self._set_idle_status(self._tracklist_selection_summary())
 
     def _selected_playlists(self, *, unique_names: bool = True) -> list[tuple[str, str]]:
         chosen: list[tuple[str, str]] = []
@@ -1102,6 +1189,25 @@ class ConverterApp:
         if not selected:
             messagebox.showerror("Selection", "Select at least one playlist.")
             return
+
+        keys_by_playlist: dict[tuple[str, str], list[str]] = {}
+        for iid in self.tracklist_tree.selection():
+            meta = self._tracklist_iids.get(iid)
+            if meta is None:
+                continue
+            folder, name, key = meta
+            if not key:
+                continue
+            keys_by_playlist.setdefault((folder, name), []).append(key)
+        selected = [
+            (folder, name)
+            for folder, name in selected
+            if keys_by_playlist.get((folder, name))
+        ]
+        if not selected:
+            messagebox.showerror("Selection", "Select at least one track.")
+            return
+
         wav_dir, output = self._resolved_output_paths()
         self._persist_output_preferences()
         output_format = self.format_var.get().strip().lower()
@@ -1147,6 +1253,7 @@ class ConverterApp:
                         output_format=output_format,
                         max_bit_depth=max_bit_depth,
                         max_sample_rate=max_sample_rate,
+                        track_keys=keys_by_playlist[(folder, name)],
                     )
                     if errors:
                         msg = "\n".join(errors)
