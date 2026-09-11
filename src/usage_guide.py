@@ -38,10 +38,12 @@ export.
    when a file is already loaded.
 2. Browse playlists in the folder tree (expand folders; hold ⌃ to multi-select).
    Selecting a folder lists every playlist under it. The tracklist table shows
-   Track, Format, Bit depth, and Sample rate from the export (bit depth is —
-   when the XML has none). Track rows start selected; hold ⌃ to refine which
-   tracks to convert (across playlists). Playlist search filters the left tree;
-   track search filters the current tracklist (artist / title / filename).
+   Track, Format, Bit depth, and Sample rate. Format and rate come from the
+   export; bit depth is read from FLAC, ALAC (M4A), WAV, or AIFF file headers
+   when the file is on disk, otherwise —. Track rows start selected; hold ⌃ to
+   refine which tracks to convert (across playlists). Playlist search filters
+   the left tree; track search filters the current tracklist (artist / title /
+   filename).
 3. Confirm output folder and Import XML. Defaults are ~/Documents/rekordbox-converter
    and ~/Documents/rekordbox-converter/rekordbox-import.xml when Documents access
    is allowed. If you decline that request, defaults are ~/rekordbox-converter and
