@@ -48,32 +48,58 @@ def skeleton_from(source_root: ET.Element) -> ET.Element:
     return root
 
 
-def _walk_playlists(
+def _walk_playlist_nodes(
     node: ET.Element, folder_parts: list[str]
-) -> Iterable[tuple[str, str, ET.Element]]:
-    """Yield (folder_path, name, node) for playlist nodes under a folder tree."""
+) -> Iterable[tuple[str, str, str, ET.Element]]:
+    """Yield (kind, folder_path, name, node) for folders and playlists under a tree.
+
+    kind is \"folder\" or \"playlist\". ROOT is omitted; empty folders are included.
+    """
     if node.tag != "NODE":
         return
     name = node.get("Name") or ""
     if node.get("Type") == "1":
         folder = " / ".join(folder_parts) if folder_parts else ""
-        yield folder, name, node
+        yield "playlist", folder, name, node
         return
     if node.get("Type") == "0":
-        next_parts = folder_parts if name == "ROOT" else [*folder_parts, name]
+        if name != "ROOT":
+            folder = " / ".join(folder_parts) if folder_parts else ""
+            yield "folder", folder, name, node
+            next_parts = [*folder_parts, name]
+        else:
+            next_parts = folder_parts
         for child in node:
-            yield from _walk_playlists(child, next_parts)
+            yield from _walk_playlist_nodes(child, next_parts)
+
+
+def _walk_playlists(
+    node: ET.Element, folder_parts: list[str]
+) -> Iterable[tuple[str, str, ET.Element]]:
+    """Yield (folder_path, name, node) for playlist leaves under a folder tree."""
+    for kind, folder, name, el in _walk_playlist_nodes(node, folder_parts):
+        if kind == "playlist":
+            yield folder, name, el
+
+
+def iter_playlist_nodes(root: ET.Element) -> list[tuple[str, str, str, ET.Element]]:
+    """All folders and playlists as (kind, folder_path, name, node), depth-first."""
+    playlists = root.find("PLAYLISTS")
+    if playlists is None:
+        return []
+    found: list[tuple[str, str, str, ET.Element]] = []
+    for child in playlists:
+        found.extend(_walk_playlist_nodes(child, []))
+    return found
 
 
 def iter_playlists(root: ET.Element) -> list[tuple[str, str, ET.Element]]:
     """All playlists as (folder_path, name, node), depth-first."""
-    playlists = root.find("PLAYLISTS")
-    if playlists is None:
-        return []
-    found: list[tuple[str, str, ET.Element]] = []
-    for child in playlists:
-        found.extend(_walk_playlists(child, []))
-    return found
+    return [
+        (folder, name, node)
+        for kind, folder, name, node in iter_playlist_nodes(root)
+        if kind == "playlist"
+    ]
 
 
 def find_playlists_by_name(root: ET.Element, name: str) -> list[ET.Element]:
