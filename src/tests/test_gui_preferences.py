@@ -122,20 +122,20 @@ class DefaultOutputPathsTests(unittest.TestCase):
         from gui_preferences import default_output_paths
 
         wav_dir, import_xml = default_output_paths(documents_accessible=True)
-        self.assertEqual(wav_dir, Path.home() / "Documents" / "rekordbox-converted")
+        self.assertEqual(wav_dir, Path.home() / "Documents" / "rekordbox-converter")
         self.assertEqual(
             import_xml,
-            Path.home() / "Documents" / "rekordbox-converted" / "rekordbox-import.xml",
+            Path.home() / "Documents" / "rekordbox-converter" / "rekordbox-import.xml",
         )
 
     def test_default_output_paths_uses_home_when_documents_not_accessible(self) -> None:
         from gui_preferences import default_output_paths
 
         wav_dir, import_xml = default_output_paths(documents_accessible=False)
-        self.assertEqual(wav_dir, Path.home() / "rekordbox-converted")
+        self.assertEqual(wav_dir, Path.home() / "rekordbox-converter")
         self.assertEqual(
             import_xml,
-            Path.home() / "rekordbox-converted" / "rekordbox-import.xml",
+            Path.home() / "rekordbox-converter" / "rekordbox-import.xml",
         )
 
 
@@ -350,7 +350,7 @@ class ResolveStartupPathsTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
-            docs_wav = home / "Documents" / "rekordbox-converted"
+            docs_wav = home / "Documents" / "rekordbox-converter"
             docs_wav.mkdir(parents=True)
             fallback_wav, fallback_xml = default_output_paths(
                 documents_accessible=False, home=home

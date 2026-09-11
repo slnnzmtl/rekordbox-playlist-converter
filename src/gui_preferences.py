@@ -1,4 +1,4 @@
-"""Persistent GUI output-path preferences for the Rekordbox Playlist converter."""
+"""Persistent GUI output-path preferences for Simple Rekordbox Converter."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any
 
 BUNDLE_ID = "io.github.slnnzmtl.rekordboxWavConverter"
 PREFERENCES_VERSION = 1
-OUTPUT_DIR_NAME = "rekordbox-converted"
+OUTPUT_DIR_NAME = "rekordbox-converter"
 IMPORT_XML_NAME = "rekordbox-import.xml"
 DOCUMENTS_PROBE_TIMEOUT_SECONDS = 5.0
 SKIP_DIR_NAMES = frozenset(

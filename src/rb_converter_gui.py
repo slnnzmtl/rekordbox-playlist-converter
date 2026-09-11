@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tiny tkinter front-end for the Rekordbox Playlist converter."""
+"""Tiny tkinter front-end for Simple Rekordbox Converter."""
 
 from __future__ import annotations
 
@@ -140,6 +140,20 @@ def fit_window_geometry(
     return f"{w}x{h}+{x}+{y}"
 
 
+def center_over_window_geometry(
+    parent_x: int,
+    parent_y: int,
+    parent_w: int,
+    parent_h: int,
+    child_w: int,
+    child_h: int,
+) -> str:
+    """Return +X+Y that centers a child window over its parent."""
+    x = parent_x + (parent_w - child_w) // 2
+    y = parent_y + (parent_h - child_h) // 2
+    return f"+{x}+{y}"
+
+
 def _active_display_bounds() -> tuple[int, int, int, int] | None:
     """Usable bounds of the display under the pointer (Tk left, top, right, bottom)."""
     if sys.platform != "darwin":
@@ -240,7 +254,7 @@ class ConverterApp:
         documents_accessible: bool | None = None,
     ) -> None:
         self.root = root
-        root.title(f"Rekordbox Playlist Converter {__version__}")
+        root.title(f"Simple Rekordbox Converter {__version__}")
         root.minsize(560, 480)
         bounds = _active_display_bounds()
         if bounds is not None:
@@ -423,11 +437,21 @@ class ConverterApp:
         dlg.bind("<Return>", lambda _e: open_selected())
         dlg.bind("<Escape>", lambda _e: close())
         dlg.protocol("WM_DELETE_WINDOW", close)
-        dlg.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self._place_dialog_over_app(dlg)
         dlg.wait_window()
+
+    def _place_dialog_over_app(self, dlg: tk.Toplevel) -> None:
+        dlg.update_idletasks()
+        dlg.geometry(
+            center_over_window_geometry(
+                self.root.winfo_rootx(),
+                self.root.winfo_rooty(),
+                max(self.root.winfo_width(), 1),
+                max(self.root.winfo_height(), 1),
+                max(dlg.winfo_reqwidth(), dlg.winfo_width(), 1),
+                max(dlg.winfo_reqheight(), dlg.winfo_height(), 1),
+            )
+        )
 
     def _apply_documents_access(self, override: bool | None) -> None:
         if override is None:
@@ -702,13 +726,7 @@ class ConverterApp:
         ttk.Button(btns, text="Close", command=close).pack(side=tk.RIGHT)
         dlg.bind("<Escape>", lambda _e: close())
         dlg.protocol("WM_DELETE_WINDOW", close)
-        dlg.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
-        y = (
-            self.root.winfo_rooty()
-            + (self.root.winfo_height() - dlg.winfo_height()) // 2
-        )
-        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self._place_dialog_over_app(dlg)
         dlg.focus_force()
 
     def _on_bit_depth_selected(self, _event: object = None) -> None:
@@ -1471,10 +1489,7 @@ class ConverterApp:
         dlg.bind("<Return>", lambda _e: close())
         dlg.bind("<Escape>", lambda _e: close())
         dlg.protocol("WM_DELETE_WINDOW", close)
-        dlg.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self._place_dialog_over_app(dlg)
         dlg.wait_window()
 
     def _show_done_dialog(self, message: str, open_dir: Path | None) -> None:
@@ -1515,10 +1530,7 @@ class ConverterApp:
         dlg.bind("<Return>", lambda _e: close())
         dlg.bind("<Escape>", lambda _e: close())
         dlg.protocol("WM_DELETE_WINDOW", close)
-        dlg.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self._place_dialog_over_app(dlg)
         dlg.wait_window()
 
     def _start_update_check(self, *, manual: bool) -> None:
@@ -1545,7 +1557,7 @@ class ConverterApp:
             if manual:
                 messagebox.showinfo(
                     "No updates",
-                    f"Rekordbox Playlist Converter {__version__} is up to date.",
+                    f"Simple Rekordbox Converter {__version__} is up to date.",
                 )
             return
         if result.is_update_available and result.release is not None:
@@ -1589,10 +1601,7 @@ class ConverterApp:
         ttk.Button(btns, text="View release", command=view_release).pack(side=tk.LEFT)
         dlg.bind("<Escape>", lambda _e: close())
         dlg.protocol("WM_DELETE_WINDOW", close)
-        dlg.update_idletasks()
-        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
-        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
-        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        self._place_dialog_over_app(dlg)
         dlg.wait_window()
 
 

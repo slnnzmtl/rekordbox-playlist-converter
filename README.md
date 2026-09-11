@@ -1,7 +1,7 @@
 # Rekordbox playlist → WAV
 
 <p align="center">
-  <img src="assets/rpc-logo-white.png" alt="Rekordbox Playlist Converter logo" width="160">
+  <img src="assets/rpc-logo-white.png" alt="Simple Rekordbox Converter logo" width="160">
 </p>
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
@@ -33,7 +33,7 @@ Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 k
 **AIFF profile:** uncompressed `FORM`/`AIFF` (not AIFC), stereo PCM at the effective depth/rate, plus ID3v2.3 text from the Rekordbox XML and an optional JPEG cover from the source file.
 ## macOS app (no Terminal)
 
-Download **Rekordbox Playlist Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon). Defaults write to `~/Documents/rekordbox-converted` (a different folder than the CLI’s `./output`); the app remembers your last Rekordbox XML, WAV folder, and Import XML between launches. On launch it searches only your home folder (top-level files) and `~/Documents` for `*rekordbox*.xml` (skipping Desktop, Downloads, and iCloud) and auto-loads a single match, or asks you to choose if several are found. First launch: right-click → **Open** if Gatekeeper blocks it (ad-hoc signed). macOS may ask for Documents access on first open; if you decline, the app still opens and defaults to `~/rekordbox-converted` — Browse… can prompt again when you navigate into Documents.
+Download **Simple Rekordbox Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon). Defaults write to `~/Documents/rekordbox-converter` (a different folder than the CLI’s `./output`); the app remembers your last Rekordbox XML, WAV folder, and Import XML between launches. On launch it searches only your home folder (top-level files) and `~/Documents` for `*rekordbox*.xml` (skipping Desktop, Downloads, and iCloud) and auto-loads a single match, or asks you to choose if several are found. First launch: right-click → **Open** if Gatekeeper blocks it (ad-hoc signed). macOS may ask for Documents access on first open; if you decline, the app still opens and defaults to `~/rekordbox-converter` — Browse… can prompt again when you navigate into Documents.
 
 Import into Rekordbox the same way as the CLI — point **Imported Library** at the app’s import XML. In the app, **Help → How to Use…** (or the **How to use** button) covers the full Rekordbox click-path. Same steps are also in **[USAGE.md](USAGE.md)**.
 
@@ -49,7 +49,7 @@ That script downloads static **release** `ffmpeg`/`ffprobe` for arm64 and amd64 
 
 Do **not** copy Homebrew’s ffmpeg (cellar dylibs). Static ffmpeg is GPL — see [third_party/ffmpeg/](third_party/ffmpeg/).
 
-The app lands in `dist/Rekordbox Playlist Converter.app`. Confirm both slices: `lipo -archs "dist/Rekordbox Playlist Converter.app/Contents/MacOS/Rekordbox Playlist Converter"`.
+The app lands in `dist/Simple Rekordbox Converter.app`. Confirm both slices: `lipo -archs "dist/Simple Rekordbox Converter.app/Contents/MacOS/Simple Rekordbox Converter"`.
 
 ## First time (CLI)
 

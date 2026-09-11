@@ -43,7 +43,7 @@ class VersionDisplayTests(unittest.TestCase):
                 ConverterApp(root, documents_accessible=False)
             self.assertEqual(
                 root.title(),
-                f"Rekordbox Playlist Converter {__version__}",
+                f"Simple Rekordbox Converter {__version__}",
             )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
