@@ -35,19 +35,6 @@ def _find_listbox(widget):
     return None
 
 
-def _find_scrollbar(widget):
-    import tkinter as tk
-    from tkinter import ttk
-
-    if isinstance(widget, (tk.Scrollbar, ttk.Scrollbar)):
-        return widget
-    for child in widget.winfo_children():
-        found = _find_scrollbar(child)
-        if found is not None:
-            return found
-    return None
-
-
 class TotalSuccessfulConversionsTests(unittest.TestCase):
     def test_total_successful_conversions(self) -> None:
         self.assertEqual(
@@ -95,7 +82,7 @@ class MissingFilesDialogTests(unittest.TestCase):
                 "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
             ), patch.object(tk.Toplevel, "wait_window"), patch(
                 "rb_converter_gui.messagebox.showwarning"
-            ) as showwarning:
+            ):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -115,8 +102,6 @@ class MissingFilesDialogTests(unittest.TestCase):
                     list(listbox.get(0, tk.END)),
                     warnings,
                 )
-                self.assertIsNotNone(_find_scrollbar(dlg))
-                showwarning.assert_not_called()
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

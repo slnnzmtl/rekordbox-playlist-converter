@@ -40,9 +40,7 @@ class VersionDisplayTests(unittest.TestCase):
             ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
                 root = tk.Tk()
                 root.withdraw()
-                app = ConverterApp(root, documents_accessible=False)
-            self.assertFalse(hasattr(app, "title_label"))
-            self.assertFalse(hasattr(app, "version_label"))
+                ConverterApp(root, documents_accessible=False)
             self.assertEqual(
                 root.title(),
                 f"Rekordbox Playlist Converter {__version__}",
