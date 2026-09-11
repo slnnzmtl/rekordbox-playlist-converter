@@ -34,7 +34,10 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import rb_playlist_to_wav as rb
-from preview_bit_depth import read_preview_bit_depth
+from preview_bit_depth import (
+    cached_preview_bit_depth,
+    peek_cached_preview_bit_depth,
+)
 from update_check import ReleaseInfo, UpdateCheckResult, check_for_update
 from usage_guide import USAGE_GUIDE
 from version import __version__
@@ -318,6 +321,7 @@ class ConverterApp:
         self._tracklist_paths: dict[str, Path] = {}
         self._tracklist_selecting = False
         self._tracklist_tech_gen = 0
+        self._preview_bit_depth_cache: dict = {}
 
         self._build()
         self.search_var.trace_add("write", lambda *_: self._apply_playlist_filter())
@@ -862,6 +866,7 @@ class ConverterApp:
         self._playlist_entries = []
         self._playlist_iids = {}
         self._source_root = None
+        self._preview_bit_depth_cache.clear()
         xml_s = self.xml_var.get().strip()
         if not xml_s:
             self._refresh_tracklist_preview()
@@ -1068,10 +1073,16 @@ class ConverterApp:
                     continue
                 loc = (track.get("Location") or "") if track is not None else ""
                 path = rb.decode_location(loc) if loc else None
+                if path is not None:
+                    hit, bits = peek_cached_preview_bit_depth(
+                        path, self._preview_bit_depth_cache
+                    )
+                    if hit:
+                        depth = str(bits) if bits is not None else "—"
+                    elif path not in seen_paths:
+                        seen_paths.add(path)
+                        paths.append(path)
                 matched.append((key, label, (fmt, depth, rate), path))
-                if path is not None and path not in seen_paths:
-                    seen_paths.add(path)
-                    paths.append(path)
             if not matched:
                 continue
             group_iid = self.tracklist_tree.insert(
@@ -1117,7 +1128,9 @@ class ConverterApp:
             if gen != self._tracklist_tech_gen:
                 return
             try:
-                bits = read_preview_bit_depth(path)
+                bits = cached_preview_bit_depth(
+                    path, self._preview_bit_depth_cache
+                )
             except Exception:
                 continue
             if bits is not None:

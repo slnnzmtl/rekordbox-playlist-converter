@@ -11,7 +11,7 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from preview_bit_depth import read_preview_bit_depth
+from preview_bit_depth import cached_preview_bit_depth, read_preview_bit_depth
 
 
 def _box(typ: bytes, payload: bytes) -> bytes:
@@ -165,6 +165,25 @@ class PreviewBitDepthTests(unittest.TestCase):
             junk = Path(tmp) / "track.wav"
             junk.write_bytes(b"RIFF")
             self.assertIsNone(read_preview_bit_depth(junk))
+
+    def test_cached_preview_bit_depth_reads_once_for_unchanged_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "track.flac"
+            path.write_bytes(_flac_with_bit_depth(24))
+            calls = {"n": 0}
+
+            def counting_read(p: Path) -> int | None:
+                calls["n"] += 1
+                return read_preview_bit_depth(p)
+
+            cache: dict = {}
+            self.assertEqual(
+                cached_preview_bit_depth(path, cache, read=counting_read), 24
+            )
+            self.assertEqual(
+                cached_preview_bit_depth(path, cache, read=counting_read), 24
+            )
+            self.assertEqual(calls["n"], 1)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,41 @@ def read_preview_bit_depth(path: Path) -> int | None:
     return None
 
 
+def cached_preview_bit_depth(
+    path: Path,
+    cache: dict,
+    *,
+    read=read_preview_bit_depth,
+) -> int | None:
+    """Return bit depth, reading the header only once per path+mtime+size."""
+    key = _stat_cache_key(path)
+    if key is None:
+        return None
+    if key in cache:
+        return cache[key]
+    bits = read(path)
+    cache[key] = bits
+    return bits
+
+
+def peek_cached_preview_bit_depth(
+    path: Path, cache: dict
+) -> tuple[bool, int | None]:
+    """Return (hit, bits). Missing files and uncached paths are misses."""
+    key = _stat_cache_key(path)
+    if key is None or key not in cache:
+        return False, None
+    return True, cache[key]
+
+
+def _stat_cache_key(path: Path) -> tuple[str, int, int] | None:
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return (str(path.resolve()), st.st_mtime_ns, st.st_size)
+
+
 def _flac_bit_depth(data: bytes) -> int | None:
     offset = 4
     while offset + 4 <= len(data):
