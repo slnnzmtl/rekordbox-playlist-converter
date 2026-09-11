@@ -55,6 +55,7 @@ SAMPLE_RATE_LABELS = {"44100": "44.1KHz", "48000": "48KHz"}
 BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items()}
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
 ACTION_BUTTON_WIDTH = 9
+CANCELLED_STATUS_CLEAR_MS = 3000
 
 
 class _HoverTooltip:
@@ -168,13 +169,14 @@ class ConverterApp:
         self.sample_rate_var = tk.StringVar(value=saved_rate)
         self.search_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
-        self.tracklist_total_var = tk.StringVar(value="")
         self._busy = False
+        self._cancel_event = threading.Event()
         self._search_showing_placeholder = False
         self._usage_window: tk.Toplevel | None = None
         self._update_modal_shown = False
         self._progress_target = 0.0
         self._progress_anim_id: str | None = None
+        self._cancelled_clear_id: str | None = None
         self._documents_accessible = False
         self._source_root = None
         # (kind, folder, name, track_count, node) for every node in the XML walk
@@ -416,9 +418,6 @@ class ConverterApp:
         self.tracklist_tree.configure(yscrollcommand=track_scroll.set)
         self.tracklist_tree.grid(row=0, column=0, sticky="nsew")
         track_scroll.grid(row=0, column=1, sticky="ns")
-        ttk.Label(right, textvariable=self.tracklist_total_var).grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
-        )
 
         panes.add(left, weight=1)
         panes.add(right, weight=1)
@@ -455,13 +454,6 @@ class ConverterApp:
         ttk.Radiobutton(
             format_opts, text="AIFF", variable=self.format_var, value="aiff"
         ).pack(side=tk.LEFT, padx=(8, 0))
-        self.convert_btn = ttk.Button(
-            frm,
-            text="Convert",
-            width=ACTION_BUTTON_WIDTH,
-            command=self._start_convert,
-        )
-        self.convert_btn.grid(row=5, column=2, sticky="e", **pad)
 
         quality = ttk.Frame(frm)
         quality.grid(row=6, column=0, columnspan=2, sticky="w", **pad)
@@ -496,8 +488,24 @@ class ConverterApp:
         _HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
 
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        self.progress.grid(row=7, column=0, columnspan=2, sticky="ew", **pad)
         self.progress["value"] = 0
+        self.convert_btn = ttk.Button(
+            frm,
+            text="Convert",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._start_convert,
+        )
+        self.convert_btn.grid(row=7, column=2, sticky="e", **pad)
+        self.cancel_btn = ttk.Button(
+            frm,
+            text="Cancel",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._request_cancel,
+            state=tk.DISABLED,
+        )
+        self.cancel_btn.grid(row=7, column=2, sticky="e", **pad)
+        self.cancel_btn.grid_remove()
 
         ttk.Label(frm, textvariable=self.status_var, wraplength=1000).grid(
             row=8, column=0, columnspan=3, sticky="ew", **pad
@@ -703,14 +711,14 @@ class ConverterApp:
             return
         path = Path(xml_s).expanduser()
         if not path.is_file():
-            self.status_var.set(f"XML not found: {path}")
             self._refresh_tracklist_preview()
+            self.status_var.set(f"XML not found: {path}")
             return
         try:
             root = rb.load_dj_playlists(path)
         except rb.CliError as exc:
-            self.status_var.set(str(exc))
             self._refresh_tracklist_preview()
+            self.status_var.set(str(exc))
             return
         self._source_root = root
         nodes = rb.iter_playlist_nodes(root)
@@ -719,13 +727,6 @@ class ConverterApp:
             self._playlist_entries.append((kind, folder, name, count, node))
         self._show_search_placeholder()
         self._apply_playlist_filter()
-        playlist_count = sum(1 for kind, *_rest in self._playlist_entries if kind == "playlist")
-        if playlist_count:
-            self.status_var.set(
-                f"Loaded {playlist_count} playlist(s). Select and Convert."
-            )
-        else:
-            self.status_var.set("No playlists found in XML.")
 
     def _show_search_placeholder(self) -> None:
         self._search_showing_placeholder = True
@@ -832,11 +833,13 @@ class ConverterApp:
 
     def _refresh_tracklist_preview(self) -> None:
         self.tracklist_tree.delete(*self.tracklist_tree.get_children())
-        self.tracklist_total_var.set("No tracks selected")
+        unique_summary: str | None = None
         if self._source_root is None:
+            self._set_idle_status()
             return
         selected = self._selected_playlists(unique_names=False)
         if not selected:
+            self._set_idle_status()
             return
         by_id, by_location = rb.collection_indexes(self._source_root)
         unique_keys: set[str] = set()
@@ -866,9 +869,10 @@ class ConverterApp:
                 )
         if unique_keys and painted:
             playlist_word = "playlist" if painted == 1 else "playlists"
-            self.tracklist_total_var.set(
+            unique_summary = (
                 f"{len(unique_keys)} unique tracks from {painted} {playlist_word}"
             )
+        self._set_idle_status(unique_summary)
 
     def _selected_playlists(self, *, unique_names: bool = True) -> list[tuple[str, str]]:
         chosen: list[tuple[str, str]] = []
@@ -907,14 +911,58 @@ class ConverterApp:
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        state = tk.DISABLED if busy else tk.NORMAL
-        self.convert_btn.configure(state=state)
-        self.refresh_btn.configure(state=state)
+        self.refresh_btn.configure(state=tk.DISABLED if busy else tk.NORMAL)
         if busy:
+            self._cancel_cancelled_clear()
             self._cancel_progress_anim()
             self._progress_target = 0.0
             self.progress["value"] = 0
-        # On success finish_ok leaves the bar at 100; on error finish_error resets.
+            self.convert_btn.grid_remove()
+            self.cancel_btn.configure(state=tk.NORMAL)
+            self.cancel_btn.grid()
+        else:
+            self.cancel_btn.grid_remove()
+            self.cancel_btn.configure(state=tk.DISABLED)
+            self.convert_btn.configure(state=tk.NORMAL)
+            self.convert_btn.grid()
+
+    def _request_cancel(self) -> None:
+        if not self._busy:
+            return
+        self._cancel_event.set()
+        self.status_var.set("Cancelling…")
+        self.cancel_btn.configure(state=tk.DISABLED)
+
+    def _cancel_cancelled_clear(self) -> None:
+        if self._cancelled_clear_id is not None:
+            self.root.after_cancel(self._cancelled_clear_id)
+            self._cancelled_clear_id = None
+
+    def _set_idle_status(self, unique_summary: str | None = None) -> None:
+        if self._busy:
+            return
+        if unique_summary:
+            self.status_var.set(unique_summary)
+            return
+        playlist_count = sum(
+            1 for kind, *_rest in self._playlist_entries if kind == "playlist"
+        )
+        if playlist_count:
+            self.status_var.set(
+                f"Loaded {playlist_count} playlist(s). Select and Convert."
+            )
+            return
+        if self._source_root is not None:
+            self.status_var.set("No playlists found in XML.")
+            return
+        self.status_var.set("Choose a Rekordbox XML export.")
+
+    def _clear_cancelled_status(self) -> None:
+        self._cancelled_clear_id = None
+        if self._busy or self.status_var.get() != "Cancelled.":
+            return
+        self._animate_progress_to(0, snap=True)
+        self._refresh_tracklist_preview()
 
     def _cancel_progress_anim(self) -> None:
         if self._progress_anim_id is not None:
@@ -999,6 +1047,7 @@ class ConverterApp:
         xml_path = Path(xml_s).expanduser()
 
         self._set_busy(True)
+        self._cancel_event.clear()
         self.status_var.set("Preparing…")
 
         def worker() -> None:
@@ -1009,6 +1058,9 @@ class ConverterApp:
                 playlist_dirs: list[Path] = []
                 plans: list[rb.Plan] = []
                 for i, (folder, name) in enumerate(selected):
+                    if self._cancel_event.is_set():
+                        self._ui(self._finish_cancelled)
+                        return
                     label = f"{name} ({i + 1}/{len(selected)})"
                     self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
                     plan, errors = rb.prepare(
@@ -1049,6 +1101,9 @@ class ConverterApp:
                     )
 
                 for plan in plans:
+                    if self._cancel_event.is_set():
+                        self._ui(self._finish_cancelled)
+                        return
                     base = done_base
 
                     def tick(
@@ -1061,10 +1116,17 @@ class ConverterApp:
                         on_progress(current, plan_total, action, track_name, base=b)
 
                     stats = rb.convert_unique(
-                        plan, force=False, progress=False, on_progress=tick
+                        plan,
+                        force=False,
+                        progress=False,
+                        on_progress=tick,
+                        cancel_event=self._cancel_event,
                     )
                     all_stats.append(stats)
                     done_base += len(plan.unique)
+                    if self._cancel_event.is_set():
+                        self._ui(self._finish_cancelled)
+                        return
                     stats.appended = rb.apply_xml(plan)
                     rb.atomic_write_xml(plan.output_root, plan.output)
                     parts = []
@@ -1103,6 +1165,14 @@ class ConverterApp:
                 self._ui(lambda e=str(exc): self._finish_error(e))
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_cancelled(self) -> None:
+        self._set_busy(False)
+        self.status_var.set("Cancelled.")
+        self._cancel_cancelled_clear()
+        self._cancelled_clear_id = self.root.after(
+            CANCELLED_STATUS_CLEAR_MS, self._clear_cancelled_status
+        )
 
     def _finish_error(self, message: str) -> None:
         self._set_busy(False)

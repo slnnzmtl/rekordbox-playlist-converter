@@ -4,7 +4,8 @@
 
 Intended for **1.3.0** (app version remains 1.2.0 until release).
 
-- GUI shows a tracklist preview beside the playlist tree (`Artist - Title.ext`, unique track count at the bottom).
+- Convert sits beside the progress bar; Cancel replaces it while a run is in progress. Cancel stops after the current track (completed files kept; interrupted playlist is not written to Import XML). “Cancelled.” clears after 3 seconds and resets the progress bar.
+- GUI shows a tracklist preview beside the playlist tree (`Artist - Title.ext`); the unique-track selection summary appears on the bottom status line when idle.
 - Missing skipped tracks open in a scrollable list dialog instead of a flat warning alert.
 - App version is shown in the window title; the in-window title label is removed.
 - Convert aligns with the Browse column; the redundant How to use button is removed (Help menu unchanged).

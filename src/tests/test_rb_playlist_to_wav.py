@@ -251,6 +251,40 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertIn("missing source file", plan.warnings[0])
         self.assertIn(str(self.c), plan.warnings[0])
 
+    def test_convert_unique_stops_remaining_tracks_when_cancel_event_set(self) -> None:
+        """Cancel mid-playlist: finish the current track, skip the rest, keep files."""
+        import threading
+
+        cancel = threading.Event()
+        written: list[Path] = []
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+            written.append(dest)
+            cancel.set()
+
+        with patch.object(rb, "require_tools", return_value=[]), patch.object(
+            rb, "run_ffprobe", side_effect=self._probe
+        ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+            self.assertEqual(errors, [])
+            assert plan is not None
+            self.assertEqual(len(plan.unique), 3)
+            stats = rb.convert_unique(
+                plan, force=False, progress=False, cancel_event=cancel
+            )
+
+        self.assertEqual(stats.converted, 1)
+        self.assertEqual(len(written), 1)
+        self.assertTrue(written[0].is_file())
+        for item in plan.unique[1:]:
+            self.assertFalse(item.dest_path.exists())
+
     def test_missing_source_file_does_not_abort_convert(self) -> None:
         self.c.unlink()
 
