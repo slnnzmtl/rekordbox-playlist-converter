@@ -10,13 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import ffmpeg_tools
+import iff_chunks
 from cdj_wav import CDJ_SAFE_CHANNELS
 from cli_error import CliError
 
-AIFF_SAFE_RATES = {
-    bytes.fromhex("400eac44000000000000"),  # 44100
-    bytes.fromhex("400ebb80000000000000"),  # 48000
-}
 AIFF_RATE_BYTES = {
     44100: bytes.fromhex("400eac44000000000000"),
     48000: bytes.fromhex("400ebb80000000000000"),
@@ -60,32 +57,31 @@ def _parse_aiff_audio(path: Path) -> _AiffAudioInfo:
     ssnd_data_size = ssnd_offset = ssnd_block_size = 0
     comm_size = 0
     offset = 12
-    while offset + 8 <= len(data):
-        cid = data[offset : offset + 4]
-        size = struct.unpack_from(">I", data, offset + 4)[0]
-        payload_start = offset + 8
-        payload_end = payload_start + size
-        if payload_end > len(data):
-            raise CliError(f"truncated AIFF chunk {cid!r} in {path}")
-        chunk_ids.append(cid.decode("ascii", errors="replace"))
-        if cid == b"COMM":
-            comm_count += 1
-            comm_size = size
-            if size >= 18:
-                channels, sample_frames, bits = struct.unpack_from(
-                    ">hIh", data, payload_start
-                )
-                sample_rate_bytes = data[payload_start + 8 : payload_start + 18]
-        elif cid == b"SSND":
-            ssnd_count += 1
-            if size >= 8:
-                ssnd_offset, ssnd_block_size = struct.unpack_from(
-                    ">II", data, payload_start
-                )
-                ssnd_data_size = size - 8 - ssnd_offset
-        elif cid == b"ID3 ":
-            id3_count += 1
-        offset = payload_end + (size % 2)
+    try:
+        for cid, size, payload_start in iff_chunks.iter_chunks(
+            data, endian="big", start=12
+        ):
+            chunk_ids.append(cid.decode("ascii", errors="replace"))
+            if cid == b"COMM":
+                comm_count += 1
+                comm_size = size
+                if size >= 18:
+                    channels, sample_frames, bits = struct.unpack_from(
+                        ">hIh", data, payload_start
+                    )
+                    sample_rate_bytes = data[payload_start + 8 : payload_start + 18]
+            elif cid == b"SSND":
+                ssnd_count += 1
+                if size >= 8:
+                    ssnd_offset, ssnd_block_size = struct.unpack_from(
+                        ">II", data, payload_start
+                    )
+                    ssnd_data_size = size - 8 - ssnd_offset
+            elif cid == b"ID3 ":
+                id3_count += 1
+            offset = payload_start + size + (size % 2)
+    except ValueError as exc:
+        raise CliError(f"truncated AIFF chunk in {path}: {exc}") from exc
     if offset != len(data):
         raise CliError(f"trailing bytes after AIFF chunks in {path}")
     if not form_ok:
@@ -239,7 +235,7 @@ def _read_id3_frames(tag: bytes) -> tuple[dict[str, str], bytes | None]:
         frame_size = struct.unpack_from(">I", tag, offset + 4)[0]
         frame_flags = tag[offset + 8 : offset + 10]
         offset += 10
-        if frame_size < 0 or offset + frame_size > end:
+        if offset + frame_size > end:
             break
         payload = tag[offset : offset + frame_size]
         offset += frame_size
@@ -331,11 +327,6 @@ def _normalize_aiff_audio_chunks(source: Path, dest: Path) -> None:
     offset = 12
     for cid in info.chunk_ids:
         size = struct.unpack_from(">I", data, offset + 4)[0]
-        chunk = data[offset : offset + 8 + size]
-        if size % 2:
-            # include pad if present in file
-            if offset + 8 + size < len(data) and (offset + 8 + size) % 2:
-                pass
         if cid in ("COMM", "SSND"):
             payload = data[offset + 8 : offset + 8 + size]
             pieces.append(cid.encode("ascii") + struct.pack(">I", len(payload)) + payload)

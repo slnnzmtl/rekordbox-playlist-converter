@@ -12,6 +12,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from rekordbox_xml import path_is_under_documents
+
 BUNDLE_ID = "io.github.slnnzmtl.rekordboxWavConverter"
 PREFERENCES_VERSION = 1
 OUTPUT_DIR_NAME = "rekordbox-converter"
@@ -95,18 +97,6 @@ def default_output_paths(
     else:
         wav_dir = base / OUTPUT_DIR_NAME
     return wav_dir, wav_dir / IMPORT_XML_NAME
-
-
-def path_is_under_documents(path: Path, *, home: Path | None = None) -> bool:
-    """True if *path* is under ~/Documents without stating the filesystem."""
-    base = home if home is not None else Path.home()
-    documents = (base / "Documents").expanduser()
-    expanded = path.expanduser()
-    try:
-        expanded.relative_to(documents)
-        return True
-    except ValueError:
-        return False
 
 
 def probe_folder_access(
