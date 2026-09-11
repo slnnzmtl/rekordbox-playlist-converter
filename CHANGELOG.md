@@ -5,6 +5,7 @@
 Intended for **1.3.0** (app version remains 1.2.0 until release).
 
 - App display name is **Simple Rekordbox Converter** (window title, macOS .app bundle, docs).
+- Tracklist bit depth is remembered for the session so reselecting a playlist does not re-read file headers; Refresh or a new XML path clears the cache.
 - Default output folder is `rekordbox-converter` (`~/Documents/rekordbox-converter` when Documents access is allowed).
 - Success and other app dialogs open centered over the main window.
 - Playlist search and track search sit over each pane (follow the splitter). Track search filters the currently listed preview by artist/title/filename; Convert still uses the selected visible tracks.
