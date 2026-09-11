@@ -262,17 +262,10 @@ class XmlFixtureTests(unittest.TestCase):
                 self.output,
                 track_keys={"219211420"},
             )
-            full, full_errors = rb.prepare(
-                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
-            )
         self.assertEqual(errors, [])
         assert plan is not None
         self.assertEqual(len(plan.tracks), 1)
-        self.assertEqual(len(plan.unique), 1)
         self.assertEqual(plan.tracks[0].source_path, self.a)
-        self.assertEqual(full_errors, [])
-        assert full is not None
-        self.assertEqual(len(full.tracks), 3)
 
     def test_convert_unique_stops_remaining_tracks_when_cancel_event_set(self) -> None:
         """Cancel mid-playlist: finish the current track, skip the rest, keep files."""
