@@ -1,4 +1,4 @@
-"""In-app usage guide text for the Rekordbox Playlist converter GUI."""
+"""In-app usage guide text for the Simple Rekordbox Converter GUI."""
 
 USAGE_GUIDE = """\
 How to convert a playlist (Rekordbox 6 and 7)
@@ -41,10 +41,10 @@ export.
    start selected; hold ⌃ to refine which tracks to convert (across playlists).
    Playlist search filters the left tree; track search filters the current
    tracklist (artist / title / filename).
-3. Confirm output folder and Import XML. Defaults are ~/Documents/rekordbox-converted
-   and ~/Documents/rekordbox-converted/rekordbox-import.xml when Documents access
-   is allowed. If you decline that request, defaults are ~/rekordbox-converted and
-   ~/rekordbox-converted/rekordbox-import.xml; Browse… can prompt again when you
+3. Confirm output folder and Import XML. Defaults are ~/Documents/rekordbox-converter
+   and ~/Documents/rekordbox-converter/rekordbox-import.xml when Documents access
+   is allowed. If you decline that request, defaults are ~/rekordbox-converter and
+   ~/rekordbox-converter/rekordbox-import.xml; Browse… can prompt again when you
    open Documents. The app remembers your last-used output folder and Import XML
    between launches.
 4. Choose Format: WAV or AIFF.
@@ -82,7 +82,7 @@ Show the rekordbox xml pane (once):
 Point Rekordbox at this app’s XML:
 1. Preferences → Advanced → Database.
 2. Under rekordbox xml, set Imported Library to the Import XML this app wrote
-   (default: ~/Documents/rekordbox-converted/rekordbox-import.xml) — not your
+   (default: ~/Documents/rekordbox-converter/rekordbox-import.xml) — not your
    original collection export.
 3. Close Preferences. You should see rekordbox xml in the browser tree.
 

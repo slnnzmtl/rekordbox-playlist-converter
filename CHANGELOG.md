@@ -4,6 +4,9 @@
 
 Intended for **1.3.0** (app version remains 1.2.0 until release).
 
+- App display name is **Simple Rekordbox Converter** (window title, macOS .app bundle, docs).
+- Default output folder is `rekordbox-converter` (`~/Documents/rekordbox-converter` when Documents access is allowed).
+- Success and other app dialogs open centered over the main window.
 - Playlist search and track search sit over each pane (follow the splitter). Track search filters the currently listed preview by artist/title/filename; Convert still uses the selected visible tracks.
 - Convert uses the tracklist preview selection: listed tracks start selected; hold ⌃ to refine a subset across playlists. Import XML and audio output include only those tracks.
 - Convert sits beside the progress bar; Cancel replaces it while a run is in progress. Cancel stops after the current track (completed files kept; interrupted playlist is not written to Import XML). “Cancelled.” clears after 3 seconds and resets the progress bar.
@@ -48,6 +51,6 @@ Intended for **1.3.0** (app version remains 1.2.0 until release).
 First public release.
 
 - CLI (`rb-converter.py`) converts Rekordbox playlist lossless tracks to WAV and writes an import XML with cues, beatgrid, rating, BPM, and tags preserved.
-- macOS universal2 app (**Rekordbox Playlist Converter**) with bundled static ffmpeg/ffprobe (ad-hoc signed).
+- macOS universal2 app (**Simple Rekordbox Converter**) with bundled static ffmpeg/ffprobe (ad-hoc signed).
 - Supports Rekordbox 6 and 7 XML exports (FLAC, ALAC, AIFF; WAV copied as-is).
 - Licensed under GPL-3.0-or-later.

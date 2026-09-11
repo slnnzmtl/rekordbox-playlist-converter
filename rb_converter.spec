@@ -98,7 +98,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Rekordbox Playlist Converter",
+    name="Simple Rekordbox Converter",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -119,17 +119,17 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="Rekordbox Playlist Converter",
+    name="Simple Rekordbox Converter",
 )
 
 app = BUNDLE(
     coll,
-    name="Rekordbox Playlist Converter.app",
+    name="Simple Rekordbox Converter.app",
     icon=str(app_icns),
     bundle_identifier="io.github.slnnzmtl.rekordboxWavConverter",
     info_plist={
         "NSHighResolutionCapable": True,
-        "CFBundleDisplayName": "Rekordbox Playlist Converter",
+        "CFBundleDisplayName": "Simple Rekordbox Converter",
         "CFBundleShortVersionString": "1.2.0",
         "NSDocumentsFolderUsageDescription": (
             "Writes converted audio files and the Rekordbox import XML."

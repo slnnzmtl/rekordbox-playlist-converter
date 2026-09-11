@@ -11,7 +11,11 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 import rb_playlist_to_wav as rb
-from rb_converter_gui import fit_window_geometry, total_successful_conversions
+from rb_converter_gui import (
+    center_over_window_geometry,
+    fit_window_geometry,
+    total_successful_conversions,
+)
 from update_check import UpdateCheckResult
 
 
@@ -71,6 +75,13 @@ class FitWindowGeometryTests(unittest.TestCase):
         # 1440x900 usable; 1120x720 centered at +2080+115.
         geom = fit_window_geometry(1120, 720, 1920, 25, 3360, 925)
         self.assertEqual(geom, "1120x720+2080+115")
+
+
+class CenterOverWindowGeometryTests(unittest.TestCase):
+    def test_center_over_window_geometry_centers_dialog_on_parent(self) -> None:
+        # Parent not at (0,0); child 500x200 over 1120x720 at +400+240.
+        geom = center_over_window_geometry(400, 240, 1120, 720, 500, 200)
+        self.assertEqual(geom, "+710+500")
 
 
 class MissingFilesDialogTests(unittest.TestCase):

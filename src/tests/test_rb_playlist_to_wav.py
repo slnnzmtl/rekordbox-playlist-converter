@@ -853,7 +853,7 @@ class WizardHelperTests(unittest.TestCase):
             beside = mac_os / "ffprobe"
             beside.write_text("")
             beside.chmod(0o755)
-            fake_exe = mac_os / "Rekordbox Playlist Converter"
+            fake_exe = mac_os / "Simple Rekordbox Converter"
             fake_exe.write_text("")
             with patch.object(rb.sys, "frozen", True, create=True), patch.object(
                 rb.sys, "_MEIPASS", str(Path(tmp) / "missing"), create=True
