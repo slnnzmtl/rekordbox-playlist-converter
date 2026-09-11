@@ -322,6 +322,8 @@ class ConverterApp:
         self._tracklist_selecting = False
         self._tracklist_tech_gen = 0
         self._preview_bit_depth_cache: dict = {}
+        self._preview_bit_depth_lock = threading.Lock()
+        self._preview_probe_thread: threading.Thread | None = None
         self._browser_sash_set = False
         self._tracklist_sort_column: str | None = None
         self._tracklist_sort_reverse = False
@@ -904,7 +906,10 @@ class ConverterApp:
         self._playlist_entries = []
         self._playlist_iids = {}
         self._source_root = None
-        self._preview_bit_depth_cache.clear()
+        # Clear under the same lock used by peek/fill so a probe worker cannot
+        # race a load that resets the cache.
+        with self._preview_bit_depth_lock:
+            self._preview_bit_depth_cache.clear()
         xml_s = self.xml_var.get().strip()
         if not xml_s:
             self._refresh_tracklist_preview()
@@ -913,14 +918,12 @@ class ConverterApp:
         if not path.is_file():
             self._refresh_tracklist_preview()
             self.status_var.set(f"XML not found: {path}")
-            self._refresh_tracklist_preview()
             return
         try:
             root = rb.load_dj_playlists(path)
         except rb.CliError as exc:
             self._refresh_tracklist_preview()
             self.status_var.set(str(exc))
-            self._refresh_tracklist_preview()
             return
         self._source_root = root
         nodes = rb.iter_playlist_nodes(root)
@@ -1116,7 +1119,9 @@ class ConverterApp:
                     continue
                 if path is not None:
                     hit, bits = peek_cached_preview_bit_depth(
-                        path, self._preview_bit_depth_cache
+                        path,
+                        self._preview_bit_depth_cache,
+                        lock=self._preview_bit_depth_lock,
                     )
                     if hit:
                         depth = str(bits) if bits is not None else "—"
@@ -1152,10 +1157,16 @@ class ConverterApp:
         if self._tracklist_sort_column is not None:
             self._apply_tracklist_sort()
         if paths:
-            threading.Thread(
+            prev = self._preview_probe_thread
+            if prev is not None and prev.is_alive():
+                # Generation already bumped; old worker exits between files.
+                prev.join(timeout=1.0)
+            worker = threading.Thread(
                 target=lambda: self._fill_preview_bit_depths(gen, paths),
                 daemon=True,
-            ).start()
+            )
+            self._preview_probe_thread = worker
+            worker.start()
 
     def _on_tracklist_sort(self, column: str) -> None:
         if self._tracklist_sort_column == column:
@@ -1225,7 +1236,9 @@ class ConverterApp:
                 return
             try:
                 bits = cached_preview_bit_depth(
-                    path, self._preview_bit_depth_cache
+                    path,
+                    self._preview_bit_depth_cache,
+                    lock=self._preview_bit_depth_lock,
                 )
             except Exception:
                 continue
@@ -1397,7 +1410,7 @@ class ConverterApp:
             messagebox.showerror("Missing XML", "Choose a Rekordbox XML export.")
             return
         try:
-            selected = self._selected_playlists()
+            selected = self._selected_playlists(unique_names=False)
         except rb.CliError as exc:
             messagebox.showerror("Selection", str(exc))
             return
@@ -1421,6 +1434,15 @@ class ConverterApp:
         ]
         if not selected:
             messagebox.showerror("Selection", "Select at least one track.")
+            return
+        names = [name for _folder, name in selected]
+        dupes = {n for n in names if names.count(n) > 1}
+        if dupes:
+            listed = ", ".join(sorted(dupes))
+            messagebox.showerror(
+                "Selection",
+                f"cannot select multiple playlists with the same name: {listed}",
+            )
             return
 
         wav_dir, output = self._resolved_output_paths()
@@ -1459,6 +1481,19 @@ class ConverterApp:
                         return
                     label = f"{name} ({i + 1}/{len(selected)})"
                     self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
+
+                    def prepare_tick(
+                        current: int,
+                        total: int,
+                        action: str,
+                        track_name: str,
+                    ) -> None:
+                        self._ui(
+                            lambda c=current, t=total, a=action, n=track_name: self._set_progress(
+                                c, t, action=a, name=n
+                            )
+                        )
+
                     plan, errors = rb.prepare(
                         xml_path,
                         name,
@@ -1469,7 +1504,12 @@ class ConverterApp:
                         max_bit_depth=max_bit_depth,
                         max_sample_rate=max_sample_rate,
                         track_keys=keys_by_playlist[(folder, name)],
+                        on_progress=prepare_tick,
+                        cancel_event=self._cancel_event,
                     )
+                    if self._cancel_event.is_set():
+                        self._ui(self._finish_cancelled)
+                        return
                     if errors:
                         msg = "\n".join(errors)
                         self._ui(lambda m=msg: self._finish_error(m))

@@ -22,7 +22,7 @@ XML_CANDIDATE_RELATIVE = (
 def load_dj_playlists(path: Path) -> ET.Element:
     try:
         tree = ET.parse(path)
-    except ET.ParseError as exc:
+    except (ET.ParseError, OSError) as exc:
         raise CliError(f"Invalid XML: {path}: {exc}") from exc
     root = tree.getroot()
     if root.tag != "DJ_PLAYLISTS":

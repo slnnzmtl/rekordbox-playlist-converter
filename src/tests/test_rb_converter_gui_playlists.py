@@ -156,6 +156,52 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_load_playlists_keeps_missing_xml_status(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), NESTED_XML)
+                root, app = self._make_app(source)
+                missing = Path(tmp) / "gone.xml"
+                app.xml_var.set(str(missing))
+                app._load_playlists()
+                self.assertIn("XML not found", app.status_var.get())
+                self.assertIn(str(missing), app.status_var.get())
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_load_playlists_keeps_cli_error_status(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import rb_playlist_to_wav as rb
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), NESTED_XML)
+                root, app = self._make_app(source)
+                with patch(
+                    "rb_converter_gui.rb.load_dj_playlists",
+                    side_effect=rb.CliError("Invalid XML: broken"),
+                ):
+                    app._load_playlists()
+                self.assertEqual(app.status_var.get(), "Invalid XML: broken")
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
     def test_selected_playlists_expands_folder_to_descendants(self) -> None:
         if not _tk_available():
             self.skipTest("_tkinter not available")
@@ -237,6 +283,115 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 with self.assertRaises(rb.CliError) as ctx:
                     app._selected_playlists()
                 self.assertIn("same name", str(ctx.exception))
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_convert_allows_same_name_when_only_one_has_tracks(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), DUP_NAME_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                one = tree.get_children("")[0]
+                two = tree.get_children("")[1]
+                tree.selection_set(tree.get_children(one)[0], tree.get_children(two)[0])
+                tree.event_generate("<<TreeviewSelect>>")
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                only_one = list(preview.get_children(groups[0]))
+                preview.selection_set(*only_one)
+                preview.event_generate("<<TreeviewSelect>>")
+
+                prepare_calls: list[tuple] = []
+
+                def fake_prepare(*args, **kwargs):
+                    prepare_calls.append((args, kwargs))
+                    return (None, ["stop"])
+
+                def run_inline(target=None, **_kwargs):
+                    class _T:
+                        def start(self_inner):
+                            target()
+
+                        def is_alive(self_inner):
+                            return False
+
+                        def join(self_inner, timeout=None):
+                            return None
+
+                    return _T()
+
+                with patch(
+                    "rb_converter_gui.rb.prepare", side_effect=fake_prepare
+                ), patch(
+                    "rb_converter_gui.threading.Thread", side_effect=run_inline
+                ), patch("rb_converter_gui.messagebox.showerror") as showerror:
+                    app._start_convert()
+                    root.update()
+
+                self.assertEqual(len(prepare_calls), 1)
+                self.assertEqual(prepare_calls[0][0][1], "Same")
+                self.assertEqual(prepare_calls[0][1].get("playlist_folder"), "One")
+                # Must not be the duplicate-name selection error.
+                for call in showerror.call_args_list:
+                    self.assertNotIn("same name", str(call).lower())
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_convert_rejects_same_name_when_both_have_tracks(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), DUP_NAME_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                one = tree.get_children("")[0]
+                two = tree.get_children("")[1]
+                tree.selection_set(tree.get_children(one)[0], tree.get_children(two)[0])
+                tree.event_generate("<<TreeviewSelect>>")
+                # Default selection includes both groups' leaves.
+
+                def run_inline(target=None, **_kwargs):
+                    class _T:
+                        def start(self_inner):
+                            target()
+
+                        def is_alive(self_inner):
+                            return False
+
+                        def join(self_inner, timeout=None):
+                            return None
+
+                    return _T()
+
+                with patch(
+                    "rb_converter_gui.rb.prepare"
+                ) as prepare, patch(
+                    "rb_converter_gui.threading.Thread", side_effect=run_inline
+                ), patch("rb_converter_gui.messagebox.showerror") as showerror:
+                    app._start_convert()
+                    root.update()
+
+                prepare.assert_not_called()
+                showerror.assert_called()
+                self.assertIn("same name", str(showerror.call_args).lower())
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -436,6 +591,12 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                         def start(self_inner):
                             target()
 
+                        def is_alive(self_inner):
+                            return False
+
+                        def join(self_inner, timeout=None):
+                            return None
+
                     return _T()
 
                 with patch(
@@ -531,6 +692,12 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 def start(self_inner):
                     target()
 
+                def is_alive(self_inner):
+                    return False
+
+                def join(self_inner, timeout=None):
+                    return None
+
             return _T()
 
         root = None
@@ -598,6 +765,12 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 def start(self_inner):
                     target()
 
+                def is_alive(self_inner):
+                    return False
+
+                def join(self_inner, timeout=None):
+                    return None
+
             return _T()
 
         root = None
@@ -644,6 +817,78 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                         [preview.item(r, "values") for r in leaves],
                         [("FLAC", "—", "44100")],
                     )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_tracklist_probe_joins_previous_worker_before_starting(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import rb_playlist_to_wav as rb
+        from unittest.mock import patch
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                flac = base / "Bestial.flac"
+                flac.write_bytes(_flac_with_bit_depth(24))
+                xml = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="1">
+    <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
+           Location="{rb.encode_location(flac)}"
+           Kind="FLAC File" SampleRate="44100"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="Crate" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+                source = _write_xml(base, xml)
+                root, app = self._make_app(source)
+                joins: list[float | None] = []
+                starts = {"n": 0}
+
+                class StickyThread:
+                    def __init__(self, target=None, **_kwargs):
+                        self._target = target
+                        self._alive = True
+
+                    def start(self):
+                        starts["n"] += 1
+                        # Do not run target; stay "alive" until join.
+                        app._preview_probe_thread = self
+
+                    def is_alive(self):
+                        return self._alive
+
+                    def join(self, timeout=None):
+                        joins.append(timeout)
+                        self._alive = False
+
+                tree = app.playlist_tree
+                crate = tree.get_children("")[0]
+                with patch(
+                    "rb_converter_gui.threading.Thread", side_effect=StickyThread
+                ):
+                    tree.selection_set(crate)
+                    tree.event_generate("<<TreeviewSelect>>")
+                    self.assertEqual(starts["n"], 1)
+                    tree.selection_set(crate)
+                    tree.event_generate("<<TreeviewSelect>>")
+                    self.assertEqual(starts["n"], 2)
+                    self.assertEqual(len(joins), 1)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -719,6 +964,12 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     class _T:
                         def start(self_inner):
                             target()
+
+                        def is_alive(self_inner):
+                            return False
+
+                        def join(self_inner, timeout=None):
+                            return None
 
                     return _T()
 
@@ -870,6 +1121,12 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             class _T:
                 def start(self_inner):
                     target()
+
+                def is_alive(self_inner):
+                    return False
+
+                def join(self_inner, timeout=None):
+                    return None
 
             return _T()
 

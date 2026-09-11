@@ -301,6 +301,54 @@ class XmlFixtureTests(unittest.TestCase):
         for item in plan.unique[1:]:
             self.assertFalse(item.dest_path.exists())
 
+    def test_prepare_stops_probing_when_cancel_event_set(self) -> None:
+        import threading
+
+        cancel = threading.Event()
+        probed: list[Path] = []
+
+        def probe_and_cancel(path: Path) -> dict:
+            probed.append(path)
+            cancel.set()
+            return self._probe(path)
+
+        with patch.object(rb, "require_tools", return_value=[]), patch.object(
+            rb, "run_ffprobe", side_effect=probe_and_cancel
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+                cancel_event=cancel,
+            )
+        self.assertEqual(len(probed), 1)
+        self.assertIsNone(plan)
+        self.assertEqual(errors, [])
+
+    def test_prepare_reports_progress_while_probing(self) -> None:
+        progress_calls: list[tuple[int, int, str, str]] = []
+
+        def on_progress(current: int, total: int, action: str, name: str) -> None:
+            progress_calls.append((current, total, action, name))
+
+        with patch.object(rb, "require_tools", return_value=[]), patch.object(
+            rb, "run_ffprobe", side_effect=self._probe
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+                on_progress=on_progress,
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(len(progress_calls), 3)
+        self.assertEqual([c[0] for c in progress_calls], [1, 2, 3])
+        self.assertTrue(all(c[1] == 3 for c in progress_calls))
+        self.assertTrue(all(c[2] == "prepare" for c in progress_calls))
+
     def test_missing_source_file_does_not_abort_convert(self) -> None:
         self.c.unlink()
 
@@ -865,6 +913,69 @@ class WizardHelperTests(unittest.TestCase):
                     str(beside.resolve()),
                 )
                 which.assert_not_called()
+
+
+class SubprocessTimeoutTests(unittest.TestCase):
+    def test_run_ffprobe_maps_timeout_to_cli_error(self) -> None:
+        import subprocess
+
+        path = Path("/tmp/track.flac")
+        with patch.object(rb, "tool_path", return_value="/bin/ffprobe"), patch.object(
+            rb.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=60),
+        ):
+            with self.assertRaises(rb.CliError) as ctx:
+                rb.run_ffprobe(path)
+        self.assertIn("timed out", str(ctx.exception).lower())
+        self.assertIn(str(path), str(ctx.exception))
+
+    def test_run_ffmpeg_maps_timeout_to_cli_error(self) -> None:
+        import subprocess
+
+        src = Path("/tmp/src.flac")
+        dest = Path("/tmp/out.wav")
+        with patch.object(rb, "tool_path", return_value="/bin/ffmpeg"), patch.object(
+            rb, "ffmpeg_supports_soxr", return_value=False
+        ), patch.object(
+            rb.subprocess,
+            "run",
+            side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=600),
+        ):
+            with self.assertRaises(rb.CliError) as ctx:
+                rb.run_ffmpeg(src, dest, "pcm_s16le", force=True)
+        self.assertIn("timed out", str(ctx.exception).lower())
+        self.assertIn(str(src), str(ctx.exception))
+
+    def test_extract_cover_jpeg_returns_none_on_timeout(self) -> None:
+        import subprocess
+        import cdj_aiff
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "song.aiff"
+            src.write_bytes(b"x")
+            with patch.object(
+                rb, "tool_path", return_value="/bin/ffmpeg"
+            ), patch.object(
+                cdj_aiff.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30),
+            ):
+                self.assertIsNone(rb.extract_cover_jpeg(src))
+
+    def test_ffmpeg_supports_soxr_false_on_timeout(self) -> None:
+        import subprocess
+
+        rb.ffmpeg_supports_soxr.cache_clear()
+        try:
+            with patch.object(rb, "tool_path", return_value="/bin/ffmpeg"), patch.object(
+                rb.subprocess,
+                "run",
+                side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=15),
+            ):
+                self.assertFalse(rb.ffmpeg_supports_soxr())
+        finally:
+            rb.ffmpeg_supports_soxr.cache_clear()
 
 
 if __name__ == "__main__":

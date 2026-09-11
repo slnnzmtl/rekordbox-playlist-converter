@@ -61,7 +61,11 @@ def write_pcm_aiff(
             chunks.append((cid, payload))
     comm_size = len(comm_payload) if comm_size_override is None else comm_size_override
     chunks.append((b"COMM", comm_payload if comm_size_override is None else comm_payload[:comm_size].ljust(comm_size, b"\x00")))
-    ssnd_payload = struct.pack(">II", ssnd_offset, ssnd_block_size) + pcm
+    ssnd_payload = (
+        struct.pack(">II", ssnd_offset, ssnd_block_size)
+        + (b"\x00" * ssnd_offset)
+        + pcm
+    )
     chunks.append((b"SSND", ssnd_payload))
     if include_id3 is not None:
         chunks.append((b"ID3 ", include_id3))
@@ -75,6 +79,41 @@ def write_pcm_aiff(
 
 
 class CdjSafeAiffTests(unittest.TestCase):
+    def test_ssnd_pcm_bytes_skips_offset_padding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "offset.aiff"
+            frames = 4
+            channels = 2
+            bits = 16
+            pcm = bytes(range(frames * channels * (bits // 8)))
+            pad = b"PAD!"
+            # Build by hand so pad bytes are distinct from PCM.
+            comm = struct.pack(">hIh", channels, frames, bits) + RATE_44100
+            ssnd = struct.pack(">II", len(pad), 0) + pad + pcm
+            body = b"COMM" + struct.pack(">I", len(comm)) + comm
+            body += b"SSND" + struct.pack(">I", len(ssnd)) + ssnd
+            form = b"AIFF" + body
+            path.write_bytes(b"FORM" + struct.pack(">I", len(form)) + form)
+            self.assertEqual(rb._ssnd_pcm_bytes(path), pcm)
+
+    def test_parse_rejects_ssnd_shorter_than_frames_after_offset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "short.aiff"
+            # COMM claims 8 frames * 2ch * 2bytes = 32 PCM bytes, but after
+            # a 16-byte offset only 16 bytes of sound data remain.
+            channels, bits, frames = 2, 16, 8
+            pad = b"\x00" * 16
+            short_pcm = b"\x00" * 16
+            comm = struct.pack(">hIh", channels, frames, bits) + RATE_44100
+            ssnd = struct.pack(">II", 16, 0) + pad + short_pcm
+            body = b"COMM" + struct.pack(">I", len(comm)) + comm
+            body += b"SSND" + struct.pack(">I", len(ssnd)) + ssnd
+            form = b"AIFF" + body
+            path.write_bytes(b"FORM" + struct.pack(">I", len(form)) + form)
+            with self.assertRaises(rb.CliError) as ctx:
+                rb._parse_aiff_audio(path)
+            self.assertIn("SSND payload shorter", str(ctx.exception))
+
     def test_safe_16_44100_and_24_48000_stereo(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -303,6 +342,45 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             )
             stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 1)
+
+    def test_convert_unique_extracts_cover_once_per_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "safe.aiff"
+            write_pcm_aiff(src)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            dest = root / "out.aiff"
+            plan_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=rb.encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = rb.Plan(
+                playlist_name="P",
+                wav_playlist_name="P [AIFF]",
+                wav_dir=root,
+                playlist_dir=root,
+                output=root / "o.xml",
+                tracks=[plan_item],
+                unique=[plan_item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+            )
+            with mock.patch.object(
+                rb, "extract_cover_jpeg", return_value=None
+            ) as cover:
+                stats = rb.convert_unique(plan, force=False)
+            self.assertEqual(stats.copied, 1)
+            self.assertEqual(cover.call_count, 1)
+            cover.assert_called_with(src)
 
     def test_aiff_24_48_dest_does_not_skip_when_effective_is_16_44100(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

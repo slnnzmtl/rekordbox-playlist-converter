@@ -40,26 +40,44 @@ def cached_preview_bit_depth(
     cache: dict,
     *,
     read=read_preview_bit_depth,
+    lock=None,
 ) -> int | None:
     """Return bit depth, reading the header only once per path+mtime+size."""
     key = _stat_cache_key(path)
     if key is None:
         return None
-    if key in cache:
-        return cache[key]
+    if lock is None:
+        if key in cache:
+            return cache[key]
+        bits = read(path)
+        cache[key] = bits
+        return bits
+    with lock:
+        if key in cache:
+            return cache[key]
     bits = read(path)
-    cache[key] = bits
-    return bits
+    with lock:
+        # Another worker may have filled it; prefer the first write.
+        if key not in cache:
+            cache[key] = bits
+        return cache[key]
 
 
 def peek_cached_preview_bit_depth(
-    path: Path, cache: dict
+    path: Path, cache: dict, *, lock=None
 ) -> tuple[bool, int | None]:
     """Return (hit, bits). Missing files and uncached paths are misses."""
     key = _stat_cache_key(path)
-    if key is None or key not in cache:
+    if key is None:
         return False, None
-    return True, cache[key]
+    if lock is None:
+        if key not in cache:
+            return False, None
+        return True, cache[key]
+    with lock:
+        if key not in cache:
+            return False, None
+        return True, cache[key]
 
 
 def _stat_cache_key(path: Path) -> tuple[str, int, int] | None:

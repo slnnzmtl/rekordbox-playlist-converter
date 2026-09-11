@@ -75,6 +75,11 @@ SUPPORTED_LOSSLESS_EXT = {".flac", ".aiff", ".aif", ".wav", ".wave", ".m4a", ".c
 WAV_EXT = {".wav", ".wave"}
 ALAC_EXT = {".m4a", ".caf"}
 
+FFPROBE_TIMEOUT_S = 60
+FFMPEG_SOXR_TIMEOUT_S = 15
+FFMPEG_CONVERT_TIMEOUT_S = 600
+FFMPEG_COVER_TIMEOUT_S = 30
+
 CODEC_BY_DEPTH = {
     16: "pcm_s16le",
     24: "pcm_s24le",
@@ -157,6 +162,17 @@ class Plan:
     output_format: str = "wav"
     max_bit_depth: int = 24
     max_sample_rate: int = 48000
+    cover_cache: dict[Path, bytes | None] = field(default_factory=dict)
+
+
+def cached_cover_jpeg(
+    source: Path,
+    cache: dict[Path, bytes | None],
+) -> bytes | None:
+    """Extract cover once per source path for the duration of a convert run."""
+    if source not in cache:
+        cache[source] = extract_cover_jpeg(source)
+    return cache[source]
 
 
 @dataclass
@@ -486,10 +502,20 @@ def run_ffprobe(path: Path) -> dict:
         str(path),
     ]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=FFPROBE_TIMEOUT_S,
+        )
     except FileNotFoundError as exc:
         raise CliError(
             "ffprobe not found on PATH (install with: brew install ffmpeg)"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CliError(
+            f"ffprobe timed out after {FFPROBE_TIMEOUT_S}s for {path}"
         ) from exc
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
@@ -659,6 +685,8 @@ def build_plan(
     output_format: str = "wav",
     max_bit_depth: int = 24,
     max_sample_rate: int = 48000,
+    on_progress: Callable[[int, int, str, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[Plan | None, list[str]]:
     if output_format not in ("wav", "aiff"):
         output_format = "wav"
@@ -730,6 +758,13 @@ def build_plan(
         unique_dest[dest_key] = item
         unique.append(item)
 
+    total = len(unique)
+    cover_cache: dict[Path, bytes | None] = {}
+    for i, item in enumerate(unique, 1):
+        if cancel_event is not None and cancel_event.is_set():
+            return None, []
+        if on_progress is not None:
+            on_progress(i, total, "prepare", item.dest_name)
         try:
             probe = run_ffprobe(item.source_path)
         except CliError as exc:
@@ -757,7 +792,7 @@ def build_plan(
         in_place = same_file(item.source_path, item.dest_path)
         if output_format == "aiff":
             if in_place:
-                cover = extract_cover_jpeg(item.source_path)
+                cover = cached_cover_jpeg(item.source_path, cover_cache)
                 if _is_canonical_aiff_output(
                     item.dest_path,
                     item.source_el,
@@ -798,6 +833,7 @@ def build_plan(
         output_format=output_format,
         max_bit_depth=max_bit_depth,
         max_sample_rate=max_sample_rate,
+        cover_cache=cover_cache,
     )
     if errors:
         return plan, errors
@@ -815,8 +851,9 @@ def ffmpeg_supports_soxr() -> bool:
             capture_output=True,
             text=True,
             check=False,
+            timeout=FFMPEG_SOXR_TIMEOUT_S,
         )
-    except FileNotFoundError:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
     text = (proc.stdout or "") + (proc.stderr or "")
     return "soxr" in text.lower()
@@ -884,10 +921,20 @@ def run_ffmpeg(
         ]
     )
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=FFMPEG_CONVERT_TIMEOUT_S,
+        )
     except FileNotFoundError as exc:
         raise CliError(
             "ffmpeg not found on PATH (install with: brew install ffmpeg)"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise CliError(
+            f"ffmpeg timed out after {FFMPEG_CONVERT_TIMEOUT_S}s for {source}"
         ) from exc
     if proc.returncode != 0:
         err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
@@ -943,10 +990,14 @@ def write_aiff_output(
     codec: str | None,
     bit_depth: int = 24,
     sample_rate: int = 48000,
+    cover_cache: dict[Path, bytes | None] | None = None,
 ) -> None:
     """Atomically write AIFF: PCM then ID3, validate, os.replace."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cover = extract_cover_jpeg(source)
+    if cover_cache is None:
+        cover = extract_cover_jpeg(source)
+    else:
+        cover = cached_cover_jpeg(source, cover_cache)
     fd, tmp_name = tempfile.mkstemp(
         dir=dest.parent, prefix=".aiff-", suffix=".tmp.aiff"
     )
@@ -1020,7 +1071,7 @@ def convert_unique(
                 stats.skipped += 1
                 continue
             if is_aiff:
-                cover = extract_cover_jpeg(item.source_path)
+                cover = cached_cover_jpeg(item.source_path, plan.cover_cache)
                 if not force and _is_canonical_aiff_output(
                     item.dest_path,
                     item.source_el,
@@ -1041,6 +1092,7 @@ def convert_unique(
                     codec=item.codec,
                     bit_depth=item.bit_depth,
                     sample_rate=item.sample_rate,
+                    cover_cache=plan.cover_cache,
                 )
                 if item.copy_wav:
                     stats.copied += 1
@@ -1335,6 +1387,8 @@ def prepare(
     max_bit_depth: int = 24,
     max_sample_rate: int = 48000,
     track_keys: Collection[str] | None = None,
+    on_progress: Callable[[int, int, str, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(require_tools())
@@ -1386,6 +1440,8 @@ def prepare(
         output_format=output_format,
         max_bit_depth=max_bit_depth,
         max_sample_rate=max_sample_rate,
+        on_progress=on_progress,
+        cancel_event=cancel_event,
     )
     errors.extend(plan_errors)
     return plan, errors
