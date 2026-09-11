@@ -114,6 +114,45 @@ class PlaylistXmlHelperTests(unittest.TestCase):
         self.assertEqual(entries[1][1], "Nested")
         self.assertEqual(rb.playlist_track_count(entries[1][2]), 2)
 
+        nodes = rb.iter_playlist_nodes(root)
+        self.assertEqual(
+            [(kind, folder, name) for kind, folder, name, _node in nodes],
+            [
+                ("playlist", "", "Top"),
+                ("folder", "", "Intelligent playlists"),
+                ("playlist", "Intelligent playlists", "Nested"),
+            ],
+        )
+        self.assertNotIn("ROOT", [name for _k, _f, name, _n in nodes])
+
+    def test_iter_playlist_nodes_includes_empty_folders(self) -> None:
+        xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="0"/>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="2">
+      <NODE Name="Empty" Type="0" Count="0"/>
+      <NODE Name="Has One" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        root = ET.fromstring(xml)
+        nodes = rb.iter_playlist_nodes(root)
+        self.assertEqual(
+            [(kind, folder, name) for kind, folder, name, _node in nodes],
+            [
+                ("folder", "", "Empty"),
+                ("playlist", "", "Has One"),
+            ],
+        )
+        leaves = rb.iter_playlists(root)
+        self.assertEqual([(f, n) for f, n, _ in leaves], [("", "Has One")])
+
     def test_resolve_playlist_disambiguates_same_leaf_name(self) -> None:
         xml = """\
 <?xml version="1.0" encoding="UTF-8"?>

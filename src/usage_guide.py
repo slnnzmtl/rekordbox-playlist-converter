@@ -36,8 +36,8 @@ export.
    iCloud). One match is loaded automatically; if several are found, pick from
    a short list. File → Search for Rekordbox XML… runs that search again even
    when a file is already loaded.
-2. Select one or more playlists (hold ⌃ to multi-select). Search filters the
-   list.
+2. Browse playlists in the folder tree (expand folders; hold ⌃ to multi-select).
+   Selecting a folder converts every playlist under it. Search filters the tree.
 3. Confirm output folder and Import XML. Defaults are ~/Documents/rekordbox-converted
    and ~/Documents/rekordbox-converted/rekordbox-import.xml when Documents access
    is allowed. If you decline that request, defaults are ~/rekordbox-converted and

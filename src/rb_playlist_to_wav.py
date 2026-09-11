@@ -55,6 +55,7 @@ from rekordbox_xml import (
     discover_xml_candidates,
     encode_location,
     find_playlists_by_name,
+    iter_playlist_nodes,
     iter_playlists,
     load_dj_playlists,
     parse_playlist_selection,

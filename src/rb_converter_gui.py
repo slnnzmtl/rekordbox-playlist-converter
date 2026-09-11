@@ -174,10 +174,10 @@ class ConverterApp:
         self._progress_target = 0.0
         self._progress_anim_id: str | None = None
         self._documents_accessible = False
-        # (folder, name, display label) for every playlist in the XML
-        self._playlist_entries: list[tuple[str, str, str]] = []
-        # Currently visible rows after search filter
-        self._visible_entries: list[tuple[str, str, str]] = []
+        # (kind, folder, name, track_count) for every node in the XML walk
+        self._playlist_entries: list[tuple[str, str, str, int]] = []
+        # iid -> (kind, folder, name) for rows currently in the tree
+        self._playlist_iids: dict[str, tuple[str, str, str]] = {}
 
         self._build()
         self.search_var.trace_add("write", lambda *_: self._apply_playlist_filter())
@@ -381,14 +381,17 @@ class ConverterApp:
         list_frame.grid(row=3, column=0, columnspan=3, sticky="nsew", **pad)
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
-        self.playlist_list = tk.Listbox(
-            list_frame, selectmode=tk.EXTENDED, exportselection=False, height=12
+        self.playlist_tree = ttk.Treeview(
+            list_frame,
+            show="tree",
+            selectmode="extended",
+            height=12,
         )
         scroll = ttk.Scrollbar(
-            list_frame, orient=tk.VERTICAL, command=self.playlist_list.yview
+            list_frame, orient=tk.VERTICAL, command=self.playlist_tree.yview
         )
-        self.playlist_list.configure(yscrollcommand=scroll.set)
-        self.playlist_list.grid(row=0, column=0, sticky="nsew")
+        self.playlist_tree.configure(yscrollcommand=scroll.set)
+        self.playlist_tree.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
 
         ttk.Label(frm, text="Output folder").grid(row=4, column=0, sticky="w", **pad)
@@ -652,9 +655,9 @@ class ConverterApp:
             self._persist_output_preferences()
 
     def _load_playlists(self) -> None:
-        self.playlist_list.delete(0, tk.END)
+        self.playlist_tree.delete(*self.playlist_tree.get_children())
         self._playlist_entries = []
-        self._visible_entries = []
+        self._playlist_iids = {}
         xml_s = self.xml_var.get().strip()
         if not xml_s:
             return
@@ -667,16 +670,17 @@ class ConverterApp:
         except rb.CliError as exc:
             self.status_var.set(str(exc))
             return
-        entries = rb.iter_playlists(root)
-        for folder, name, node in entries:
-            count = rb.playlist_track_count(node)
-            label = rb.playlist_label(folder, name)
-            display = f"{label} ({count} tracks)"
-            self._playlist_entries.append((folder, name, display))
+        nodes = rb.iter_playlist_nodes(root)
+        for kind, folder, name, node in nodes:
+            count = rb.playlist_track_count(node) if kind == "playlist" else 0
+            self._playlist_entries.append((kind, folder, name, count))
         self._show_search_placeholder()
         self._apply_playlist_filter()
-        if entries:
-            self.status_var.set(f"Loaded {len(entries)} playlist(s). Select and Convert.")
+        playlist_count = sum(1 for kind, *_rest in self._playlist_entries if kind == "playlist")
+        if playlist_count:
+            self.status_var.set(
+                f"Loaded {playlist_count} playlist(s). Select and Convert."
+            )
         else:
             self.status_var.set("No playlists found in XML.")
 
@@ -702,23 +706,87 @@ class ConverterApp:
             return ""
         return self.search_var.get().strip()
 
+    @staticmethod
+    def _playlist_iid(kind: str, folder: str, name: str) -> str:
+        return f"{kind}:{rb.playlist_label(folder, name)}"
+
+    @staticmethod
+    def _playlist_row_text(kind: str, name: str, count: int) -> str:
+        if kind == "folder":
+            return name
+        return f"{name} ({count} tracks)"
+
     def _apply_playlist_filter(self) -> None:
         query = self._search_query().casefold()
-        self.playlist_list.delete(0, tk.END)
+        self.playlist_tree.delete(*self.playlist_tree.get_children())
+        self._playlist_iids = {}
+
         if query:
-            self._visible_entries = [
+            keep: set[tuple[str, str, str]] = set()
+            for kind, folder, name, count in self._playlist_entries:
+                if kind != "playlist":
+                    continue
+                label = rb.playlist_label(folder, name)
+                display = f"{label} ({count} tracks)"
+                haystack = f"{name} {label} {display}".casefold()
+                if query not in haystack:
+                    continue
+                keep.add((kind, folder, name))
+                # Ancestor folders for the matched playlist path.
+                parts = [p for p in folder.split(" / ") if p] if folder else []
+                for i in range(len(parts)):
+                    anc_folder = " / ".join(parts[:i]) if i else ""
+                    keep.add(("folder", anc_folder, parts[i]))
+            visible = [
                 entry
                 for entry in self._playlist_entries
-                if query in entry[2].casefold()
+                if (entry[0], entry[1], entry[2]) in keep
             ]
         else:
-            self._visible_entries = list(self._playlist_entries)
-        for _folder, _name, display in self._visible_entries:
-            self.playlist_list.insert(tk.END, display)
+            visible = list(self._playlist_entries)
+
+        # Parent folder iid for a row: folder path maps to the folder node's iid.
+        folder_iid_by_path: dict[str, str] = {"": ""}
+        for kind, folder, name, count in visible:
+            iid = self._playlist_iid(kind, folder, name)
+            parent_path = folder
+            parent_iid = folder_iid_by_path.get(parent_path, "")
+            text = self._playlist_row_text(kind, name, count)
+            self.playlist_tree.insert(parent_iid, tk.END, iid=iid, text=text, open=False)
+            self._playlist_iids[iid] = (kind, folder, name)
+            if kind == "folder":
+                child_path = rb.playlist_label(folder, name)
+                folder_iid_by_path[child_path] = iid
+
+        if query:
+            for iid, (kind, _folder, _name) in self._playlist_iids.items():
+                if kind == "folder":
+                    self.playlist_tree.item(iid, open=True)
 
     def _selected_playlists(self) -> list[tuple[str, str]]:
-        indices = self.playlist_list.curselection()
-        chosen = [(self._visible_entries[i][0], self._visible_entries[i][1]) for i in indices]
+        chosen: list[tuple[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+
+        def add_playlist(folder: str, name: str) -> None:
+            entry = (folder, name)
+            if entry not in seen:
+                seen.add(entry)
+                chosen.append(entry)
+
+        def collect_from_iid(iid: str) -> None:
+            meta = self._playlist_iids.get(iid)
+            if meta is None:
+                return
+            kind, folder, name = meta
+            if kind == "playlist":
+                add_playlist(folder, name)
+                return
+            for child in self.playlist_tree.get_children(iid):
+                collect_from_iid(child)
+
+        for iid in self.playlist_tree.selection():
+            collect_from_iid(iid)
+
         names = [name for _folder, name in chosen]
         # Same output playlist name `{name} [WAV]` — refuse converting two at once.
         dupes = {n for n in names if names.count(n) > 1}
@@ -727,13 +795,7 @@ class ConverterApp:
             raise rb.CliError(
                 f"cannot select multiple playlists with the same name: {listed}"
             )
-        seen: set[tuple[str, str]] = set()
-        unique: list[tuple[str, str]] = []
-        for entry in chosen:
-            if entry not in seen:
-                seen.add(entry)
-                unique.append(entry)
-        return unique
+        return chosen
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
