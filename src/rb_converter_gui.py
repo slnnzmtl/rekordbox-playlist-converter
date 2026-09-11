@@ -1468,140 +1468,156 @@ class ConverterApp:
         self._cancel_event.clear()
         self.status_var.set("Preparing…")
 
-        def worker() -> None:
-            try:
-                summaries: list[str] = []
-                skipped: list[str] = []
-                all_stats: list[rb.ConvertStats] = []
-                playlist_dirs: list[Path] = []
-                plans: list[rb.Plan] = []
-                for i, (folder, name) in enumerate(selected):
-                    if self._cancel_event.is_set():
-                        self._ui(self._finish_cancelled)
-                        return
-                    label = f"{name} ({i + 1}/{len(selected)})"
-                    self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
+        self._convert_selected = selected
+        self._convert_keys_by_playlist = keys_by_playlist
+        self._convert_wav_dir = wav_dir
+        self._convert_output = output
+        self._convert_output_format = output_format
+        self._convert_max_bit_depth = max_bit_depth
+        self._convert_max_sample_rate = max_sample_rate
+        self._convert_xml_path = xml_path
+        threading.Thread(target=self._convert_worker, daemon=True).start()
 
-                    def prepare_tick(
-                        current: int,
-                        total: int,
-                        action: str,
-                        track_name: str,
-                    ) -> None:
-                        self._ui(
-                            lambda c=current, t=total, a=action, n=track_name: self._set_progress(
-                                c, t, action=a, name=n
-                            )
-                        )
+    def _convert_worker(self) -> None:
+        selected = self._convert_selected
+        keys_by_playlist = self._convert_keys_by_playlist
+        wav_dir = self._convert_wav_dir
+        output = self._convert_output
+        output_format = self._convert_output_format
+        max_bit_depth = self._convert_max_bit_depth
+        max_sample_rate = self._convert_max_sample_rate
+        xml_path = self._convert_xml_path
+        try:
+            summaries: list[str] = []
+            skipped: list[str] = []
+            all_stats: list[rb.ConvertStats] = []
+            playlist_dirs: list[Path] = []
+            plans: list[rb.Plan] = []
+            for i, (folder, name) in enumerate(selected):
+                if self._cancel_event.is_set():
+                    self._ui(self._finish_cancelled)
+                    return
+                label = f"{name} ({i + 1}/{len(selected)})"
+                self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
 
-                    plan, errors = rb.prepare(
-                        xml_path,
-                        name,
-                        wav_dir,
-                        output,
-                        playlist_folder=folder,
-                        output_format=output_format,
-                        max_bit_depth=max_bit_depth,
-                        max_sample_rate=max_sample_rate,
-                        track_keys=keys_by_playlist[(folder, name)],
-                        on_progress=prepare_tick,
-                        cancel_event=self._cancel_event,
-                    )
-                    if self._cancel_event.is_set():
-                        self._ui(self._finish_cancelled)
-                        return
-                    if errors:
-                        msg = "\n".join(errors)
-                        self._ui(lambda m=msg: self._finish_error(m))
-                        return
-                    assert plan is not None
-                    plans.append(plan)
-                    skipped.extend(plan.warnings)
-                    playlist_dirs.append(plan.playlist_dir)
-
-                rb.share_output_root(plans)
-                total = sum(len(plan.unique) for plan in plans)
-                done_base = 0
-
-                def on_progress(
+                def prepare_tick(
                     current: int,
-                    _plan_total: int,
+                    total: int,
                     action: str,
                     track_name: str,
-                    base: int = 0,
                 ) -> None:
-                    overall = base + current
                     self._ui(
-                        lambda o=overall, t=total, a=action, n=track_name: self._set_progress(
-                            o, t, action=a, name=n
+                        lambda c=current, t=total, a=action, n=track_name: self._set_progress(
+                            c, t, action=a, name=n
                         )
                     )
 
-                for plan in plans:
-                    if self._cancel_event.is_set():
-                        self._ui(self._finish_cancelled)
-                        return
-                    base = done_base
+                plan, errors = rb.prepare(
+                    xml_path,
+                    name,
+                    wav_dir,
+                    output,
+                    playlist_folder=folder,
+                    output_format=output_format,
+                    max_bit_depth=max_bit_depth,
+                    max_sample_rate=max_sample_rate,
+                    track_keys=keys_by_playlist[(folder, name)],
+                    on_progress=prepare_tick,
+                    cancel_event=self._cancel_event,
+                )
+                if self._cancel_event.is_set():
+                    self._ui(self._finish_cancelled)
+                    return
+                if errors:
+                    msg = "\n".join(errors)
+                    self._ui(lambda m=msg: self._finish_error(m))
+                    return
+                assert plan is not None
+                plans.append(plan)
+                skipped.extend(plan.warnings)
+                playlist_dirs.append(plan.playlist_dir)
 
-                    def tick(
-                        current: int,
-                        plan_total: int,
-                        action: str,
-                        track_name: str,
-                        b: int = base,
-                    ) -> None:
-                        on_progress(current, plan_total, action, track_name, base=b)
+            rb.share_output_root(plans)
+            total = sum(len(plan.unique) for plan in plans)
+            done_base = 0
 
-                    stats = rb.convert_unique(
-                        plan,
-                        force=False,
-                        progress=False,
-                        on_progress=tick,
-                        cancel_event=self._cancel_event,
+            def on_progress(
+                current: int,
+                _plan_total: int,
+                action: str,
+                track_name: str,
+                base: int = 0,
+            ) -> None:
+                overall = base + current
+                self._ui(
+                    lambda o=overall, t=total, a=action, n=track_name: self._set_progress(
+                        o, t, action=a, name=n
                     )
-                    all_stats.append(stats)
-                    done_base += len(plan.unique)
-                    if self._cancel_event.is_set():
-                        self._ui(self._finish_cancelled)
-                        return
-                    stats.appended = rb.apply_xml(plan)
-                    rb.atomic_write_xml(plan.output_root, plan.output)
-                    parts = []
-                    if stats.converted:
-                        parts.append(f"{stats.converted} converted")
-                    if stats.copied:
-                        parts.append(f"{stats.copied} copied")
-                    if stats.skipped:
-                        parts.append(f"{stats.skipped} skipped")
-                    if stats.appended:
-                        parts.append(f"+{stats.appended} playlist entries")
-                    if plan.warnings:
-                        parts.append(f"{len(plan.warnings)} missing skipped")
-                    detail = ", ".join(parts) if parts else "done"
-                    summaries.append(f"{plan.wav_playlist_name}: {detail}")
+                )
 
-                if total == 0:
-                    self._ui(lambda: self._set_progress(0, 0))
-                else:
-                    self._ui(lambda t=total: self._set_progress(t, t))
-                open_dir = playlist_dirs[0] if len(playlist_dirs) == 1 else wav_dir
-                out = str(output)
-                if total_successful_conversions(all_stats) == 0:
-                    self._ui(
-                        lambda s=summaries, w=skipped: self._finish_no_conversions(s, w)
-                    )
-                else:
-                    self._ui(
-                        lambda s=summaries, o=out, w=skipped, d=open_dir: self._finish_ok(
-                            s, o, w, d
-                        )
-                    )
-            except rb.CliError as exc:
-                self._ui(lambda e=str(exc): self._finish_error(e))
-            except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
-                self._ui(lambda e=str(exc): self._finish_error(e))
+            for plan in plans:
+                if self._cancel_event.is_set():
+                    self._ui(self._finish_cancelled)
+                    return
+                base = done_base
 
-        threading.Thread(target=worker, daemon=True).start()
+                def tick(
+                    current: int,
+                    plan_total: int,
+                    action: str,
+                    track_name: str,
+                    b: int = base,
+                ) -> None:
+                    on_progress(current, plan_total, action, track_name, base=b)
+
+                stats = rb.convert_unique(
+                    plan,
+                    force=False,
+                    progress=False,
+                    on_progress=tick,
+                    cancel_event=self._cancel_event,
+                )
+                all_stats.append(stats)
+                done_base += len(plan.unique)
+                if self._cancel_event.is_set():
+                    self._ui(self._finish_cancelled)
+                    return
+                stats.appended = rb.apply_xml(plan)
+                rb.atomic_write_xml(plan.output_root, plan.output)
+                parts = []
+                if stats.converted:
+                    parts.append(f"{stats.converted} converted")
+                if stats.copied:
+                    parts.append(f"{stats.copied} copied")
+                if stats.skipped:
+                    parts.append(f"{stats.skipped} skipped")
+                if stats.appended:
+                    parts.append(f"+{stats.appended} playlist entries")
+                if plan.warnings:
+                    parts.append(f"{len(plan.warnings)} missing skipped")
+                detail = ", ".join(parts) if parts else "done"
+                summaries.append(f"{plan.wav_playlist_name}: {detail}")
+
+            if total == 0:
+                self._ui(lambda: self._set_progress(0, 0))
+            else:
+                self._ui(lambda t=total: self._set_progress(t, t))
+            open_dir = playlist_dirs[0] if len(playlist_dirs) == 1 else wav_dir
+            out = str(output)
+            if total_successful_conversions(all_stats) == 0:
+                self._ui(
+                    lambda s=summaries, w=skipped: self._finish_no_conversions(s, w)
+                )
+            else:
+                self._ui(
+                    lambda s=summaries, o=out, w=skipped, d=open_dir: self._finish_ok(
+                        s, o, w, d
+                    )
+                )
+        except rb.CliError as exc:
+            self._ui(lambda e=str(exc): self._finish_error(e))
+        except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
+            self._ui(lambda e=str(exc): self._finish_error(e))
 
     def _finish_cancelled(self) -> None:
         self._set_busy(False)

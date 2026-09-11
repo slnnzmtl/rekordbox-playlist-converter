@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 
+import ffmpeg_tools
 from cdj_wav import CDJ_SAFE_CHANNELS
 from cli_error import CliError
 
@@ -374,10 +375,7 @@ def write_aiff_id3(
 
 def extract_cover_jpeg(source: Path, *, max_side: int = 600) -> bytes | None:
     """Extract attached picture as JPEG ≤ max_side; None if absent."""
-    # Late import: tool_path lives on the facade; avoid import cycle at load time.
-    from rb_playlist_to_wav import FFMPEG_COVER_TIMEOUT_S, tool_path
-
-    exe = tool_path("ffmpeg")
+    exe = ffmpeg_tools.tool_path("ffmpeg")
     if exe is None:
         return None
     with tempfile.TemporaryDirectory() as tmp:
@@ -400,7 +398,7 @@ def extract_cover_jpeg(source: Path, *, max_side: int = 600) -> bytes | None:
                 capture_output=True,
                 text=True,
                 check=False,
-                timeout=FFMPEG_COVER_TIMEOUT_S,
+                timeout=ffmpeg_tools.FFMPEG_COVER_TIMEOUT_S,
             )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return None
