@@ -103,7 +103,7 @@ class GuiPreferencesStartupTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
-    def test_startup_searches_when_saved_source_xml_missing(self) -> None:
+    def test_startup_skips_xml_search_when_saved_source_xml_file_missing(self) -> None:
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
@@ -123,12 +123,107 @@ class GuiPreferencesStartupTests(unittest.TestCase):
             ), patch(
                 "rb_converter_gui.find_rekordbox_xml_via_child",
                 return_value=[found],
+            ) as finder, patch(
+                "rb_converter_gui.probe_path_via_child", return_value=False
             ), patch.object(ConverterApp, "_load_playlists"):
                 root = tk.Tk()
                 root.withdraw()
+                app = ConverterApp(root)
+                app._probe_documents_after_idle()
+            finder.assert_not_called()
+            self.assertEqual(app.xml_var.get(), "")
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_startup_skips_documents_source_xml_until_access_granted(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tempfile
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp) / "Documents" / "Rekordbox-collection.xml"
+                source.parent.mkdir(parents=True)
+                source.write_text(
+                    '<?xml version="1.0"?><DJ_PLAYLISTS Version="1.0.0">'
+                    "<PRODUCT Name='x' Version='1' Company='x'/>"
+                    "<COLLECTION Entries='0'/>"
+                    "<PLAYLISTS><NODE Type='0' Name='ROOT' Count='0'/></PLAYLISTS>"
+                    "</DJ_PLAYLISTS>",
+                    encoding="utf-8",
+                )
+
+                with patch(
+                    "rb_converter_gui.check_for_update",
+                    return_value=UpdateCheckResult(kind="up_to_date"),
+                ), patch(
+                    "rb_converter_gui.load_preferences",
+                    return_value={"source_xml": str(source)},
+                ), patch(
+                    "rb_converter_gui.rb.path_is_under_documents",
+                    return_value=True,
+                ), patch(
+                    "rb_converter_gui.find_rekordbox_xml_via_child",
+                    return_value=[],
+                ), patch.object(ConverterApp, "_load_playlists") as load_playlists:
+                    root = tk.Tk()
+                    root.withdraw()
+                    app = ConverterApp(root, documents_accessible=False)
+                    self.assertFalse(app.xml_var.get().strip())
+                    load_playlists.assert_not_called()
+                    app._apply_documents_access(True)
+                    self.assertEqual(Path(app.xml_var.get()), source)
+                    load_playlists.assert_called()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_startup_skips_xml_search_when_source_xml_already_saved(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        saved = Path("/tmp/Documents/rekordbox/Playlists/rekordbox-7-collection.xml")
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch(
+                "rb_converter_gui.load_preferences",
+                return_value={"source_xml": str(saved)},
+            ), patch(
+                "rb_converter_gui.rb.path_is_under_documents",
+                return_value=True,
+            ), patch(
+                "rb_converter_gui.find_rekordbox_xml_via_child",
+                return_value=[
+                    saved,
+                    Path("/tmp/Documents/rekordbox/rekordbox-7-collection.xml"),
+                ],
+            ) as finder, patch.object(ConverterApp, "_load_playlists"):
+                root = tk.Tk()
+                root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
-                app._apply_xml_search_hits([found])
-            self.assertEqual(app.xml_var.get(), str(found))
+                app._probe_documents_after_idle()
+                finder.assert_not_called()
+                dialogs = [
+                    child
+                    for child in root.winfo_children()
+                    if isinstance(child, tk.Toplevel)
+                ]
+                self.assertEqual(dialogs, [])
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -246,11 +341,8 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 app = ConverterApp(root, documents_accessible=False)
                 app._apply_xml_search_hits([xml_path])
             self.assertFalse(app.documents_accessible)
-            self.assertEqual(app.xml_var.get(), str(xml_path))
-            save_prefs.assert_called()
-            self.assertEqual(
-                save_prefs.call_args.kwargs.get("source_xml"), xml_path
-            )
+            self.assertEqual(Path(app.xml_var.get()), xml_path)
+            save_prefs.assert_not_called()
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -425,9 +517,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 kwargs = save_prefs.call_args.kwargs
                 self.assertEqual(args[0], Path("/tmp/chosen-wav"))
                 self.assertEqual(args[1], Path("/tmp/chosen-import.xml"))
-                self.assertEqual(
-                    kwargs.get("source_xml"), Path("/tmp/source-rekordbox.xml")
-                )
+                self.assertIsNone(kwargs.get("source_xml"))
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -540,7 +630,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 kwargs = save_prefs.call_args.kwargs
                 self.assertEqual(args[0], Path("/tmp/typed-wav"))
                 self.assertEqual(args[1], Path("/tmp/typed-import.xml"))
-                self.assertEqual(kwargs.get("source_xml"), Path("/tmp/test.xml"))
+                self.assertIsNone(kwargs.get("source_xml"))
                 self.assertEqual(kwargs.get("output_format"), "aiff")
                 self.assertEqual(kwargs.get("bit_depth"), "24")
                 self.assertEqual(kwargs.get("sample_rate"), "48000")
@@ -734,6 +824,37 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
                 self.assertEqual(
                     kwargs["initialdir"], str(Path.home() / "Documents")
                 )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_browse_xml_uses_last_xml_parent_as_initialdir(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        expected_dir = Path("/tmp/saved-exports")
+        last_xml = expected_dir / "Rekordbox-collection.xml"
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
+            ), patch("rb_converter_gui.filedialog.askopenfilename") as ask_open:
+                ask_open.return_value = ""
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app.xml_var.set(str(last_xml))
+                app._browse_xml()
+                kwargs = ask_open.call_args.kwargs
+                self.assertEqual(Path(kwargs["initialdir"]), expected_dir)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

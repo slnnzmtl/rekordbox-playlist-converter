@@ -183,6 +183,9 @@ class ConverterApp:
         self.search_var.trace_add("write", lambda *_: self._apply_playlist_filter())
         if not self.search_var.get():
             self._show_search_placeholder()
+        # Prefs key, not xml_var: skip first-launch search even if Documents
+        # restore has not filled the field yet.
+        self._has_saved_source_xml = bool(saved_prefs.get("source_xml", "").strip())
         self._restore_saved_source_xml(saved_prefs)
         if documents_accessible is None:
             # Never list Documents in this process during init: macOS TCC
@@ -198,18 +201,18 @@ class ConverterApp:
         if not raw:
             return
         candidate = Path(raw).expanduser()
+        if not self._documents_accessible and rb.path_is_under_documents(candidate):
+            return
         try:
             if not candidate.is_file():
                 return
         except OSError:
             return
-        self._adopt_source_xml(candidate, persist=False)
+        self._adopt_source_xml(candidate)
 
-    def _adopt_source_xml(self, path: Path, *, persist: bool) -> None:
+    def _adopt_source_xml(self, path: Path) -> None:
         self.xml_var.set(str(path))
         self._load_playlists()
-        if persist:
-            self._persist_output_preferences()
 
     @property
     def documents_accessible(self) -> bool:
@@ -217,18 +220,20 @@ class ConverterApp:
 
     def _start_documents_probe(self) -> None:
         def worker() -> None:
-            # Search known filenames first so a dismissed Documents listing
-            # prompt cannot block XML autoload.
-            hits = find_rekordbox_xml_via_child(Path.home())
-            self._ui(lambda paths=hits: self._apply_xml_search_hits(paths))
+            if not self._has_saved_source_xml:
+                # Search known filenames first so a dismissed Documents listing
+                # prompt cannot block XML autoload on first launch.
+                hits = find_rekordbox_xml_via_child(Path.home())
+                self._ui(lambda paths=hits: self._apply_xml_search_hits(paths))
             accessible = probe_path_via_child(Path.home() / "Documents")
             self._ui(lambda a=accessible: self._apply_documents_access(a))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _probe_documents_after_idle(self) -> None:
-        hits = find_rekordbox_xml_via_child(Path.home())
-        self._apply_xml_search_hits(hits)
+        if not self._has_saved_source_xml:
+            hits = find_rekordbox_xml_via_child(Path.home())
+            self._apply_xml_search_hits(hits)
         accessible = probe_path_via_child(Path.home() / "Documents")
         self._apply_documents_access(accessible)
 
@@ -236,7 +241,7 @@ class ConverterApp:
         if self.xml_var.get().strip():
             return
         if len(paths) == 1:
-            self._adopt_source_xml(paths[0], persist=True)
+            self._adopt_source_xml(paths[0])
         elif len(paths) >= 2:
             self._show_xml_choice_modal(paths)
 
@@ -284,7 +289,8 @@ class ConverterApp:
             if not selection:
                 return
             chosen = paths[int(selection[0])]
-            self._adopt_source_xml(chosen, persist=True)
+            self._adopt_source_xml(chosen)
+            self._persist_output_preferences(include_source_xml=True)
             close()
 
         ttk.Button(btns, text="Cancel", command=close).pack(side=tk.LEFT, padx=(0, 8))
@@ -306,15 +312,18 @@ class ConverterApp:
             accessible = override
         self._documents_accessible = accessible
         if accessible:
+            saved = load_preferences()
             docs_wav, docs_xml = default_output_paths(documents_accessible=True)
             startup_wav, startup_output = resolve_startup_paths(
-                load_preferences(),
+                saved,
                 default_wav_dir=docs_wav,
                 default_import_xml=docs_xml,
                 documents_accessible=True,
             )
             self.wav_dir_var.set(str(startup_wav))
             self.output_var.set(str(startup_output))
+            if not self.xml_var.get().strip():
+                self._restore_saved_source_xml(saved)
 
     def _apply_window_icon(self) -> tk.PhotoImage | None:
         path = app_window_icon_path()
@@ -535,10 +544,12 @@ class ConverterApp:
             output = Path.home() / output
         return wav_dir, output
 
-    def _persist_output_preferences(self) -> None:
+    def _persist_output_preferences(self, *, include_source_xml: bool = False) -> None:
         wav_dir, output = self._resolved_output_paths()
-        source_s = self.xml_var.get().strip()
-        source_xml = Path(source_s).expanduser() if source_s else None
+        source_xml = None
+        if include_source_xml:
+            source_s = self.xml_var.get().strip()
+            source_xml = Path(source_s).expanduser() if source_s else None
         fmt = self.format_var.get().strip().lower()
         if fmt not in ("wav", "aiff"):
             fmt = "wav"
@@ -575,13 +586,16 @@ class ConverterApp:
         return str(Path.home())
 
     def _browse_xml(self) -> None:
+        current = self.xml_var.get().strip()
+        preferred = Path(current).expanduser().parent if current else None
         path = filedialog.askopenfilename(
             title="Rekordbox XML export",
-            initialdir=self._browse_initial_dir(Path.home() / "Documents"),
+            initialdir=self._browse_initial_dir(preferred),
             filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
         )
         if path:
-            self._adopt_source_xml(Path(path), persist=True)
+            self._adopt_source_xml(Path(path))
+            self._persist_output_preferences(include_source_xml=True)
 
     def _refresh_xml(self) -> None:
         if self._busy:

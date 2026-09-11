@@ -304,6 +304,10 @@ def save_preferences(
     }
     if source_xml is not None:
         payload["source_xml"] = str(source_xml.expanduser().resolve())
+    else:
+        existing = load_preferences(config_path=path).get("source_xml")
+        if existing:
+            payload["source_xml"] = existing
     if output_format is not None and output_format in ("wav", "aiff"):
         payload["output_format"] = output_format
     if bit_depth is not None:

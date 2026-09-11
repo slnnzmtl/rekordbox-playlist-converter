@@ -75,7 +75,7 @@ class LoadPreferencesTests(unittest.TestCase):
             self.assertNotIn("bit_depth", loaded)
             self.assertNotIn("sample_rate", loaded)
 
-    def test_save_without_source_xml_still_loads_wav_and_import(self) -> None:
+    def test_save_without_source_xml_preserves_existing_source_xml(self) -> None:
         from gui_preferences import load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -88,11 +88,14 @@ class LoadPreferencesTests(unittest.TestCase):
             save_preferences(
                 wav_dir, import_xml, source_xml=source_xml, config_path=config
             )
-            save_preferences(wav_dir, import_xml, config_path=config)
+            new_wav = Path(tmp) / "wav-out-2"
+            new_wav.mkdir()
+            new_import = new_wav / "import.xml"
+            save_preferences(new_wav, new_import, config_path=config)
             loaded = load_preferences(config_path=config)
-            self.assertEqual(loaded["wav_dir"], str(wav_dir.resolve()))
-            self.assertEqual(loaded["import_xml"], str(import_xml.resolve()))
-            self.assertNotIn("source_xml", loaded)
+            self.assertEqual(loaded["wav_dir"], str(new_wav.resolve()))
+            self.assertEqual(loaded["import_xml"], str(new_import.resolve()))
+            self.assertEqual(Path(loaded["source_xml"]), source_xml.resolve())
 
     def test_load_preferences_tolerates_corrupt_json(self) -> None:
         from gui_preferences import load_preferences
