@@ -58,6 +58,33 @@ DUP_NAME_XML = """\
 </DJ_PLAYLISTS>
 """
 
+TRACKLIST_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="3">
+    <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
+           Location="file://localhost/Users/me/music/Bestial.flac" Kind="FLAC File"/>
+    <TRACK TrackID="2" Name="Revelation" Artist="Shogan"
+           Location="file://localhost/Users/me/music/Revelation.aiff" Kind="AIFF File"/>
+    <TRACK TrackID="3" Name="NoLoc" Artist="Ghost" Kind="WAV File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="2">
+      <NODE Name="Dark forest" Type="1" KeyType="0" Entries="3">
+        <TRACK Key="1"/>
+        <TRACK Key="2"/>
+        <TRACK Key="999"/>
+      </NODE>
+      <NODE Name="Morning" Type="1" KeyType="0" Entries="2">
+        <TRACK Key="1"/>
+        <TRACK Key="3"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+
 
 def _tk_available() -> bool:
     try:
@@ -193,6 +220,13 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 one = tree.get_children("")[0]
                 two = tree.get_children("")[1]
                 tree.selection_set(tree.get_children(one)[0], tree.get_children(two)[0])
+                tree.event_generate("<<TreeviewSelect>>")
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                self.assertEqual(
+                    [preview.item(g, "text") for g in groups],
+                    ["Same (1 tracks)", "Same (1 tracks)"],
+                )
                 with self.assertRaises(rb.CliError) as ctx:
                     app._selected_playlists()
                 self.assertIn("same name", str(ctx.exception))
@@ -228,6 +262,59 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     app._selected_playlists(),
                     [("Intelligent playlists", "Nested")],
                 )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_tracklist_preview_shows_rows_unique_total_and_empty(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark, morning = tree.get_children("")
+                tree.selection_set(dark)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                self.assertEqual(preview.item(groups[0], "text"), "Dark forest (3 tracks)")
+                self.assertEqual(
+                    [preview.item(r, "text") for r in preview.get_children(groups[0])],
+                    [
+                        "ABSL - Bestial.flac",
+                        "Shogan - Revelation.aiff",
+                        "(missing track)",
+                    ],
+                )
+                self.assertEqual(
+                    app.tracklist_total_var.get(),
+                    "3 unique tracks from 1 playlist",
+                )
+
+                tree.selection_set(dark, morning)
+                tree.event_generate("<<TreeviewSelect>>")
+                self.assertEqual(
+                    [preview.item(g, "text") for g in preview.get_children("")],
+                    ["Dark forest (3 tracks)", "Morning (2 tracks)"],
+                )
+                self.assertEqual(
+                    app.tracklist_total_var.get(),
+                    "4 unique tracks from 2 playlists",
+                )
+
+                tree.selection_set()
+                tree.event_generate("<<TreeviewSelect>>")
+                self.assertEqual(preview.get_children(""), ())
+                self.assertEqual(app.tracklist_total_var.get(), "No tracks selected")
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

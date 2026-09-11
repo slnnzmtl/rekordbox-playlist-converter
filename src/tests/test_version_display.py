@@ -23,7 +23,7 @@ class VersionDisplayTests(unittest.TestCase):
         spec = (_REPO / "rb_converter.spec").read_text()
         self.assertIn(f'"CFBundleShortVersionString": "{__version__}"', spec)
 
-    def test_gui_shows_version_below_title(self) -> None:
+    def test_gui_shows_version_in_window_title(self) -> None:
         try:
             import _tkinter  # noqa: F401
         except ImportError:
@@ -40,12 +40,11 @@ class VersionDisplayTests(unittest.TestCase):
             ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
                 root = tk.Tk()
                 root.withdraw()
-                app = ConverterApp(root, documents_accessible=False)
-            self.assertEqual(app.title_label.cget("text"), "Rekordbox Playlist Converter")
-            self.assertEqual(app.version_label.cget("text"), __version__)
-            title_row = int(app.title_label.grid_info()["row"])
-            version_row = int(app.version_label.grid_info()["row"])
-            self.assertGreater(version_row, title_row)
+                ConverterApp(root, documents_accessible=False)
+            self.assertEqual(
+                root.title(),
+                f"Rekordbox Playlist Converter {__version__}",
+            )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

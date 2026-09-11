@@ -54,6 +54,7 @@ BIT_DEPTH_LABELS = {"16": "16Bit", "24": "24Bit"}
 SAMPLE_RATE_LABELS = {"44100": "44.1KHz", "48000": "48KHz"}
 BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items()}
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
+ACTION_BUTTON_WIDTH = 9
 
 
 class _HoverTooltip:
@@ -135,7 +136,7 @@ class ConverterApp:
         documents_accessible: bool | None = None,
     ) -> None:
         self.root = root
-        root.title("Rekordbox Playlist Converter")
+        root.title(f"Rekordbox Playlist Converter {__version__}")
         root.minsize(560, 480)
         root.geometry("1120x720")
         self.logo_image = self._apply_window_icon()
@@ -167,6 +168,7 @@ class ConverterApp:
         self.sample_rate_var = tk.StringVar(value=saved_rate)
         self.search_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
+        self.tracklist_total_var = tk.StringVar(value="")
         self._busy = False
         self._search_showing_placeholder = False
         self._usage_window: tk.Toplevel | None = None
@@ -174,8 +176,9 @@ class ConverterApp:
         self._progress_target = 0.0
         self._progress_anim_id: str | None = None
         self._documents_accessible = False
-        # (kind, folder, name, track_count) for every node in the XML walk
-        self._playlist_entries: list[tuple[str, str, str, int]] = []
+        self._source_root = None
+        # (kind, folder, name, track_count, node) for every node in the XML walk
+        self._playlist_entries: list[tuple[str, str, str, int, object]] = []
         # iid -> (kind, folder, name) for rows currently in the tree
         self._playlist_iids: dict[str, tuple[str, str, str]] = {}
 
@@ -345,88 +348,123 @@ class ConverterApp:
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         frm.columnconfigure(1, weight=1)
-        frm.rowconfigure(3, weight=1)
+        frm.rowconfigure(2, weight=1)
 
-        header = ttk.Frame(frm)
-        header.grid(row=0, column=0, columnspan=3, sticky="w", **pad)
-        self.title_label = ttk.Label(header, text="Rekordbox Playlist Converter")
-        self.title_label.grid(row=0, column=0, sticky="w")
-        self.version_label = ttk.Label(header, text=__version__)
-        self.version_label.grid(row=1, column=0, sticky="w")
-
-        ttk.Label(frm, text="Rekordbox XML").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Rekordbox XML").grid(row=0, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.xml_var).grid(
-            row=1, column=1, sticky="ew", **pad
+            row=0, column=1, sticky="ew", **pad
         )
         xml_btns = ttk.Frame(frm)
-        xml_btns.grid(row=1, column=2, **pad)
-        ttk.Button(xml_btns, text="Browse…", command=self._browse_xml).pack(
-            side=tk.LEFT
-        )
+        xml_btns.grid(row=0, column=2, sticky="e", **pad)
+        ttk.Button(
+            xml_btns,
+            text="Browse…",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._browse_xml,
+        ).pack(side=tk.LEFT)
         self.refresh_btn = ttk.Button(
             xml_btns, text="Refresh", command=self._refresh_xml
         )
         self.refresh_btn.pack(side=tk.LEFT, padx=(4, 0))
 
-        ttk.Label(frm, text="Playlists").grid(row=2, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="Playlists").grid(row=1, column=0, sticky="w", **pad)
         self.search_entry = ttk.Entry(frm, textvariable=self.search_var)
-        self.search_entry.grid(row=2, column=1, sticky="ew", **pad)
+        self.search_entry.grid(row=1, column=1, sticky="ew", **pad)
         self.search_entry.bind("<FocusIn>", self._on_search_focus_in)
         self.search_entry.bind("<FocusOut>", self._on_search_focus_out)
         ttk.Label(frm, text="Hold ⌃ to multi-select").grid(
-            row=2, column=2, sticky="e", **pad
+            row=1, column=2, sticky="e", **pad
         )
 
         list_frame = ttk.Frame(frm)
-        list_frame.grid(row=3, column=0, columnspan=3, sticky="nsew", **pad)
+        list_frame.grid(row=2, column=0, columnspan=3, sticky="nsew", **pad)
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
+
+        panes = ttk.Panedwindow(list_frame, orient=tk.HORIZONTAL)
+        panes.grid(row=0, column=0, sticky="nsew")
+
+        left = ttk.Frame(panes)
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(0, weight=1)
         self.playlist_tree = ttk.Treeview(
-            list_frame,
+            left,
             show="tree",
             selectmode="extended",
             height=12,
         )
         scroll = ttk.Scrollbar(
-            list_frame, orient=tk.VERTICAL, command=self.playlist_tree.yview
+            left, orient=tk.VERTICAL, command=self.playlist_tree.yview
         )
         self.playlist_tree.configure(yscrollcommand=scroll.set)
         self.playlist_tree.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
+        self.playlist_tree.bind("<<TreeviewSelect>>", self._on_playlist_select, add="+")
 
-        ttk.Label(frm, text="Output folder").grid(row=4, column=0, sticky="w", **pad)
+        right = ttk.Frame(panes)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1)
+        self.tracklist_tree = ttk.Treeview(
+            right,
+            show="tree",
+            selectmode="none",
+            height=12,
+        )
+        track_scroll = ttk.Scrollbar(
+            right, orient=tk.VERTICAL, command=self.tracklist_tree.yview
+        )
+        self.tracklist_tree.configure(yscrollcommand=track_scroll.set)
+        self.tracklist_tree.grid(row=0, column=0, sticky="nsew")
+        track_scroll.grid(row=0, column=1, sticky="ns")
+        ttk.Label(right, textvariable=self.tracklist_total_var).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
+
+        panes.add(left, weight=1)
+        panes.add(right, weight=1)
+        self._refresh_tracklist_preview()
+
+        ttk.Label(frm, text="Output folder").grid(row=3, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.wav_dir_var).grid(
+            row=3, column=1, sticky="ew", **pad
+        )
+        ttk.Button(
+            frm,
+            text="Browse…",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._browse_wav_dir,
+        ).grid(row=3, column=2, sticky="e", **pad)
+
+        ttk.Label(frm, text="Import XML").grid(row=4, column=0, sticky="w", **pad)
+        ttk.Entry(frm, textvariable=self.output_var).grid(
             row=4, column=1, sticky="ew", **pad
         )
-        ttk.Button(frm, text="Browse…", command=self._browse_wav_dir).grid(
-            row=4, column=2, **pad
-        )
+        ttk.Button(
+            frm,
+            text="Browse…",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._browse_output,
+        ).grid(row=4, column=2, sticky="e", **pad)
 
-        ttk.Label(frm, text="Import XML").grid(row=5, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.output_var).grid(
-            row=5, column=1, sticky="ew", **pad
-        )
-        ttk.Button(frm, text="Browse…", command=self._browse_output).grid(
-            row=5, column=2, **pad
-        )
-
-        opts = ttk.Frame(frm)
-        opts.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
-        ttk.Label(opts, text="Format").pack(side=tk.LEFT)
+        ttk.Label(frm, text="Format").grid(row=5, column=0, sticky="w", **pad)
+        format_opts = ttk.Frame(frm)
+        format_opts.grid(row=5, column=1, sticky="w", **pad)
         ttk.Radiobutton(
-            opts, text="WAV", variable=self.format_var, value="wav"
+            format_opts, text="WAV", variable=self.format_var, value="wav"
+        ).pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            format_opts, text="AIFF", variable=self.format_var, value="aiff"
         ).pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Radiobutton(
-            opts, text="AIFF", variable=self.format_var, value="aiff"
-        ).pack(side=tk.LEFT, padx=(4, 0))
-        self.convert_btn = ttk.Button(opts, text="Convert", command=self._start_convert)
-        self.convert_btn.pack(side=tk.RIGHT)
-        ttk.Button(opts, text="How to use", command=self._show_usage_guide).pack(
-            side=tk.RIGHT, padx=(0, 8)
+        self.convert_btn = ttk.Button(
+            frm,
+            text="Convert",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._start_convert,
         )
+        self.convert_btn.grid(row=5, column=2, sticky="e", **pad)
 
         quality = ttk.Frame(frm)
-        quality.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        quality.grid(row=6, column=0, columnspan=2, sticky="w", **pad)
         ttk.Label(quality, text="Sampling format").pack(side=tk.LEFT)
         self.bit_depth_combo = ttk.Combobox(
             quality,
@@ -458,11 +496,11 @@ class ConverterApp:
         _HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
 
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
+        self.progress.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
         self.progress["value"] = 0
 
         ttk.Label(frm, textvariable=self.status_var, wraplength=1000).grid(
-            row=9, column=0, columnspan=3, sticky="ew", **pad
+            row=8, column=0, columnspan=3, sticky="ew", **pad
         )
 
     def _build_menubar(self) -> None:
@@ -658,22 +696,27 @@ class ConverterApp:
         self.playlist_tree.delete(*self.playlist_tree.get_children())
         self._playlist_entries = []
         self._playlist_iids = {}
+        self._source_root = None
         xml_s = self.xml_var.get().strip()
         if not xml_s:
+            self._refresh_tracklist_preview()
             return
         path = Path(xml_s).expanduser()
         if not path.is_file():
             self.status_var.set(f"XML not found: {path}")
+            self._refresh_tracklist_preview()
             return
         try:
             root = rb.load_dj_playlists(path)
         except rb.CliError as exc:
             self.status_var.set(str(exc))
+            self._refresh_tracklist_preview()
             return
+        self._source_root = root
         nodes = rb.iter_playlist_nodes(root)
         for kind, folder, name, node in nodes:
             count = rb.playlist_track_count(node) if kind == "playlist" else 0
-            self._playlist_entries.append((kind, folder, name, count))
+            self._playlist_entries.append((kind, folder, name, count, node))
         self._show_search_placeholder()
         self._apply_playlist_filter()
         playlist_count = sum(1 for kind, *_rest in self._playlist_entries if kind == "playlist")
@@ -723,7 +766,7 @@ class ConverterApp:
 
         if query:
             keep: set[tuple[str, str, str]] = set()
-            for kind, folder, name, count in self._playlist_entries:
+            for kind, folder, name, count, _node in self._playlist_entries:
                 if kind != "playlist":
                     continue
                 label = rb.playlist_label(folder, name)
@@ -747,7 +790,7 @@ class ConverterApp:
 
         # Parent folder iid for a row: folder path maps to the folder node's iid.
         folder_iid_by_path: dict[str, str] = {"": ""}
-        for kind, folder, name, count in visible:
+        for kind, folder, name, count, _node in visible:
             iid = self._playlist_iid(kind, folder, name)
             parent_path = folder
             parent_iid = folder_iid_by_path.get(parent_path, "")
@@ -763,7 +806,71 @@ class ConverterApp:
                 if kind == "folder":
                     self.playlist_tree.item(iid, open=True)
 
-    def _selected_playlists(self) -> list[tuple[str, str]]:
+        self._refresh_tracklist_preview()
+
+    def _on_playlist_select(self, _event: object = None) -> None:
+        self._refresh_tracklist_preview()
+
+    def _playlist_node(self, folder: str, name: str):
+        for kind, entry_folder, entry_name, _count, node in self._playlist_entries:
+            if kind == "playlist" and entry_folder == folder and entry_name == name:
+                return node
+        return None
+
+    @staticmethod
+    def _track_preview_label(track) -> str:
+        if track is None:
+            return "(missing track)"
+        artist = track.get("Artist") or ""
+        title = track.get("Name") or ""
+        label = f"{artist} - {title}" if artist else title
+        loc = track.get("Location") or ""
+        path = rb.decode_location(loc) if loc else None
+        if path is not None and path.suffix:
+            return f"{label}{path.suffix.lower()}"
+        return label
+
+    def _refresh_tracklist_preview(self) -> None:
+        self.tracklist_tree.delete(*self.tracklist_tree.get_children())
+        self.tracklist_total_var.set("No tracks selected")
+        if self._source_root is None:
+            return
+        selected = self._selected_playlists(unique_names=False)
+        if not selected:
+            return
+        by_id, by_location = rb.collection_indexes(self._source_root)
+        unique_keys: set[str] = set()
+        painted = 0
+        for folder, name in selected:
+            node = self._playlist_node(folder, name)
+            if node is None:
+                continue
+            count = rb.playlist_track_count(node)
+            group_text = f"{name} ({count} tracks)"
+            group_iid = self.tracklist_tree.insert(
+                "", tk.END, text=group_text, open=True
+            )
+            painted += 1
+            key_type = node.get("KeyType", "0")
+            for entry in node.findall("TRACK"):
+                key = entry.get("Key")
+                track = None
+                if key:
+                    unique_keys.add(key)
+                    if key_type == "1":
+                        track = by_location.get(key)
+                    else:
+                        track = by_id.get(key)
+                self.tracklist_tree.insert(
+                    group_iid, tk.END, text=self._track_preview_label(track)
+                )
+        if unique_keys and painted:
+            playlist_word = "playlist" if painted == 1 else "playlists"
+            self.tracklist_total_var.set(
+                f"{len(unique_keys)} unique tracks from {painted} {playlist_word}"
+            )
+
+    def _selected_playlists(self, *, unique_names: bool = True) -> list[tuple[str, str]]:
         chosen: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = set()
 
@@ -787,14 +894,15 @@ class ConverterApp:
         for iid in self.playlist_tree.selection():
             collect_from_iid(iid)
 
-        names = [name for _folder, name in chosen]
-        # Same output playlist name `{name} [WAV]` — refuse converting two at once.
-        dupes = {n for n in names if names.count(n) > 1}
-        if dupes:
-            listed = ", ".join(sorted(dupes))
-            raise rb.CliError(
-                f"cannot select multiple playlists with the same name: {listed}"
-            )
+        if unique_names:
+            names = [name for _folder, name in chosen]
+            # Same output playlist name `{name} [WAV]` — refuse converting two at once.
+            dupes = {n for n in names if names.count(n) > 1}
+            if dupes:
+                listed = ", ".join(sorted(dupes))
+                raise rb.CliError(
+                    f"cannot select multiple playlists with the same name: {listed}"
+                )
         return chosen
 
     def _set_busy(self, busy: bool) -> None:
@@ -1010,13 +1118,15 @@ class ConverterApp:
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Finished with no audio files converted or copied.")
-        body = "\n".join(summaries)
         if warnings:
-            body += (
-                "\n\nThese files were missing and were skipped:\n\n"
-                + "\n".join(warnings)
+            self._show_missing_files_dialog(
+                "No conversions",
+                "These files were missing and were skipped:",
+                warnings,
+                summary="\n".join(summaries),
             )
-        messagebox.showwarning("No conversions", body)
+            return
+        messagebox.showwarning("No conversions", "\n".join(summaries))
 
     def _finish_ok(
         self,
@@ -1032,10 +1142,10 @@ class ConverterApp:
             f"Done. Point Rekordbox Imported Library at:\n{output}"
         )
         if warnings:
-            messagebox.showwarning(
+            self._show_missing_files_dialog(
                 "Skipped missing tracks",
-                "These files were missing and were skipped:\n\n"
-                + "\n".join(warnings),
+                "These files were missing and were skipped:",
+                warnings,
             )
         fmt = self.format_var.get().strip().lower()
         suffix = "[AIFF]" if fmt == "aiff" else "[WAV]"
@@ -1049,6 +1159,71 @@ class ConverterApp:
             f"   (or drag the {suffix} playlist into Playlists)"
         )
         self._show_done_dialog(message, open_dir)
+
+    def _show_missing_files_dialog(
+        self,
+        title: str,
+        intro: str,
+        warnings: list[str],
+        *,
+        summary: str | None = None,
+    ) -> None:
+        dlg = tk.Toplevel(self.root)
+        dlg.title(title)
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(True, True)
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.grid(row=0, column=0, sticky="nsew")
+        dlg.columnconfigure(0, weight=1)
+        dlg.rowconfigure(0, weight=1)
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(2 if summary else 1, weight=1)
+
+        row = 0
+        if summary:
+            ttk.Label(frm, text=summary, justify=tk.LEFT, wraplength=520).grid(
+                row=row, column=0, sticky="w", pady=(0, 8)
+            )
+            row += 1
+
+        ttk.Label(frm, text=intro, wraplength=520).grid(
+            row=row, column=0, sticky="w", pady=(0, 8)
+        )
+        row += 1
+
+        list_frame = ttk.Frame(frm)
+        list_frame.grid(row=row, column=0, sticky="nsew")
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+        listbox = tk.Listbox(
+            list_frame, height=min(12, max(4, len(warnings))), width=72
+        )
+        scroll = ttk.Scrollbar(
+            list_frame, orient=tk.VERTICAL, command=listbox.yview
+        )
+        listbox.configure(yscrollcommand=scroll.set)
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        for line in warnings:
+            listbox.insert(tk.END, line)
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=row + 1, column=0, sticky="e", pady=(12, 0))
+
+        def close() -> None:
+            dlg.destroy()
+
+        ttk.Button(btns, text="OK", command=close).pack(side=tk.RIGHT)
+        dlg.bind("<Return>", lambda _e: close())
+        dlg.bind("<Escape>", lambda _e: close())
+        dlg.protocol("WM_DELETE_WINDOW", close)
+        dlg.update_idletasks()
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        dlg.wait_window()
 
     def _show_done_dialog(self, message: str, open_dir: Path | None) -> None:
         dlg = tk.Toplevel(self.root)
