@@ -32,9 +32,13 @@ def parse_wav_info(path: Path) -> WavInfo:
         raise CliError(f"cannot read WAV: {path}: {exc}") from exc
     if len(data) < 12 or data[0:4] != b"RIFF" or data[8:12] != b"WAVE":
         raise CliError(f"not a RIFF/WAVE file: {path}")
+    declared = struct.unpack_from("<I", data, 4)[0]
+    if declared + 8 != len(data):
+        raise CliError(f"invalid RIFF length in {path}")
     chunk_ids: list[str] = []
     format_tag = channels = sample_rate = bits_per_sample = fmt_chunk_size = 0
     found_fmt = False
+    offset = 12
     try:
         for cid, size, payload_start in iff_chunks.iter_chunks(
             data, endian="little", start=12
@@ -48,8 +52,11 @@ def parse_wav_info(path: Path) -> WavInfo:
                 )
                 fmt_chunk_size = size
                 found_fmt = True
+            offset = payload_start + size + (size % 2)
     except ValueError as exc:
         raise CliError(f"truncated WAV chunk in {path}: {exc}") from exc
+    if offset != len(data):
+        raise CliError(f"trailing bytes after WAV chunks in {path}")
     if not found_fmt:
         raise CliError(f"WAV missing fmt chunk: {path}")
     return WavInfo(

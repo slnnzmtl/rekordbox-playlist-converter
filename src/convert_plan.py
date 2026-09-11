@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -28,7 +29,7 @@ from cdj_wav import (
     _rewrite_wav_pcm,
     is_cdj_safe_wav,
 )
-from cli_error import CliError
+from cli_error import CancelledError, CliError
 from rekordbox_xml import (
     decode_location,
     encode_location,
@@ -225,7 +226,10 @@ def target_from_stream(
     except (TypeError, ValueError):
         rate = 0
     if rate > max_sample_rate:
-        rate = max_sample_rate
+        if rate % 44100 == 0 and 44100 <= max_sample_rate:
+            rate = 44100
+        else:
+            rate = max_sample_rate
     elif rate in (44100, 48000) and rate <= max_sample_rate:
         pass
     else:
@@ -464,6 +468,7 @@ def run_ffmpeg(
     *,
     sample_rate: int | None = None,
     bit_depth: int | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Encode dest as PCM WAV or AIFF at the planned depth/rate (no ID3)."""
     exe = ffmpeg_tools.tool_path("ffmpeg")
@@ -518,23 +523,40 @@ def run_ffmpeg(
         ]
     )
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
-            timeout=ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S,
         )
     except FileNotFoundError as exc:
         raise CliError(
             "ffmpeg not found on PATH (install with: brew install ffmpeg)"
         ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise CliError(
-            f"ffmpeg timed out after {ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S}s for {source}"
-        ) from exc
+    deadline = time.monotonic() + ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S
+    while proc.poll() is None:
+        if cancel_event is not None and cancel_event.is_set():
+            proc.kill()
+            proc.wait()
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise CancelledError(f"conversion cancelled for {source}")
+        if time.monotonic() >= deadline:
+            proc.kill()
+            proc.wait()
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise CliError(
+                f"ffmpeg timed out after {ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S}s for {source}"
+            )
+        time.sleep(0.05)
+    _stdout, stderr = proc.communicate()
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+        err = (stderr or _stdout or "").strip() or f"exit {proc.returncode}"
         raise CliError(f"ffmpeg conversion failed for {source}: {err}")
     if is_aiff:
         if not is_cdj_safe_aiff(dest, bit_depth=depth, sample_rate=rate):
@@ -588,6 +610,7 @@ def write_aiff_output(
     bit_depth: int = 24,
     sample_rate: int = 48000,
     cover_cache: dict[Path, bytes | None] | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """Atomically write AIFF: PCM then ID3, validate, os.replace."""
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -613,6 +636,7 @@ def write_aiff_output(
                 force=True,
                 sample_rate=sample_rate,
                 bit_depth=bit_depth,
+                cancel_event=cancel_event,
             )
             if not is_cdj_safe_aiff(tmp, bit_depth=bit_depth, sample_rate=sample_rate):
                 raise CliError(f"AIFF audio stage failed for {source}")
@@ -667,60 +691,65 @@ def convert_unique(
                 bar.update(i, "skip", name)
                 stats.skipped += 1
                 continue
-            if is_aiff:
-                cover = cached_cover_jpeg(item.source_path, plan.cover_cache)
-                if not force and _is_canonical_aiff_output(
+            try:
+                if is_aiff:
+                    cover = cached_cover_jpeg(item.source_path, plan.cover_cache)
+                    if not force and _is_canonical_aiff_output(
+                        item.dest_path,
+                        item.source_el,
+                        cover,
+                        bit_depth=item.bit_depth,
+                        sample_rate=item.sample_rate,
+                    ):
+                        bar.update(i, "skip", name)
+                        stats.skipped += 1
+                        continue
+                    action = "copy" if item.copy_wav else "convert"
+                    bar.update(i, action, name)
+                    write_aiff_output(
+                        item.source_path,
+                        item.dest_path,
+                        item.source_el,
+                        passthrough=item.copy_wav,
+                        codec=item.codec,
+                        bit_depth=item.bit_depth,
+                        sample_rate=item.sample_rate,
+                        cover_cache=plan.cover_cache,
+                        cancel_event=cancel_event,
+                    )
+                    if item.copy_wav:
+                        stats.copied += 1
+                    else:
+                        stats.converted += 1
+                    continue
+                if not force and is_cdj_safe_wav(
                     item.dest_path,
-                    item.source_el,
-                    cover,
                     bit_depth=item.bit_depth,
                     sample_rate=item.sample_rate,
                 ):
                     bar.update(i, "skip", name)
                     stats.skipped += 1
                     continue
-                action = "copy" if item.copy_wav else "convert"
-                bar.update(i, action, name)
-                write_aiff_output(
+                if item.copy_wav:
+                    bar.update(i, "copy", name)
+                    shutil.copy2(item.source_path, item.dest_path)
+                    stats.copied += 1
+                    continue
+                if not item.codec:
+                    raise CliError(f"no codec planned for {item.source_path}")
+                bar.update(i, "convert", name)
+                run_ffmpeg(
                     item.source_path,
                     item.dest_path,
-                    item.source_el,
-                    passthrough=item.copy_wav,
-                    codec=item.codec,
-                    bit_depth=item.bit_depth,
+                    item.codec,
+                    force=True,
                     sample_rate=item.sample_rate,
-                    cover_cache=plan.cover_cache,
+                    bit_depth=item.bit_depth,
+                    cancel_event=cancel_event,
                 )
-                if item.copy_wav:
-                    stats.copied += 1
-                else:
-                    stats.converted += 1
-                continue
-            if not force and is_cdj_safe_wav(
-                item.dest_path,
-                bit_depth=item.bit_depth,
-                sample_rate=item.sample_rate,
-            ):
-                bar.update(i, "skip", name)
-                stats.skipped += 1
-                continue
-            if item.copy_wav:
-                bar.update(i, "copy", name)
-                shutil.copy2(item.source_path, item.dest_path)
-                stats.copied += 1
-                continue
-            if not item.codec:
-                raise CliError(f"no codec planned for {item.source_path}")
-            bar.update(i, "convert", name)
-            run_ffmpeg(
-                item.source_path,
-                item.dest_path,
-                item.codec,
-                force=True,
-                sample_rate=item.sample_rate,
-                bit_depth=item.bit_depth,
-            )
-            stats.converted += 1
+                stats.converted += 1
+            except CancelledError:
+                break
     finally:
         bar.close()
     return stats

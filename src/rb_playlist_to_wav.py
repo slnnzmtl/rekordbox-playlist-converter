@@ -38,7 +38,7 @@ from cdj_wav import (
     is_cdj_safe_wav,
     parse_wav_info,
 )
-from cli_error import CliError
+from cli_error import CancelledError, CliError
 from rekordbox_xml import (
     XML_CANDIDATE_RELATIVE,
     collection_indexes,
