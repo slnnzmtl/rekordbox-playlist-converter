@@ -1208,6 +1208,7 @@ class ConverterApp:
                 )
             for index, iid in enumerate(ordered):
                 preview.move(iid, group_iid, index)
+
     def _fill_preview_bit_depths(self, gen: int, paths: list[Path]) -> None:
         batch: dict[Path, str] = {}
 
