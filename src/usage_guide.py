@@ -34,7 +34,8 @@ export.
    only your home folder (top-level files) and ~/Documents for filenames that
    contain “rekordbox” and end in .xml (skipping Desktop, Downloads, and
    iCloud). One match is loaded automatically; if several are found, pick from
-   a short list.
+   a short list. File → Search for Rekordbox XML… runs that search again even
+   when a file is already loaded.
 2. Select one or more playlists (hold ⌃ to multi-select). Search filters the
    list.
 3. Confirm output folder and Import XML. Defaults are ~/Documents/rekordbox-converted

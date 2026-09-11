@@ -464,6 +464,12 @@ class ConverterApp:
 
     def _build_menubar(self) -> None:
         menubar = tk.Menu(self.root)
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(
+            label="Search for Rekordbox XML…",
+            command=self._search_rekordbox_xml,
+        )
+        menubar.add_cascade(label="File", menu=file_menu)
         help_menu = tk.Menu(menubar, tearoff=0)
         help_menu.add_command(
             label="How to Use…",
@@ -481,6 +487,16 @@ class ConverterApp:
             self.root.bind_all("<Command-Shift-/>", lambda _e: self._show_usage_guide())
         except tk.TclError:
             pass
+
+    def _search_rekordbox_xml(self) -> None:
+        if self._busy:
+            return
+        hits = find_rekordbox_xml_via_child(Path.home())
+        if len(hits) == 1:
+            self._adopt_source_xml(hits[0])
+            self._persist_output_preferences(include_source_xml=True)
+        elif len(hits) >= 2:
+            self._show_xml_choice_modal(hits)
 
     def _show_usage_guide(self) -> None:
         if self._usage_window is not None and self._usage_window.winfo_exists():
