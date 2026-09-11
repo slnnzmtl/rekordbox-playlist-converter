@@ -167,6 +167,7 @@ class ConverterApp:
         self.sample_rate_var = tk.StringVar(value=saved_rate)
         self.search_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
+        self.tracklist_total_var = tk.StringVar(value="")
         self._busy = False
         self._search_showing_placeholder = False
         self._usage_window: tk.Toplevel | None = None
@@ -174,8 +175,9 @@ class ConverterApp:
         self._progress_target = 0.0
         self._progress_anim_id: str | None = None
         self._documents_accessible = False
-        # (kind, folder, name, track_count) for every node in the XML walk
-        self._playlist_entries: list[tuple[str, str, str, int]] = []
+        self._source_root = None
+        # (kind, folder, name, track_count, node) for every node in the XML walk
+        self._playlist_entries: list[tuple[str, str, str, int, object]] = []
         # iid -> (kind, folder, name) for rows currently in the tree
         self._playlist_iids: dict[str, tuple[str, str, str]] = {}
 
@@ -381,18 +383,49 @@ class ConverterApp:
         list_frame.grid(row=3, column=0, columnspan=3, sticky="nsew", **pad)
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
+
+        panes = ttk.Panedwindow(list_frame, orient=tk.HORIZONTAL)
+        panes.grid(row=0, column=0, sticky="nsew")
+
+        left = ttk.Frame(panes)
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(0, weight=1)
         self.playlist_tree = ttk.Treeview(
-            list_frame,
+            left,
             show="tree",
             selectmode="extended",
             height=12,
         )
         scroll = ttk.Scrollbar(
-            list_frame, orient=tk.VERTICAL, command=self.playlist_tree.yview
+            left, orient=tk.VERTICAL, command=self.playlist_tree.yview
         )
         self.playlist_tree.configure(yscrollcommand=scroll.set)
         self.playlist_tree.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
+        self.playlist_tree.bind("<<TreeviewSelect>>", self._on_playlist_select, add="+")
+
+        right = ttk.Frame(panes)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1)
+        self.tracklist_tree = ttk.Treeview(
+            right,
+            show="tree",
+            selectmode="none",
+            height=12,
+        )
+        track_scroll = ttk.Scrollbar(
+            right, orient=tk.VERTICAL, command=self.tracklist_tree.yview
+        )
+        self.tracklist_tree.configure(yscrollcommand=track_scroll.set)
+        self.tracklist_tree.grid(row=0, column=0, sticky="nsew")
+        track_scroll.grid(row=0, column=1, sticky="ns")
+        ttk.Label(right, textvariable=self.tracklist_total_var).grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 0)
+        )
+
+        panes.add(left, weight=1)
+        panes.add(right, weight=1)
+        self._refresh_tracklist_preview()
 
         ttk.Label(frm, text="Output folder").grid(row=4, column=0, sticky="w", **pad)
         ttk.Entry(frm, textvariable=self.wav_dir_var).grid(
@@ -658,22 +691,27 @@ class ConverterApp:
         self.playlist_tree.delete(*self.playlist_tree.get_children())
         self._playlist_entries = []
         self._playlist_iids = {}
+        self._source_root = None
         xml_s = self.xml_var.get().strip()
         if not xml_s:
+            self._refresh_tracklist_preview()
             return
         path = Path(xml_s).expanduser()
         if not path.is_file():
             self.status_var.set(f"XML not found: {path}")
+            self._refresh_tracklist_preview()
             return
         try:
             root = rb.load_dj_playlists(path)
         except rb.CliError as exc:
             self.status_var.set(str(exc))
+            self._refresh_tracklist_preview()
             return
+        self._source_root = root
         nodes = rb.iter_playlist_nodes(root)
         for kind, folder, name, node in nodes:
             count = rb.playlist_track_count(node) if kind == "playlist" else 0
-            self._playlist_entries.append((kind, folder, name, count))
+            self._playlist_entries.append((kind, folder, name, count, node))
         self._show_search_placeholder()
         self._apply_playlist_filter()
         playlist_count = sum(1 for kind, *_rest in self._playlist_entries if kind == "playlist")
@@ -723,7 +761,7 @@ class ConverterApp:
 
         if query:
             keep: set[tuple[str, str, str]] = set()
-            for kind, folder, name, count in self._playlist_entries:
+            for kind, folder, name, count, _node in self._playlist_entries:
                 if kind != "playlist":
                     continue
                 label = rb.playlist_label(folder, name)
@@ -747,7 +785,7 @@ class ConverterApp:
 
         # Parent folder iid for a row: folder path maps to the folder node's iid.
         folder_iid_by_path: dict[str, str] = {"": ""}
-        for kind, folder, name, count in visible:
+        for kind, folder, name, count, _node in visible:
             iid = self._playlist_iid(kind, folder, name)
             parent_path = folder
             parent_iid = folder_iid_by_path.get(parent_path, "")
@@ -763,7 +801,71 @@ class ConverterApp:
                 if kind == "folder":
                     self.playlist_tree.item(iid, open=True)
 
-    def _selected_playlists(self) -> list[tuple[str, str]]:
+        self._refresh_tracklist_preview()
+
+    def _on_playlist_select(self, _event: object = None) -> None:
+        self._refresh_tracklist_preview()
+
+    def _playlist_node(self, folder: str, name: str):
+        for kind, entry_folder, entry_name, _count, node in self._playlist_entries:
+            if kind == "playlist" and entry_folder == folder and entry_name == name:
+                return node
+        return None
+
+    @staticmethod
+    def _track_preview_label(track) -> str:
+        if track is None:
+            return "(missing track)"
+        artist = track.get("Artist") or ""
+        title = track.get("Name") or ""
+        label = f"{artist} - {title}" if artist else title
+        loc = track.get("Location") or ""
+        path = rb.decode_location(loc) if loc else None
+        if path is not None and path.suffix:
+            return f"{label}{path.suffix.lower()}"
+        return label
+
+    def _refresh_tracklist_preview(self) -> None:
+        self.tracklist_tree.delete(*self.tracklist_tree.get_children())
+        self.tracklist_total_var.set("No tracks selected")
+        if self._source_root is None:
+            return
+        selected = self._selected_playlists(unique_names=False)
+        if not selected:
+            return
+        by_id, by_location = rb.collection_indexes(self._source_root)
+        unique_keys: set[str] = set()
+        painted = 0
+        for folder, name in selected:
+            node = self._playlist_node(folder, name)
+            if node is None:
+                continue
+            count = rb.playlist_track_count(node)
+            group_text = f"{name} ({count} tracks)"
+            group_iid = self.tracklist_tree.insert(
+                "", tk.END, text=group_text, open=True
+            )
+            painted += 1
+            key_type = node.get("KeyType", "0")
+            for entry in node.findall("TRACK"):
+                key = entry.get("Key")
+                track = None
+                if key:
+                    unique_keys.add(key)
+                    if key_type == "1":
+                        track = by_location.get(key)
+                    else:
+                        track = by_id.get(key)
+                self.tracklist_tree.insert(
+                    group_iid, tk.END, text=self._track_preview_label(track)
+                )
+        if unique_keys and painted:
+            playlist_word = "playlist" if painted == 1 else "playlists"
+            self.tracklist_total_var.set(
+                f"{len(unique_keys)} unique tracks from {painted} {playlist_word}"
+            )
+
+    def _selected_playlists(self, *, unique_names: bool = True) -> list[tuple[str, str]]:
         chosen: list[tuple[str, str]] = []
         seen: set[tuple[str, str]] = set()
 
@@ -787,14 +889,15 @@ class ConverterApp:
         for iid in self.playlist_tree.selection():
             collect_from_iid(iid)
 
-        names = [name for _folder, name in chosen]
-        # Same output playlist name `{name} [WAV]` — refuse converting two at once.
-        dupes = {n for n in names if names.count(n) > 1}
-        if dupes:
-            listed = ", ".join(sorted(dupes))
-            raise rb.CliError(
-                f"cannot select multiple playlists with the same name: {listed}"
-            )
+        if unique_names:
+            names = [name for _folder, name in chosen]
+            # Same output playlist name `{name} [WAV]` — refuse converting two at once.
+            dupes = {n for n in names if names.count(n) > 1}
+            if dupes:
+                listed = ", ".join(sorted(dupes))
+                raise rb.CliError(
+                    f"cannot select multiple playlists with the same name: {listed}"
+                )
         return chosen
 
     def _set_busy(self, busy: bool) -> None:

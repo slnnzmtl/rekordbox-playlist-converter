@@ -58,6 +58,33 @@ DUP_NAME_XML = """\
 </DJ_PLAYLISTS>
 """
 
+TRACKLIST_XML = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="3">
+    <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
+           Location="file://localhost/Users/me/music/Bestial.flac" Kind="FLAC File"/>
+    <TRACK TrackID="2" Name="Revelation" Artist="Shogan"
+           Location="file://localhost/Users/me/music/Revelation.aiff" Kind="AIFF File"/>
+    <TRACK TrackID="3" Name="NoLoc" Artist="Ghost" Kind="WAV File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="2">
+      <NODE Name="Dark forest" Type="1" KeyType="0" Entries="3">
+        <TRACK Key="1"/>
+        <TRACK Key="2"/>
+        <TRACK Key="999"/>
+      </NODE>
+      <NODE Name="Morning" Type="1" KeyType="0" Entries="2">
+        <TRACK Key="1"/>
+        <TRACK Key="3"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+
 
 def _tk_available() -> bool:
     try:
@@ -228,6 +255,106 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     app._selected_playlists(),
                     [("Intelligent playlists", "Nested")],
                 )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_tracklist_preview_single_select_shows_artist_title_ext(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark = tree.get_children("")[0]
+                tree.selection_set(dark)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                self.assertEqual(len(groups), 1)
+                self.assertEqual(preview.item(groups[0], "text"), "Dark forest (3 tracks)")
+                rows = preview.get_children(groups[0])
+                self.assertEqual(
+                    [preview.item(r, "text") for r in rows],
+                    [
+                        "ABSL - Bestial.flac",
+                        "Shogan - Revelation.aiff",
+                        "(missing track)",
+                    ],
+                )
+                self.assertEqual(app.tracklist_total_var.get(), "3 unique tracks from 1 playlist")
+
+                tree.selection_remove(dark)
+                tree.event_generate("<<TreeviewSelect>>")
+                self.assertEqual(preview.get_children(""), ())
+                self.assertEqual(app.tracklist_total_var.get(), "No tracks selected")
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_tracklist_preview_multi_folder_and_duplicate_names(self) -> None:
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import rb_playlist_to_wav as rb
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark, morning = tree.get_children("")
+                tree.selection_set(dark, morning)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                self.assertEqual(
+                    [preview.item(g, "text") for g in groups],
+                    ["Dark forest (3 tracks)", "Morning (2 tracks)"],
+                )
+                morning_rows = preview.get_children(groups[1])
+                self.assertEqual(
+                    [preview.item(r, "text") for r in morning_rows],
+                    ["ABSL - Bestial.flac", "Ghost - NoLoc"],
+                )
+                # Shared Key=1 across both playlists counts once in the total.
+                self.assertEqual(
+                    app.tracklist_total_var.get(),
+                    "4 unique tracks from 2 playlists",
+                )
+
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), DUP_NAME_XML)
+                root2, app2 = self._make_app(source)
+                if root is not None:
+                    root.destroy()
+                root = root2
+                tree = app2.playlist_tree
+                one = tree.get_children("")[0]
+                two = tree.get_children("")[1]
+                tree.selection_set(tree.get_children(one)[0], tree.get_children(two)[0])
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app2.tracklist_tree
+                groups = preview.get_children("")
+                self.assertEqual(len(groups), 2)
+                self.assertEqual(preview.item(groups[0], "text"), "Same (1 tracks)")
+                self.assertEqual(preview.item(groups[1], "text"), "Same (1 tracks)")
+                with self.assertRaises(rb.CliError):
+                    app2._selected_playlists()
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

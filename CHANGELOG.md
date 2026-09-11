@@ -4,6 +4,7 @@
 
 Intended for **1.3.0** (app version remains 1.2.0 until release).
 
+- GUI shows a tracklist preview beside the playlist tree (`Artist - Title.ext`, unique track count at the bottom).
 - GUI playlist picker is a Rekordbox-style folder tree (expand/collapse); selecting a folder converts all playlists under it. Search still filters the tree.
 - Selectable output quality: `--format wav|aiff`, `--bit-depth 16|24`, `--sample-rate 44100|48000` (GUI Sampling format dropdowns + prefs). Defaults are WAV / **24** / **48000**.
 - Quality is a **ceiling**: never upconvert 16-bit to 24-bit or 44.1 kHz to 48 kHz; preserve source when it fits; reduce only when over the cap.
