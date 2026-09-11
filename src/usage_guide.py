@@ -38,7 +38,9 @@ export.
    when a file is already loaded.
 2. Browse playlists in the folder tree (expand folders; hold ⌃ to multi-select).
    Selecting a folder lists every playlist under it. The tracklist table shows
-   Track, Format, Bit depth, and Sample rate. Format and rate come from the
+   only convertible formats (FLAC, ALAC, WAV, AIFF) plus missing collection
+   rows: Track, Format, Bit depth, and Sample rate. Click a column header to
+   sort within each playlist group. Format and rate come from the
    export; bit depth is read from FLAC, ALAC (M4A), WAV, or AIFF file headers
    when the file is on disk, otherwise —. Track rows start selected; hold ⌃ to
    refine which tracks to convert (across playlists). Playlist search filters
