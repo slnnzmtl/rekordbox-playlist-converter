@@ -14,6 +14,9 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 import rb_playlist_to_wav as rb
+import convert_plan
+import xml_output
+import ffmpeg_tools
 
 # IEEE 80-bit extended floats for common rates (big-endian).
 RATE_44100 = bytes.fromhex("400eac44000000000000")
@@ -249,7 +252,7 @@ class InPlaceAiffTests(unittest.TestCase):
 """,
                 encoding="utf-8",
             )
-            with mock.patch.object(rb, "require_tools", return_value=[]):
+            with mock.patch.object(ffmpeg_tools, "require_tools", return_value=[]):
                 _, errors = rb.prepare(
                     xml_path,
                     playlist,
@@ -375,7 +378,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 output_existed=False,
             )
             with mock.patch.object(
-                rb, "extract_cover_jpeg", return_value=None
+                convert_plan, "extract_cover_jpeg", return_value=None
             ) as cover:
                 stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.copied, 1)
@@ -431,7 +434,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             def fake_write(*_a, **_k):
                 wrote.append(dest)
 
-            with mock.patch.object(rb, "write_aiff_output", side_effect=fake_write):
+            with mock.patch.object(convert_plan, "write_aiff_output", side_effect=fake_write):
                 stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 0)
             self.assertEqual(stats.converted, 1)
@@ -635,7 +638,7 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                 output_root=output_root,
                 output_existed=True,
             )
-            with mock.patch.object(rb, "probe_dest_tech", return_value=("1", "1411", "44100")):
+            with mock.patch.object(xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")):
                 rb.apply_xml(plan)
             tracks = output_root.findall("COLLECTION/TRACK")
             self.assertEqual(len(tracks), 1)

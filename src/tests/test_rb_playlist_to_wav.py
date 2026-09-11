@@ -15,6 +15,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 import rb_playlist_to_wav as rb
+import convert_plan
+import ffmpeg_tools
 
 FIXTURE = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -179,7 +181,7 @@ class XmlFixtureTests(unittest.TestCase):
         ET.SubElement(playlists, "NODE", {"Name": "Untitled Intelligent List", "Type": "1", "KeyType": "0", "Entries": "0"})
         dup = self.root / "dup.xml"
         ET.ElementTree(root).write(dup, encoding="UTF-8", xml_declaration=True)
-        with patch.object(rb, "require_tools", return_value=[]):
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]):
             _, errors = rb.prepare(dup, "Untitled Intelligent List", self.wav_dir, self.output)
         self.assertTrue(any("duplicate playlist name" in e for e in errors))
         joined = "\n".join(errors)
@@ -196,8 +198,8 @@ class XmlFixtureTests(unittest.TestCase):
         )
         dup = self.root / "dup-folder.xml"
         ET.ElementTree(root).write(dup, encoding="UTF-8", xml_declaration=True)
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
             plan, errors = rb.prepare(
                 dup,
@@ -221,8 +223,8 @@ class XmlFixtureTests(unittest.TestCase):
         )
         dup = self.root / "dup-path.xml"
         ET.ElementTree(root).write(dup, encoding="UTF-8", xml_declaration=True)
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
             plan, errors = rb.prepare(
                 dup,
@@ -237,8 +239,8 @@ class XmlFixtureTests(unittest.TestCase):
 
     def test_missing_source_file_skipped_with_warning(self) -> None:
         self.c.unlink()
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
             plan, errors = rb.prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
@@ -252,8 +254,8 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertIn(str(self.c), plan.warnings[0])
 
     def test_prepare_track_keys_filters_to_subset(self) -> None:
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
             plan, errors = rb.prepare(
                 self.xml_path,
@@ -280,9 +282,9 @@ class XmlFixtureTests(unittest.TestCase):
             written.append(dest)
             cancel.set()
 
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
-        ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             plan, errors = rb.prepare(
@@ -312,8 +314,8 @@ class XmlFixtureTests(unittest.TestCase):
             cancel.set()
             return self._probe(path)
 
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=probe_and_cancel
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=probe_and_cancel
         ):
             plan, errors = rb.prepare(
                 self.xml_path,
@@ -332,8 +334,8 @@ class XmlFixtureTests(unittest.TestCase):
         def on_progress(current: int, total: int, action: str, name: str) -> None:
             progress_calls.append((current, total, action, name))
 
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
             plan, errors = rb.prepare(
                 self.xml_path,
@@ -356,9 +358,9 @@ class XmlFixtureTests(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
-        ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(
@@ -386,8 +388,8 @@ class XmlFixtureTests(unittest.TestCase):
         ET.SubElement(node, "TRACK", {"Key": "999"})
         bad = self.root / "missing-key.xml"
         ET.ElementTree(root).write(bad, encoding="UTF-8", xml_declaration=True)
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
             _, errors = rb.prepare(bad, "Untitled Intelligent List", self.wav_dir, self.output)
         self.assertTrue(any("missing collection track" in e for e in errors))
@@ -399,8 +401,8 @@ class XmlFixtureTests(unittest.TestCase):
         track.set("Location", "http://example.com/x.flac")
         bad = self.root / "bad-url.xml"
         ET.ElementTree(root).write(bad, encoding="UTF-8", xml_declaration=True)
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
             _, errors = rb.prepare(bad, "Untitled Intelligent List", self.wav_dir, self.output)
         self.assertTrue(any("invalid Rekordbox file URL" in e for e in errors))
@@ -433,8 +435,8 @@ class XmlFixtureTests(unittest.TestCase):
 """
         path = self.root / "clash.xml"
         path.write_text(extra, encoding="utf-8")
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
             _, errors = rb.prepare(path, "Clash", self.wav_dir, self.output)
         joined = "\n".join(errors)
@@ -447,9 +449,9 @@ class XmlFixtureTests(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
-        ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(
@@ -504,9 +506,9 @@ class XmlFixtureTests(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
-        ), patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             plan_a, errors_a = rb.prepare(
@@ -543,10 +545,10 @@ class XmlFixtureTests(unittest.TestCase):
             dest.write_bytes(b"RIFF")
 
         patches = (
-            patch.object(rb, "require_tools", return_value=[]),
-            patch.object(rb, "run_ffprobe", side_effect=self._probe),
-            patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg),
-            patch.object(rb, "is_cdj_safe_wav", return_value=False),
+            patch.object(ffmpeg_tools, "require_tools", return_value=[]),
+            patch.object(ffmpeg_tools, "run_ffprobe", side_effect=self._probe),
+            patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg),
+            patch.object(convert_plan, "is_cdj_safe_wav", return_value=False),
         )
         with patches[0], patches[1], patches[2], patches[3]:
             self.assertEqual(
@@ -647,8 +649,8 @@ class XmlFixtureTests(unittest.TestCase):
 
     def test_invalid_existing_output_not_clobbered(self) -> None:
         self.output.write_text("not a rekordbox collection", encoding="utf-8")
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
             rc = rb.main(
                 [
@@ -667,8 +669,8 @@ class XmlFixtureTests(unittest.TestCase):
 
     def test_dry_run_writes_nothing(self) -> None:
         buf = io.StringIO()
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=self._probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch("sys.stdout", buf):
             rc = rb.main(
                 [
@@ -740,8 +742,8 @@ class XmlFixtureTests(unittest.TestCase):
 """
         path = self.root / "badfmt.xml"
         path.write_text(extra, encoding="utf-8")
-        with patch.object(rb, "require_tools", return_value=[]), patch.object(
-            rb, "run_ffprobe", side_effect=probe
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=probe
         ):
             plan, errors = rb.prepare(path, "Bad", self.wav_dir, self.output)
         joined = "\n".join(errors)
@@ -834,8 +836,8 @@ class PlanQualityFieldsTests(unittest.TestCase):
 """,
                 encoding="utf-8",
             )
-            with patch.object(rb, "require_tools", return_value=[]), patch.object(
-                rb,
+            with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+                ffmpeg_tools,
                 "run_ffprobe",
                 return_value={
                     "streams": [
@@ -876,10 +878,10 @@ class WizardHelperTests(unittest.TestCase):
         self.assertEqual(rc, 2)
 
     def test_tool_path_uses_path_when_not_frozen(self) -> None:
-        with patch.object(rb.sys, "frozen", False, create=True), patch.object(
-            rb.shutil, "which", return_value="/usr/local/bin/ffmpeg"
+        with patch.object(ffmpeg_tools.sys, "frozen", False, create=True), patch.object(
+            ffmpeg_tools.shutil, "which", return_value="/usr/local/bin/ffmpeg"
         ) as which:
-            self.assertEqual(rb.tool_path("ffmpeg"), "/usr/local/bin/ffmpeg")
+            self.assertEqual(ffmpeg_tools.tool_path("ffmpeg"), "/usr/local/bin/ffmpeg")
             which.assert_called_once_with("ffmpeg")
 
     def test_tool_path_prefers_meipass_when_frozen(self) -> None:
@@ -888,10 +890,10 @@ class WizardHelperTests(unittest.TestCase):
             bundled = meipass / "ffmpeg"
             bundled.write_text("")
             bundled.chmod(0o755)
-            with patch.object(rb.sys, "frozen", True, create=True), patch.object(
-                rb.sys, "_MEIPASS", str(meipass), create=True
-            ), patch.object(rb.shutil, "which") as which:
-                self.assertEqual(rb.tool_path("ffmpeg"), str(bundled))
+            with patch.object(ffmpeg_tools.sys, "frozen", True, create=True), patch.object(
+                ffmpeg_tools.sys, "_MEIPASS", str(meipass), create=True
+            ), patch.object(ffmpeg_tools.shutil, "which") as which:
+                self.assertEqual(ffmpeg_tools.tool_path("ffmpeg"), str(bundled))
                 which.assert_not_called()
 
     def test_tool_path_falls_back_to_executable_parent(self) -> None:
@@ -903,13 +905,13 @@ class WizardHelperTests(unittest.TestCase):
             beside.chmod(0o755)
             fake_exe = mac_os / "Simple Rekordbox Converter"
             fake_exe.write_text("")
-            with patch.object(rb.sys, "frozen", True, create=True), patch.object(
-                rb.sys, "_MEIPASS", str(Path(tmp) / "missing"), create=True
-            ), patch.object(rb.sys, "executable", str(fake_exe)), patch.object(
-                rb.shutil, "which"
+            with patch.object(ffmpeg_tools.sys, "frozen", True, create=True), patch.object(
+                ffmpeg_tools.sys, "_MEIPASS", str(Path(tmp) / "missing"), create=True
+            ), patch.object(ffmpeg_tools.sys, "executable", str(fake_exe)), patch.object(
+                ffmpeg_tools.shutil, "which"
             ) as which:
                 self.assertEqual(
-                    rb.tool_path("ffprobe"),
+                    ffmpeg_tools.tool_path("ffprobe"),
                     str(beside.resolve()),
                 )
                 which.assert_not_called()
@@ -920,13 +922,15 @@ class SubprocessTimeoutTests(unittest.TestCase):
         import subprocess
 
         path = Path("/tmp/track.flac")
-        with patch.object(rb, "tool_path", return_value="/bin/ffprobe"), patch.object(
-            rb.subprocess,
+        with patch.object(
+            ffmpeg_tools, "tool_path", return_value="/bin/ffprobe"
+        ), patch.object(
+            ffmpeg_tools.subprocess,
             "run",
             side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=60),
         ):
             with self.assertRaises(rb.CliError) as ctx:
-                rb.run_ffprobe(path)
+                ffmpeg_tools.run_ffprobe(path)
         self.assertIn("timed out", str(ctx.exception).lower())
         self.assertIn(str(path), str(ctx.exception))
 
@@ -935,15 +939,17 @@ class SubprocessTimeoutTests(unittest.TestCase):
 
         src = Path("/tmp/src.flac")
         dest = Path("/tmp/out.wav")
-        with patch.object(rb, "tool_path", return_value="/bin/ffmpeg"), patch.object(
-            rb, "ffmpeg_supports_soxr", return_value=False
+        with patch.object(
+            ffmpeg_tools, "tool_path", return_value="/bin/ffmpeg"
         ), patch.object(
-            rb.subprocess,
+            ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
+        ), patch.object(
+            convert_plan.subprocess,
             "run",
             side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=600),
         ):
             with self.assertRaises(rb.CliError) as ctx:
-                rb.run_ffmpeg(src, dest, "pcm_s16le", force=True)
+                convert_plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
         self.assertIn("timed out", str(ctx.exception).lower())
         self.assertIn(str(src), str(ctx.exception))
 
@@ -955,7 +961,7 @@ class SubprocessTimeoutTests(unittest.TestCase):
             src = Path(tmp) / "song.aiff"
             src.write_bytes(b"x")
             with patch.object(
-                rb, "tool_path", return_value="/bin/ffmpeg"
+                ffmpeg_tools, "tool_path", return_value="/bin/ffmpeg"
             ), patch.object(
                 cdj_aiff.subprocess,
                 "run",
@@ -966,16 +972,18 @@ class SubprocessTimeoutTests(unittest.TestCase):
     def test_ffmpeg_supports_soxr_false_on_timeout(self) -> None:
         import subprocess
 
-        rb.ffmpeg_supports_soxr.cache_clear()
+        ffmpeg_tools.ffmpeg_supports_soxr.cache_clear()
         try:
-            with patch.object(rb, "tool_path", return_value="/bin/ffmpeg"), patch.object(
-                rb.subprocess,
+            with patch.object(
+                ffmpeg_tools, "tool_path", return_value="/bin/ffmpeg"
+            ), patch.object(
+                ffmpeg_tools.subprocess,
                 "run",
                 side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=15),
             ):
-                self.assertFalse(rb.ffmpeg_supports_soxr())
+                self.assertFalse(ffmpeg_tools.ffmpeg_supports_soxr())
         finally:
-            rb.ffmpeg_supports_soxr.cache_clear()
+            ffmpeg_tools.ffmpeg_supports_soxr.cache_clear()
 
 
 if __name__ == "__main__":

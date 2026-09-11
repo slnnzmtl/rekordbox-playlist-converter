@@ -14,6 +14,8 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 import rb_playlist_to_wav as rb
+import convert_plan
+import ffmpeg_tools
 
 
 def write_pcm_wav(
@@ -305,14 +307,14 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 converted.append(dest)
                 write_pcm_wav(dest)
 
-            with mock.patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg):
+            with mock.patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
                 stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 1)
             self.assertEqual(stats.converted, 1)
             self.assertEqual(converted, [unsafe_dest])
 
             converted.clear()
-            with mock.patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg):
+            with mock.patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
                 stats = rb.convert_unique(plan, force=True)
             self.assertEqual(stats.converted, 2)
             self.assertEqual(converted, [safe_dest, unsafe_dest])
@@ -364,7 +366,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 converted.append(dest_path)
                 write_pcm_wav(dest_path, bits=24, sample_rate=48000)
 
-            with mock.patch.object(rb, "run_ffmpeg", side_effect=fake_ffmpeg):
+            with mock.patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
                 stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 0)
             self.assertEqual(stats.converted, 1)
@@ -423,7 +425,7 @@ class NoopUnsafeInPlaceTests(unittest.TestCase):
 """,
                 encoding="utf-8",
             )
-            with mock.patch.object(rb, "require_tools", return_value=[]):
+            with mock.patch.object(ffmpeg_tools, "require_tools", return_value=[]):
                 _, errors = rb.prepare(
                     xml_path, playlist, wav_dir, root / "import.xml"
                 )
