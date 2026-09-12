@@ -1294,8 +1294,9 @@ class GuiLibraryValidationTests(unittest.TestCase):
                 root.destroy()
 
     def test_done_dialog_reveal_actions_target_library_and_xml(self) -> None:
-        """Given a successful convert dialog: When shown: Then Reveal library and
-        Reveal import XML target wav_dir and the generated XML."""
+        """Given a successful convert dialog: When shown: Then Reveal audio folder
+        opens the WAV or AIFF playlist_dir, and Reveal import XML opens the
+        generated XML."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
@@ -1319,8 +1320,11 @@ class GuiLibraryValidationTests(unittest.TestCase):
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
                 lib = Path("/tmp/library-root")
+                wav_folder = lib / "WAV"
+                aiff_folder = lib / "AIFF"
                 xml = lib / "rekordbox-import.xml"
-                app._show_done_dialog("Done body", lib, xml)
+
+                app._show_done_dialog("Done body", wav_folder, xml)
                 dlg = None
                 for child in root.winfo_children():
                     if isinstance(child, tk.Toplevel):
@@ -1328,11 +1332,27 @@ class GuiLibraryValidationTests(unittest.TestCase):
                         break
                 self.assertIsNotNone(dlg)
                 self.assertTrue(
-                    GuiPreferencesStartupTests._click_button(dlg, "Reveal library")
+                    GuiPreferencesStartupTests._click_button(
+                        dlg, "Reveal audio folder"
+                    )
                 )
-                reveal.assert_called_with(lib)
-                # Dialog closes after reveal; open a fresh one for the XML button.
-                app._show_done_dialog("Done body", lib, xml)
+                reveal.assert_called_with(wav_folder)
+
+                app._show_done_dialog("Done body", aiff_folder, xml)
+                dlg = None
+                for child in root.winfo_children():
+                    if isinstance(child, tk.Toplevel):
+                        dlg = child
+                        break
+                self.assertIsNotNone(dlg)
+                self.assertTrue(
+                    GuiPreferencesStartupTests._click_button(
+                        dlg, "Reveal audio folder"
+                    )
+                )
+                reveal.assert_called_with(aiff_folder)
+
+                app._show_done_dialog("Done body", wav_folder, xml)
                 dlg = None
                 for child in root.winfo_children():
                     if isinstance(child, tk.Toplevel):

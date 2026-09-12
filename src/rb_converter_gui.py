@@ -68,6 +68,11 @@ BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items(
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
 ACTION_BUTTON_WIDTH = 9
 CANCELLED_STATUS_CLEAR_MS = 3000
+PREVIEW_ACTION_LABELS = {
+    "reuse": "Reuse existing",
+    "copy": "Copy",
+    "transcode": "Transcode",
+}
 
 
 @dataclass
@@ -575,17 +580,17 @@ class ConverterApp:
         frm.rowconfigure(1, weight=1)
 
         ttk.Label(frm, text="Rekordbox XML").grid(row=0, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.xml_var).grid(
-            row=0, column=1, sticky="ew", **pad
-        )
+        self.xml_entry = ttk.Entry(frm, textvariable=self.xml_var)
+        self.xml_entry.grid(row=0, column=1, sticky="ew", **pad)
         xml_btns = ttk.Frame(frm)
         xml_btns.grid(row=0, column=2, sticky="e", **pad)
-        ttk.Button(
+        self.xml_browse_btn = ttk.Button(
             xml_btns,
             text="Browse…",
             width=ACTION_BUTTON_WIDTH,
             command=self._browse_xml,
-        ).pack(side=tk.LEFT)
+        )
+        self.xml_browse_btn.pack(side=tk.LEFT)
         self.refresh_btn = ttk.Button(
             xml_btns, text="Refresh", command=self._refresh_xml
         )
@@ -678,15 +683,15 @@ class ConverterApp:
         self._refresh_tracklist_preview()
 
         ttk.Label(frm, text="Output folder").grid(row=2, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.wav_dir_var).grid(
-            row=2, column=1, sticky="ew", **pad
-        )
-        ttk.Button(
+        self.wav_dir_entry = ttk.Entry(frm, textvariable=self.wav_dir_var)
+        self.wav_dir_entry.grid(row=2, column=1, sticky="ew", **pad)
+        self.wav_dir_browse_btn = ttk.Button(
             frm,
             text="Browse…",
             width=ACTION_BUTTON_WIDTH,
             command=self._browse_wav_dir,
-        ).grid(row=2, column=2, sticky="e", **pad)
+        )
+        self.wav_dir_browse_btn.grid(row=2, column=2, sticky="e", **pad)
         self.wav_dir_error_label = ttk.Label(
             frm,
             textvariable=self.wav_dir_error_var,
@@ -708,20 +713,22 @@ class ConverterApp:
         ttk.Label(frm, text="Format").grid(row=5, column=0, sticky="w", **pad)
         format_opts = ttk.Frame(frm)
         format_opts.grid(row=5, column=1, sticky="w", **pad)
-        ttk.Radiobutton(
+        self.format_wav_radio = ttk.Radiobutton(
             format_opts,
             text="WAV",
             variable=self.format_var,
             value="wav",
             command=self._persist_output_preferences,
-        ).pack(side=tk.LEFT)
-        ttk.Radiobutton(
+        )
+        self.format_wav_radio.pack(side=tk.LEFT)
+        self.format_aiff_radio = ttk.Radiobutton(
             format_opts,
             text="AIFF",
             variable=self.format_var,
             value="aiff",
             command=self._persist_output_preferences,
-        ).pack(side=tk.LEFT, padx=(8, 0))
+        )
+        self.format_aiff_radio.pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Label(frm, text="Max. quality").grid(row=6, column=0, sticky="w", **pad)
         quality = ttk.Frame(frm)
@@ -982,6 +989,8 @@ class ConverterApp:
         return str(Path.home())
 
     def _browse_xml(self) -> None:
+        if self._busy:
+            return
         current = self.xml_var.get().strip()
         preferred = Path(current).expanduser().parent if current else None
         path = filedialog.askopenfilename(
@@ -1003,6 +1012,8 @@ class ConverterApp:
         self._load_playlists()
 
     def _browse_wav_dir(self) -> None:
+        if self._busy:
+            return
         current = self.wav_dir_var.get().strip()
         path = filedialog.askdirectory(
             title="Audio output folder",
@@ -1121,10 +1132,12 @@ class ConverterApp:
         self._refresh_tracklist_preview()
 
     def _on_playlist_select(self, _event: object = None) -> None:
+        if self._busy:
+            return
         self._refresh_tracklist_preview()
 
     def _on_tracklist_select(self, _event: object = None) -> None:
-        if self._tracklist_selecting:
+        if self._busy or self._tracklist_selecting:
             return
         preview = self.tracklist_tree
         selected = list(preview.selection())
@@ -1450,7 +1463,22 @@ class ConverterApp:
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        self.refresh_btn.configure(state=tk.DISABLED if busy else tk.NORMAL)
+        edit_state = tk.DISABLED if busy else tk.NORMAL
+        combo_state = "disabled" if busy else "readonly"
+        tree_state = ("disabled",) if busy else ("!disabled",)
+        self.xml_entry.configure(state=edit_state)
+        self.wav_dir_entry.configure(state=edit_state)
+        self.xml_browse_btn.configure(state=edit_state)
+        self.wav_dir_browse_btn.configure(state=edit_state)
+        self.search_entry.configure(state=edit_state)
+        self.track_search_entry.configure(state=edit_state)
+        self.format_wav_radio.configure(state=edit_state)
+        self.format_aiff_radio.configure(state=edit_state)
+        self.bit_depth_combo.configure(state=combo_state)
+        self.sample_rate_combo.configure(state=combo_state)
+        self.refresh_btn.configure(state=edit_state)
+        self.playlist_tree.state(tree_state)
+        self.tracklist_tree.state(tree_state)
         if busy:
             self._cancel_cancelled_clear()
             self._cancel_progress_anim()
@@ -1804,29 +1832,79 @@ class ConverterApp:
         self._show_conversion_preview(prepared)
 
     def _show_conversion_preview(self, prepared: PreparedConversion) -> None:
-        """Minimal confirm dialog (DDD-112 will replace with the full table)."""
+        """Modal unique-output preview; Convert continues, Back/Escape discard."""
         self._close_preview_dialog()
         preview = prepared.preview
         dlg = tk.Toplevel(self.root)
         self._preview_dialog = dlg
         dlg.title("Conversion preview")
         dlg.transient(self.root)
-        dlg.resizable(False, False)
+        dlg.minsize(640, 360)
+        dlg.resizable(True, True)
+
         frm = ttk.Frame(dlg, padding=16)
         frm.grid(row=0, column=0, sticky="nsew")
+        dlg.columnconfigure(0, weight=1)
+        dlg.rowconfigure(0, weight=1)
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(1, weight=1)
+
         summary = (
             f"{preview.unique_outputs} unique output file(s) · "
             f"{preview.selected} selected · "
+            f"{preview.resolved} resolved · "
+            f"{preview.duplicates} duplicate(s) · "
             f"{preview.missing} missing"
         )
-        ttk.Label(frm, text=summary, wraplength=420).grid(
-            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
+        ttk.Label(frm, text=summary, wraplength=620).grid(
+            row=0, column=0, sticky="w", pady=(0, 8)
         )
-        ttk.Label(
-            frm,
-            text="Confirm to write the library. Back discards this plan.",
-            wraplength=420,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 16))
+
+        table_frame = ttk.Frame(frm)
+        table_frame.grid(row=1, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        columns = ("action", "quality", "size")
+        table = ttk.Treeview(
+            table_frame,
+            columns=columns,
+            show="tree headings",
+            selectmode="browse",
+            height=12,
+        )
+        table.heading("#0", text="Output file", anchor="w")
+        table.heading("action", text="Action", anchor="w")
+        table.heading("quality", text="Quality", anchor="w")
+        table.heading("size", text="Size", anchor="e")
+        table.column("#0", width=280, stretch=True, minwidth=120)
+        table.column("action", width=120, stretch=False, anchor="w")
+        table.column("quality", width=140, stretch=False, anchor="w")
+        table.column("size", width=110, stretch=False, anchor="e")
+        yscroll = ttk.Scrollbar(
+            table_frame, orient=tk.VERTICAL, command=table.yview
+        )
+        table.configure(yscrollcommand=yscroll.set)
+        table.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+
+        for item in preview.items:
+            action = PREVIEW_ACTION_LABELS.get(item.action, item.action)
+            depth = BIT_DEPTH_LABELS.get(str(item.bit_depth), f"{item.bit_depth}-bit")
+            rate = SAMPLE_RATE_LABELS.get(
+                str(item.sample_rate), f"{item.sample_rate} Hz"
+            )
+            quality = f"{depth} / {rate}"
+            table.insert(
+                "",
+                tk.END,
+                text=item.relative_dest,
+                values=(action, quality, item.size_display),
+            )
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        btns.columnconfigure(0, weight=1)
 
         def on_back() -> None:
             self._discard_prepared_conversion()
@@ -1834,18 +1912,19 @@ class ConverterApp:
         def on_convert() -> None:
             self._confirm_prepared_conversion()
 
-        back_btn = ttk.Button(frm, text="Back", command=on_back, width=ACTION_BUTTON_WIDTH)
-        back_btn.grid(row=2, column=0, sticky="w")
-        convert_btn = ttk.Button(
-            frm, text="Convert", command=on_convert, width=ACTION_BUTTON_WIDTH
-        )
-        convert_btn.grid(row=2, column=1, sticky="e")
+        ttk.Button(
+            btns, text="Back", command=on_back, width=ACTION_BUTTON_WIDTH
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(
+            btns, text="Convert", command=on_convert, width=ACTION_BUTTON_WIDTH
+        ).grid(row=0, column=1, sticky="e")
         dlg.protocol("WM_DELETE_WINDOW", on_back)
         dlg.bind("<Escape>", lambda _e: on_back())
         try:
             dlg.grab_set()
         except tk.TclError:
             pass
+        self._place_dialog_over_app(dlg)
         self.status_var.set("Review conversion…")
         self._animate_progress_to(0, snap=True)
 
@@ -1979,7 +2058,7 @@ class ConverterApp:
             if batch_stats.errors:
                 self._ui(lambda e=batch_stats.errors: self._finish_error(e))
                 return
-            open_dir = wav_dir
+            open_dir = plans[0].playlist_dir
             out = str(output)
             if total_successful_conversions([batch_stats]) == 0:
                 self._ui(
@@ -2186,9 +2265,9 @@ class ConverterApp:
             self._show_usage_guide()
 
         if open_dir is not None:
-            ttk.Button(btns, text="Reveal library", command=reveal_library).pack(
-                side=tk.LEFT, padx=(0, 8)
-            )
+            ttk.Button(
+                btns, text="Reveal audio folder", command=reveal_library
+            ).pack(side=tk.LEFT, padx=(0, 8))
         if import_xml is not None:
             ttk.Button(
                 btns, text="Reveal import XML", command=reveal_import_xml

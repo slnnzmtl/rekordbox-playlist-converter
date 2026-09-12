@@ -1084,6 +1084,248 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
                 root.destroy()
 
 
+class ConversionPreviewDialogTests(unittest.TestCase):
+    def test_preview_modal_table_grab_and_disabled_controls(self) -> None:
+        """Given prepare finishes: When the preview opens: Then the modal shows
+        a unique-output table (file / action / quality / size), grabs focus,
+        disables editing controls, hides Convert behind the dialog, and Back
+        (same path as Escape/close) discards the prepared payload."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import tkinter.ttk as ttk
+        from contextlib import ExitStack
+        from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
+
+        plan = _mock_convert_plan(n_unique=1)
+        preview = rb.ConversionPreview(
+            selected=3,
+            resolved=3,
+            unique_outputs=3,
+            duplicates=0,
+            missing=0,
+            items=[
+                rb.ConversionPreviewItem(
+                    relative_dest="WAV/A - One.wav",
+                    action="reuse",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=1000,
+                    size_display="1000",
+                ),
+                rb.ConversionPreviewItem(
+                    relative_dest="WAV/B - Two.wav",
+                    action="copy",
+                    bit_depth=24,
+                    sample_rate=48000,
+                    size_bytes=288000,
+                    size_display="≈ 288000",
+                ),
+                rb.ConversionPreviewItem(
+                    relative_dest="WAV/C - Three.wav",
+                    action="transcode",
+                    bit_depth=24,
+                    sample_rate=48000,
+                    size_bytes=None,
+                    size_display="—",
+                ),
+            ],
+        )
+
+        def run_inline(target=None, **_kwargs):
+            class _T:
+                def start(self_inner):
+                    target()
+
+            return _T()
+
+        def find_toplevel(parent, title: str):
+            for child in parent.winfo_children():
+                if isinstance(child, tk.Toplevel):
+                    try:
+                        if child.title() == title:
+                            return child
+                    except tk.TclError:
+                        continue
+            return None
+
+        def find_treeview(widget):
+            if isinstance(widget, ttk.Treeview):
+                return widget
+            for child in widget.winfo_children():
+                found = find_treeview(child)
+                if found is not None:
+                    return found
+            return None
+
+        root = None
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.check_for_update",
+                        return_value=UpdateCheckResult(kind="up_to_date"),
+                    )
+                )
+                stack.enter_context(
+                    patch("rb_converter_gui.load_preferences", return_value={})
+                )
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.resolve_startup_paths",
+                        return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.rb.discover_xml_candidates",
+                        return_value=[],
+                    )
+                )
+                stack.enter_context(patch("rb_converter_gui.save_preferences"))
+                stack.enter_context(
+                    patch.object(
+                        ConverterApp,
+                        "_selected_playlists",
+                        return_value=[("ROOT", "Test")],
+                    )
+                )
+                stack.enter_context(
+                    patch("rb_converter_gui.rb.prepare", return_value=(plan, []))
+                )
+                stack.enter_context(patch("rb_converter_gui.rb.share_output_root"))
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.rb.collect_batch_unique",
+                        return_value=plan.unique,
+                    )
+                )
+                stack.enter_context(patch("rb_converter_gui.rb.share_cover_caches"))
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.rb.build_conversion_preview",
+                        return_value=preview,
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.threading.Thread",
+                        side_effect=run_inline,
+                    )
+                )
+
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app.xml_var.set("/tmp/test.xml")
+                _seed_track_selection(app)
+                _mark_output_folder_valid(app)
+                app._start_convert()
+                _pump_ui(root)
+
+                dlg = find_toplevel(root, "Conversion preview")
+                self.assertIsNotNone(dlg)
+                self.assertEqual(dlg.grab_current(), dlg)
+
+                table = find_treeview(dlg)
+                self.assertIsNotNone(table)
+                rows = [
+                    (
+                        table.item(iid, "text") or table.item(iid, "values")[0],
+                        table.item(iid, "values"),
+                    )
+                    for iid in table.get_children("")
+                ]
+                # Normalize to (file, action, quality, size) regardless of
+                # whether file is tree text (#0) or a values column.
+                normalized = []
+                for text, values in rows:
+                    vals = list(values)
+                    if text and (not vals or vals[0] != text):
+                        normalized.append((text, *vals[:3]))
+                    else:
+                        normalized.append(tuple(vals[:4]))
+                self.assertEqual(
+                    normalized,
+                    [
+                        (
+                            "WAV/A - One.wav",
+                            "Reuse existing",
+                            "16-bit / 44.1 kHz",
+                            "1000",
+                        ),
+                        (
+                            "WAV/B - Two.wav",
+                            "Copy",
+                            "24-bit / 48 kHz",
+                            "≈ 288000",
+                        ),
+                        (
+                            "WAV/C - Three.wav",
+                            "Transcode",
+                            "24-bit / 48 kHz",
+                            "—",
+                        ),
+                    ],
+                )
+
+                self.assertEqual(str(app.xml_entry.cget("state")), "disabled")
+                self.assertEqual(str(app.wav_dir_entry.cget("state")), "disabled")
+                self.assertEqual(str(app.xml_browse_btn.cget("state")), "disabled")
+                self.assertEqual(
+                    str(app.wav_dir_browse_btn.cget("state")), "disabled"
+                )
+                self.assertEqual(str(app.search_entry.cget("state")), "disabled")
+                self.assertEqual(
+                    str(app.track_search_entry.cget("state")), "disabled"
+                )
+                self.assertEqual(
+                    str(app.format_wav_radio.cget("state")), "disabled"
+                )
+                self.assertEqual(
+                    str(app.format_aiff_radio.cget("state")), "disabled"
+                )
+                self.assertEqual(
+                    str(app.bit_depth_combo.cget("state")), "disabled"
+                )
+                self.assertEqual(
+                    str(app.sample_rate_combo.cget("state")), "disabled"
+                )
+                self.assertEqual(str(app.refresh_btn.cget("state")), "disabled")
+                self.assertIn("disabled", app.playlist_tree.state())
+                self.assertIn("disabled", app.tracklist_tree.state())
+                self.assertEqual(app.convert_btn.winfo_manager(), "")
+                self.assertEqual(str(app.cancel_btn.cget("state")), "normal")
+                self.assertTrue(dlg.bind("<Escape>"))
+
+                def click_back(widget) -> bool:
+                    try:
+                        if (
+                            isinstance(widget, ttk.Button)
+                            and str(widget.cget("text")) == "Back"
+                        ):
+                            widget.invoke()
+                            return True
+                    except tk.TclError:
+                        pass
+                    for child in widget.winfo_children():
+                        if click_back(child):
+                            return True
+                    return False
+
+                self.assertTrue(click_back(dlg))
+                _pump_ui(root, times=10)
+                self.assertIsNone(app._prepared_conversion)
+                self.assertFalse(app._busy)
+                self.assertIsNone(find_toplevel(root, "Conversion preview"))
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+
 class ProgressStatusHintTests(unittest.TestCase):
     def test_progress_action_status_hint_puts_counter_after_action(self) -> None:
         """Hint reads Convert (n/m) TrackName… so the counter stays visible."""
