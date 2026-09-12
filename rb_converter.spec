@@ -130,7 +130,7 @@ app = BUNDLE(
     info_plist={
         "NSHighResolutionCapable": True,
         "CFBundleDisplayName": "Simple Rekordbox Converter",
-        "CFBundleShortVersionString": "1.2.0",
+        "CFBundleShortVersionString": "2.0.0",
         "NSDocumentsFolderUsageDescription": (
             "Writes converted audio files and the Rekordbox import XML."
         ),
