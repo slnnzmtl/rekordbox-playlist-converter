@@ -62,7 +62,7 @@ def run_ffprobe(path: Path) -> dict:
         "-show_entries",
         "stream=codec_name,sample_fmt,sample_rate,channels,bits_per_raw_sample",
         "-show_entries",
-        "format=format_name",
+        "format=format_name,duration",
         "-of",
         "json",
         str(path),

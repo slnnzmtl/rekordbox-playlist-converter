@@ -13,14 +13,17 @@ from pathlib import Path
 from unittest.mock import patch
 
 _SRC = Path(__file__).resolve().parents[1]
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
+_TESTS = Path(__file__).resolve().parent
+for _p in (_SRC, _TESTS):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
 import rb_playlist_to_wav as rb
 import convert_plan
 import converter_manifest
 import ffmpeg_tools
 import xml_output
+from test_cdj_safe_aiff import write_pcm_aiff
 
 
 def write_pcm_wav(
@@ -2395,6 +2398,596 @@ class SubprocessTimeoutTests(unittest.TestCase):
                 self.assertFalse(ffmpeg_tools.ffmpeg_supports_soxr())
         finally:
             ffmpeg_tools.ffmpeg_supports_soxr.cache_clear()
+
+
+class ConversionPreviewTests(unittest.TestCase):
+    def _plan_with(
+        self,
+        item: rb.PlannedTrack,
+        *,
+        output_format: str = "wav",
+        cover_cache: dict | None = None,
+    ) -> rb.Plan:
+        return rb.Plan(
+            playlist_name="P",
+            wav_playlist_name="P [WAV]" if output_format == "wav" else "P [AIFF]",
+            wav_dir=item.dest_path.parent.parent
+            if item.dest_path.parent.name in ("WAV", "AIFF")
+            else item.dest_path.parent,
+            playlist_dir=item.dest_path.parent,
+            output=item.dest_path.parent / "o.xml",
+            tracks=[item],
+            unique=[item],
+            source_root=ET.Element("DJ_PLAYLISTS"),
+            output_root=ET.Element("DJ_PLAYLISTS"),
+            output_existed=False,
+            output_format=output_format,
+            cover_cache=cover_cache if cover_cache is not None else {},
+        )
+
+    def test_planned_action_classifies_noop_reuse_copy_transcode_and_force(
+        self,
+    ) -> None:
+        """Given noop/canonical/copy_wav/transcode items: When planned_action
+        runs with and without force: Then actions follow the shared rules."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            src = root / "src.flac"
+            src.write_bytes(b"fLaC")
+
+            # noop → reuse even under force
+            noop_dest = root / "WAV" / "noop.wav"
+            noop_dest.parent.mkdir(parents=True)
+            noop = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=noop_dest,
+                dest_location=rb.encode_location(noop_dest),
+                dest_name=noop_dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=True,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = self._plan_with(noop)
+            self.assertEqual(rb.planned_action(plan, noop, force=False), "reuse")
+            self.assertEqual(rb.planned_action(plan, noop, force=True), "reuse")
+
+            # canonical WAV dest + not force → reuse; force → rebuild
+            wav_dest = root / "WAV" / "safe.wav"
+            write_pcm_wav(wav_dest, bits=16, sample_rate=44100)
+            wav_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=wav_dest,
+                dest_location=rb.encode_location(wav_dest),
+                dest_name=wav_dest.name,
+                codec="pcm_s16le",
+                copy_wav=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = self._plan_with(wav_item)
+            self.assertEqual(rb.planned_action(plan, wav_item, force=False), "reuse")
+            self.assertEqual(
+                rb.planned_action(plan, wav_item, force=True), "transcode"
+            )
+
+            # canonical AIFF dest + not force → reuse
+            aiff_src = root / "safe.aiff"
+            write_pcm_aiff(aiff_src)
+            aiff_dest = root / "AIFF" / "out.aiff"
+            aiff_dest.parent.mkdir(parents=True)
+            __import__("shutil").copy2(aiff_src, aiff_dest)
+            rb.write_aiff_id3(aiff_dest, el, None)
+            aiff_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=aiff_src,
+                dest_path=aiff_dest,
+                dest_location=rb.encode_location(aiff_dest),
+                dest_name=aiff_dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = self._plan_with(aiff_item, output_format="aiff")
+            self.assertEqual(
+                rb.planned_action(plan, aiff_item, force=False), "reuse"
+            )
+
+            # copy_wav → copy (no existing dest)
+            copy_dest = root / "WAV" / "copy.wav"
+            copy_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=copy_dest,
+                dest_location=rb.encode_location(copy_dest),
+                dest_name=copy_dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = self._plan_with(copy_item)
+            self.assertEqual(rb.planned_action(plan, copy_item, force=False), "copy")
+
+            # else → transcode
+            tx_dest = root / "WAV" / "tx.wav"
+            tx_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=tx_dest,
+                dest_location=rb.encode_location(tx_dest),
+                dest_name=tx_dest.name,
+                codec="pcm_s24le",
+                copy_wav=False,
+                noop=False,
+                bit_depth=24,
+                sample_rate=48000,
+            )
+            plan = self._plan_with(tx_item)
+            self.assertEqual(
+                rb.planned_action(plan, tx_item, force=False), "transcode"
+            )
+
+    def test_planned_action_matches_convert_unique_outcomes(self) -> None:
+        """Given reuse/copy/transcode items: When convert_unique runs: Then
+        progress labels map reuse→skip and match planned_action."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            wav_dir = root / "lib"
+            media = wav_dir / "WAV"
+            media.mkdir(parents=True)
+            el = ET.Element(
+                "TRACK", {"TrackID": "1", "Location": rb.encode_location(src)}
+            )
+
+            reuse_dest = media / "reuse.wav"
+            write_pcm_wav(reuse_dest, bits=16, sample_rate=44100)
+            reuse_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=reuse_dest,
+                dest_location=rb.encode_location(reuse_dest),
+                dest_name=reuse_dest.name,
+                codec="pcm_s16le",
+                copy_wav=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            copy_src = media / "src-copy.wav"
+            write_pcm_wav(copy_src, bits=16, sample_rate=44100)
+            copy_dest = media / "copy.wav"
+            copy_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=copy_src,
+                dest_path=copy_dest,
+                dest_location=rb.encode_location(copy_dest),
+                dest_name=copy_dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            tx_dest = media / "tx.wav"
+            tx_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=tx_dest,
+                dest_location=rb.encode_location(tx_dest),
+                dest_name=tx_dest.name,
+                codec="pcm_s16le",
+                copy_wav=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = rb.Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                wav_dir=wav_dir,
+                playlist_dir=media,
+                output=root / "o.xml",
+                tracks=[reuse_item, copy_item, tx_item],
+                unique=[reuse_item, copy_item, tx_item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+            )
+            progress_labels: dict[str, str] = {}
+
+            def on_progress(
+                _current: int, _total: int, action: str, name: str
+            ) -> None:
+                progress_labels[name] = action
+
+            def fake_ffmpeg(
+                source: Path, dest: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                write_pcm_wav(dest, bits=16, sample_rate=44100)
+
+            expected = {
+                reuse_item.dest_name: rb.planned_action(
+                    plan, reuse_item, force=False
+                ),
+                copy_item.dest_name: rb.planned_action(
+                    plan, copy_item, force=False
+                ),
+                tx_item.dest_name: rb.planned_action(plan, tx_item, force=False),
+            }
+            self.assertEqual(expected[reuse_item.dest_name], "reuse")
+            self.assertEqual(expected[copy_item.dest_name], "copy")
+            self.assertEqual(expected[tx_item.dest_name], "transcode")
+
+            with patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+                stats = rb.convert_unique(
+                    plan, force=False, progress=False, on_progress=on_progress
+                )
+            label_map = {"reuse": "skip", "copy": "copy", "transcode": "convert"}
+            for name, action in expected.items():
+                self.assertEqual(progress_labels[name], label_map[action])
+            self.assertEqual(stats.skipped, 1)
+            self.assertEqual(stats.copied, 1)
+            self.assertEqual(stats.converted, 1)
+
+    def test_preview_counts_and_item_fields_use_effective_quality(self) -> None:
+        """Given two playlists sharing one source plus a missing track and a
+        collision suffix: When build_conversion_preview runs: Then counts and
+        per-item fields use relative dest, action, and effective quality."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            music = root / "music"
+            a = music / "A.flac"
+            b = music / "B.flac"
+            for p in (a, b):
+                write_flac(p)
+            missing = music / "Missing.flac"
+            xml_path = root / "c.xml"
+            xml_path.write_text(
+                f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="3">
+    <TRACK TrackID="1" Name="Song" Artist="Same"
+           Location="{rb.encode_location(a)}" Kind="FLAC File"/>
+    <TRACK TrackID="2" Name="Song" Artist="Same"
+           Location="{rb.encode_location(b)}" Kind="FLAC File"/>
+    <TRACK TrackID="3" Name="Gone" Artist="X"
+           Location="{rb.encode_location(missing)}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="2">
+      <NODE Name="P1" Type="1" KeyType="0" Entries="3">
+        <TRACK Key="1"/><TRACK Key="2"/><TRACK Key="3"/>
+      </NODE>
+      <NODE Name="P2" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+""",
+                encoding="utf-8",
+            )
+            wav_dir = root / "out"
+            output = root / "import.xml"
+
+            def probe(path: Path) -> dict:
+                return {
+                    "format": {"format_name": "flac", "duration": "10.0"},
+                    "streams": [
+                        {
+                            "codec_name": "flac",
+                            "sample_fmt": "s16",
+                            "sample_rate": "44100",
+                            "channels": 2,
+                            "bits_per_raw_sample": "16",
+                        }
+                    ],
+                }
+
+            with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+                ffmpeg_tools, "run_ffprobe", side_effect=probe
+            ):
+                manifest = converter_manifest.empty_manifest()
+                plan1, err1 = rb.prepare(
+                    xml_path,
+                    "P1",
+                    wav_dir,
+                    output,
+                    max_bit_depth=24,
+                    max_sample_rate=48000,
+                    manifest=manifest,
+                )
+                plan2, err2 = rb.prepare(
+                    xml_path,
+                    "P2",
+                    wav_dir,
+                    output,
+                    max_bit_depth=24,
+                    max_sample_rate=48000,
+                    manifest=manifest,
+                )
+            self.assertEqual(err1, [])
+            self.assertEqual(err2, [])
+            assert plan1 is not None and plan2 is not None
+            plans = [plan1, plan2]
+            rb.share_output_root(plans)
+            items = rb.collect_batch_unique(plans)
+            preview = rb.build_conversion_preview(plans, items, force=False)
+
+            # P1: 2 resolved + 1 missing; P2: 1 resolved (shared source)
+            self.assertEqual(preview.resolved, 3)
+            self.assertEqual(preview.missing, 1)
+            self.assertEqual(preview.selected, 4)
+            self.assertEqual(preview.unique_outputs, 2)
+            self.assertEqual(preview.duplicates, 1)
+
+            by_dest = {it.relative_dest: it for it in preview.items}
+            self.assertIn("WAV/Same - Song.wav", by_dest)
+            self.assertIn("WAV/Same - Song (2).wav", by_dest)
+            for it in preview.items:
+                self.assertEqual(it.action, "transcode")
+                self.assertEqual(it.bit_depth, 16)
+                self.assertEqual(it.sample_rate, 44100)
+                self.assertNotEqual(it.bit_depth, plan1.max_bit_depth)
+                self.assertNotEqual(it.sample_rate, plan1.max_sample_rate)
+
+    def test_preview_size_reuse_actual_vs_estimate_and_unknown(self) -> None:
+        """Given reuse/copy/transcode/unknown-duration: When preview builds:
+        Then reuse uses dest size, estimates use duration×rate×bps×2 with ≈,
+        and missing duration shows —."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wav_dir = root / "lib"
+            media = wav_dir / "WAV"
+            media.mkdir(parents=True)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+
+            reuse_dest = media / "reuse.wav"
+            write_pcm_wav(reuse_dest, bits=16, sample_rate=44100, frames=100)
+            actual_size = reuse_dest.stat().st_size
+            reuse_src = root / "reuse-src.flac"
+            reuse_src.write_bytes(b"fLaC")
+            reuse_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=reuse_src,
+                dest_path=reuse_dest,
+                dest_location=rb.encode_location(reuse_dest),
+                dest_name=reuse_dest.name,
+                codec="pcm_s16le",
+                copy_wav=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                duration_seconds=12.0,
+            )
+
+            copy_src = media / "src.wav"
+            write_pcm_wav(copy_src)
+            copy_dest = media / "copy.wav"
+            copy_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=copy_src,
+                dest_path=copy_dest,
+                dest_location=rb.encode_location(copy_dest),
+                dest_name=copy_dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                duration_seconds=10.0,
+            )
+
+            tx_src = root / "tx.flac"
+            tx_src.write_bytes(b"fLaC")
+            tx_dest = media / "tx.wav"
+            tx_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=tx_src,
+                dest_path=tx_dest,
+                dest_location=rb.encode_location(tx_dest),
+                dest_name=tx_dest.name,
+                codec="pcm_s24le",
+                copy_wav=False,
+                noop=False,
+                bit_depth=24,
+                sample_rate=48000,
+                duration_seconds=5.0,
+            )
+
+            unknown_src = root / "unk.flac"
+            unknown_src.write_bytes(b"fLaC")
+            unknown_dest = media / "unk.wav"
+            unknown_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=unknown_src,
+                dest_path=unknown_dest,
+                dest_location=rb.encode_location(unknown_dest),
+                dest_name=unknown_dest.name,
+                codec="pcm_s16le",
+                copy_wav=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                duration_seconds=None,
+            )
+
+            plan = rb.Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                wav_dir=wav_dir,
+                playlist_dir=media,
+                output=root / "o.xml",
+                tracks=[reuse_item, copy_item, tx_item, unknown_item],
+                unique=[reuse_item, copy_item, tx_item, unknown_item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+            )
+            preview = rb.build_conversion_preview([plan], plan.unique, force=False)
+            by_dest = {it.relative_dest: it for it in preview.items}
+
+            reuse_row = by_dest["WAV/reuse.wav"]
+            self.assertEqual(reuse_row.action, "reuse")
+            self.assertEqual(reuse_row.size_bytes, actual_size)
+            self.assertEqual(reuse_row.size_display, str(actual_size))
+            self.assertNotIn("≈", reuse_row.size_display)
+
+            copy_est = int(10.0 * 44100 * 2 * 2)  # 16-bit → 2 bytes/sample
+            copy_row = by_dest["WAV/copy.wav"]
+            self.assertEqual(copy_row.action, "copy")
+            self.assertEqual(copy_row.size_bytes, copy_est)
+            self.assertEqual(copy_row.size_display, f"≈ {copy_est}")
+
+            tx_est = int(5.0 * 48000 * 3 * 2)  # 24-bit → 3 bytes/sample
+            tx_row = by_dest["WAV/tx.wav"]
+            self.assertEqual(tx_row.action, "transcode")
+            self.assertEqual(tx_row.size_bytes, tx_est)
+            self.assertEqual(tx_row.size_display, f"≈ {tx_est}")
+
+            unk_row = by_dest["WAV/unk.wav"]
+            self.assertEqual(unk_row.size_bytes, None)
+            self.assertEqual(unk_row.size_display, "—")
+
+            # duration_seconds from ffprobe format.duration in the same probe
+            src = root / "probed.flac"
+            write_flac(src)
+            xml_path = root / "c.xml"
+            xml_path.write_text(
+                f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="1">
+    <TRACK TrackID="1" Name="Probed" Artist="A"
+           Location="{rb.encode_location(src)}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="P" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+""",
+                encoding="utf-8",
+            )
+            captured_cmds: list[list[str]] = []
+
+            def fake_run(cmd, **_kwargs):
+                captured_cmds.append(list(cmd))
+
+                class Proc:
+                    returncode = 0
+                    stdout = json.dumps(
+                        {
+                            "format": {
+                                "format_name": "flac",
+                                "duration": "3.5",
+                            },
+                            "streams": [
+                                {
+                                    "codec_name": "flac",
+                                    "sample_fmt": "s16",
+                                    "sample_rate": "44100",
+                                    "channels": 2,
+                                    "bits_per_raw_sample": "16",
+                                }
+                            ],
+                        }
+                    )
+                    stderr = ""
+
+                return Proc()
+
+            with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+                ffmpeg_tools, "tool_path", return_value="/bin/ffprobe"
+            ), patch.object(ffmpeg_tools.subprocess, "run", side_effect=fake_run):
+                plan2, errors = rb.prepare(
+                    xml_path, "P", wav_dir, root / "import.xml"
+                )
+            self.assertEqual(errors, [])
+            assert plan2 is not None
+            self.assertEqual(plan2.unique[0].duration_seconds, 3.5)
+            self.assertTrue(
+                any(
+                    "format=format_name,duration" in " ".join(c) or
+                    any(
+                        e == "format=format_name,duration"
+                        for e in c
+                    )
+                    for c in captured_cmds
+                ),
+                f"ffprobe must request duration in format entries; got {captured_cmds!r}",
+            )
+
+            # invalid durations → None
+            for bad in ("", "nan", "-1", "inf", "not-a-number"):
+                item = rb.PlannedTrack(
+                    source_el=el,
+                    source_path=tx_src,
+                    dest_path=tx_dest,
+                    dest_location=rb.encode_location(tx_dest),
+                    dest_name=tx_dest.name,
+                    codec="pcm_s16le",
+                    copy_wav=False,
+                    noop=False,
+                    duration_seconds=None,
+                )
+                # parse via helper used by build_plan
+                parsed = convert_plan.parse_duration_seconds({"format": {"duration": bad}})
+                self.assertIsNone(parsed, f"expected None for {bad!r}")
+
+    def test_aiff_planned_action_uses_plan_cover_cache(self) -> None:
+        """Given a canonical AIFF dest and a populated cover_cache: When
+        planned_action classifies reuse: Then extract_cover_jpeg is not called."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "safe.aiff"
+            write_pcm_aiff(src)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            dest = root / "AIFF" / "out.aiff"
+            dest.parent.mkdir(parents=True)
+            __import__("shutil").copy2(src, dest)
+            cover_bytes = b"\xff\xd8\xffcover"
+            rb.write_aiff_id3(dest, el, cover_bytes)
+            item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=rb.encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = self._plan_with(
+                item,
+                output_format="aiff",
+                cover_cache={src: cover_bytes},
+            )
+            with patch.object(
+                convert_plan, "extract_cover_jpeg", return_value=None
+            ) as extract:
+                action = rb.planned_action(plan, item, force=False)
+            self.assertEqual(action, "reuse")
+            extract.assert_not_called()
 
 
 if __name__ == "__main__":

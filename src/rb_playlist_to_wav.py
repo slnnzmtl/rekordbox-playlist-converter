@@ -89,6 +89,8 @@ Progress = convert_plan.Progress
 PlannedTrack = convert_plan.PlannedTrack
 Plan = convert_plan.Plan
 ConvertStats = convert_plan.ConvertStats
+ConversionPreview = convert_plan.ConversionPreview
+ConversionPreviewItem = convert_plan.ConversionPreviewItem
 cached_cover_jpeg = convert_plan.cached_cover_jpeg
 abs_path = convert_plan.abs_path
 sanitize_path_component = convert_plan.sanitize_path_component
@@ -102,12 +104,15 @@ same_file = convert_plan.same_file
 target_from_stream = convert_plan.target_from_stream
 pcm_codec_for_depth = convert_plan.pcm_codec_for_depth
 classify_source = convert_plan.classify_source
+parse_duration_seconds = convert_plan.parse_duration_seconds
 build_plan = convert_plan.build_plan
 run_ffmpeg = convert_plan.run_ffmpeg
 write_aiff_output = convert_plan.write_aiff_output
 source_key = convert_plan.source_key
 collect_batch_unique = convert_plan.collect_batch_unique
 share_cover_caches = convert_plan.share_cover_caches
+planned_action = convert_plan.planned_action
+build_conversion_preview = convert_plan.build_conversion_preview
 convert_unique = convert_plan.convert_unique
 
 # Re-exports from xml_output for callers.

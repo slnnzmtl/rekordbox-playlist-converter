@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
@@ -120,6 +121,27 @@ class PlannedTrack:
     noop: bool
     bit_depth: int = 24
     sample_rate: int = 48000
+    duration_seconds: float | None = None
+
+
+@dataclass
+class ConversionPreviewItem:
+    relative_dest: str
+    action: str
+    bit_depth: int
+    sample_rate: int
+    size_bytes: int | None = None
+    size_display: str = "—"
+
+
+@dataclass
+class ConversionPreview:
+    selected: int
+    resolved: int
+    unique_outputs: int
+    duplicates: int
+    missing: int
+    items: list[ConversionPreviewItem] = field(default_factory=list)
 
 
 @dataclass
@@ -196,6 +218,116 @@ def share_cover_caches(plans: list[Plan]) -> None:
         plan.cover_cache = host.cover_cache
 
 
+def planned_action(
+    plan: Plan,
+    item: PlannedTrack,
+    force: bool,
+    *,
+    cover_lock: threading.Lock | None = None,
+) -> str:
+    """Classify read-only action: reuse, copy, or transcode."""
+    if item.noop:
+        return "reuse"
+    is_aiff = item.dest_path.suffix.lower() == ".aiff"
+    if not force:
+        if is_aiff:
+            cover = cached_cover_jpeg(
+                item.source_path, plan.cover_cache, lock=cover_lock
+            )
+            if _is_canonical_aiff_output(
+                item.dest_path,
+                item.source_el,
+                cover,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+            ):
+                return "reuse"
+        elif is_cdj_safe_wav(
+            item.dest_path,
+            bit_depth=item.bit_depth,
+            sample_rate=item.sample_rate,
+        ):
+            return "reuse"
+    if item.copy_wav:
+        return "copy"
+    return "transcode"
+
+
+def _plan_for_preview_item(plans: list[Plan], item: PlannedTrack) -> Plan:
+    for plan in plans:
+        if item in plan.unique or item in plan.tracks:
+            return plan
+    return plans[0]
+
+
+def _preview_size(item: PlannedTrack, action: str) -> tuple[int | None, str]:
+    """Return (bytes, display). Reuse uses dest size; else estimate PCM."""
+    if action == "reuse":
+        try:
+            if item.dest_path.is_file():
+                size = item.dest_path.stat().st_size
+                return size, str(size)
+        except OSError:
+            pass
+        return None, "—"
+    duration = item.duration_seconds
+    if duration is None or not math.isfinite(duration) or duration < 0:
+        return None, "—"
+    bytes_per_sample = 2 if item.bit_depth == 16 else 3
+    estimated = int(duration * item.sample_rate * bytes_per_sample * 2)
+    return estimated, f"≈ {estimated}"
+
+
+def build_conversion_preview(
+    plans: list[Plan],
+    items: list[PlannedTrack],
+    force: bool,
+) -> ConversionPreview:
+    """Build a read-only conversion preview from prepared plans and unique items."""
+    if not plans:
+        return ConversionPreview(
+            selected=0,
+            resolved=0,
+            unique_outputs=0,
+            duplicates=0,
+            missing=0,
+            items=[],
+        )
+    resolved = sum(len(plan.tracks) for plan in plans)
+    missing = sum(len(plan.warnings) for plan in plans)
+    selected = resolved + missing
+    unique_outputs = len(items)
+    duplicates = resolved - unique_outputs
+    wav_dir = plans[0].wav_dir
+    preview_items: list[ConversionPreviewItem] = []
+    for item in items:
+        plan = _plan_for_preview_item(plans, item)
+        action = planned_action(plan, item, force)
+        try:
+            relative_dest = item.dest_path.relative_to(wav_dir).as_posix()
+        except ValueError:
+            relative_dest = item.dest_path.name
+        size_bytes, size_display = _preview_size(item, action)
+        preview_items.append(
+            ConversionPreviewItem(
+                relative_dest=relative_dest,
+                action=action,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+                size_bytes=size_bytes,
+                size_display=size_display,
+            )
+        )
+    return ConversionPreview(
+        selected=selected,
+        resolved=resolved,
+        unique_outputs=unique_outputs,
+        duplicates=duplicates,
+        missing=missing,
+        items=preview_items,
+    )
+
+
 def convert_unique(
     plan: Plan,
     force: bool,
@@ -230,7 +362,8 @@ def convert_unique(
             return
         name = item.dest_name
         is_aiff = item.dest_path.suffix.lower() == ".aiff"
-        if item.noop:
+        action = planned_action(plan, item, force, cover_lock=cover_lock)
+        if action == "reuse":
             with stats_lock:
                 stats.skipped += 1
             mark_succeeded(item)
@@ -241,22 +374,6 @@ def convert_unique(
                 plan.wav_dir, item.dest_path
             )
             if is_aiff:
-                cover = cached_cover_jpeg(
-                    item.source_path, plan.cover_cache, lock=cover_lock
-                )
-                if not force and _is_canonical_aiff_output(
-                    item.dest_path,
-                    item.source_el,
-                    cover,
-                    bit_depth=item.bit_depth,
-                    sample_rate=item.sample_rate,
-                ):
-                    with stats_lock:
-                        stats.skipped += 1
-                    mark_succeeded(item)
-                    finish("skip", name)
-                    return
-                action = "copy" if item.copy_wav else "convert"
                 write_aiff_output(
                     item.source_path,
                     item.dest_path,
@@ -275,17 +392,7 @@ def convert_unique(
                     else:
                         stats.converted += 1
                 mark_succeeded(item)
-                finish(action, name)
-                return
-            if not force and is_cdj_safe_wav(
-                item.dest_path,
-                bit_depth=item.bit_depth,
-                sample_rate=item.sample_rate,
-            ):
-                with stats_lock:
-                    stats.skipped += 1
-                mark_succeeded(item)
-                finish("skip", name)
+                finish("copy" if item.copy_wav else "convert", name)
                 return
             if item.copy_wav:
                 _copy_wav_atomic(
@@ -552,6 +659,21 @@ def same_file(a: Path, b: Path) -> bool:
         return False
 
 
+def parse_duration_seconds(probe: dict) -> float | None:
+    """Extract duration from ffprobe JSON; invalid/non-finite/negative → None."""
+    fmt = probe.get("format") or {}
+    raw = fmt.get("duration") if isinstance(fmt, dict) else None
+    if raw is None or raw == "":
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return value
+
+
 def build_plan(
     source_root: ET.Element,
     playlist_el: ET.Element,
@@ -685,6 +807,7 @@ def build_plan(
         item.codec = None if is_copy else codec
         item.bit_depth = bits
         item.sample_rate = rate
+        item.duration_seconds = parse_duration_seconds(probe)
         in_place = same_file(item.source_path, item.dest_path)
         if output_format == "aiff":
             if in_place:
