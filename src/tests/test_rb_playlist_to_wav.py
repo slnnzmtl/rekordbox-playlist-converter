@@ -1014,7 +1014,7 @@ class XmlFixtureTests(unittest.TestCase):
             )
         self.assertEqual(rc1, 0)
         data = json.loads(
-            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+            (self.wav_dir / converter_manifest.MANIFEST_NAME).read_text(
                 encoding="utf-8"
             )
         )
@@ -1057,7 +1057,7 @@ class XmlFixtureTests(unittest.TestCase):
             "WAV/Same - Song (2).wav",
         )
         data2 = json.loads(
-            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+            (self.wav_dir / converter_manifest.MANIFEST_NAME).read_text(
                 encoding="utf-8"
             )
         )
@@ -1082,8 +1082,8 @@ class XmlFixtureTests(unittest.TestCase):
         preferred.parent.mkdir(parents=True)
         preferred.write_bytes(b"UNRELATED-OCCUPANT")
         # Managed library (valid empty manifest) so orphan audio is allowed.
-        (self.wav_dir / "rekordbox-converter-manifest.json").write_text(
-            json.dumps({"version": 1, "tracks": {}}),
+        (self.wav_dir / converter_manifest.MANIFEST_NAME).write_text(
+            json.dumps({"version": 1, "layout": "format-flat", "tracks": {}}),
             encoding="utf-8",
         )
 
@@ -1133,7 +1133,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertTrue(numbered.is_file())
         self.assertEqual(preferred.read_bytes(), b"UNRELATED-OCCUPANT")
         data = json.loads(
-            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+            (self.wav_dir / converter_manifest.MANIFEST_NAME).read_text(
                 encoding="utf-8"
             )
         )
@@ -1277,7 +1277,7 @@ class XmlFixtureTests(unittest.TestCase):
             (self.wav_dir / "WAV" / "New Artist - New Name.wav").exists()
         )
         data = json.loads(
-            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+            (self.wav_dir / converter_manifest.MANIFEST_NAME).read_text(
                 encoding="utf-8"
             )
         )
@@ -1298,7 +1298,7 @@ class XmlFixtureTests(unittest.TestCase):
         """Given a corrupt manifest on disk: When main converts: Then exit is
         nonzero, stderr mentions the manifest, and no audio/XML is written."""
         self.wav_dir.mkdir(parents=True)
-        (self.wav_dir / "rekordbox-converter-manifest.json").write_text(
+        (self.wav_dir / converter_manifest.MANIFEST_NAME).write_text(
             "{bad", encoding="utf-8"
         )
         stderr = io.StringIO()
@@ -1323,12 +1323,12 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertFalse(any(self.wav_dir.rglob("*.wav")))
 
     def test_cli_refuses_legacy_playlist_dir_without_manifest(self) -> None:
-        """Given an old playlist-dir tree with WAV and no manifest: When main
+        """Given format-flat WAV audio and no hidden manifest: When main
         converts: Then exit is nonzero, stderr asks for a new empty output
         folder, and no new audio/XML is written."""
-        legacy = self.wav_dir / "Old Playlist"
+        legacy = self.wav_dir / "WAV"
         legacy.mkdir(parents=True)
-        (legacy / "track.wav").write_bytes(b"RIFF")
+        (legacy / "Artist - Track.wav").write_bytes(b"RIFF")
         stderr = io.StringIO()
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
@@ -1350,7 +1350,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertIn("new empty output folder", err)
         self.assertFalse(self.output.exists())
         self.assertFalse(
-            (self.wav_dir / "rekordbox-converter-manifest.json").exists()
+            (self.wav_dir / converter_manifest.MANIFEST_NAME).exists()
         )
 
     def test_failed_encodes_keep_manifest_reservations(self) -> None:
@@ -1378,7 +1378,7 @@ class XmlFixtureTests(unittest.TestCase):
             )
         self.assertEqual(rc, 1)
         data = json.loads(
-            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+            (self.wav_dir / converter_manifest.MANIFEST_NAME).read_text(
                 encoding="utf-8"
             )
         )
@@ -1446,7 +1446,7 @@ class XmlFixtureTests(unittest.TestCase):
             (self.wav_dir / "WAV" / "ABSL - Bestial (2).wav").exists()
         )
         data = json.loads(
-            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+            (self.wav_dir / converter_manifest.MANIFEST_NAME).read_text(
                 encoding="utf-8"
             )
         )
@@ -1524,7 +1524,7 @@ class XmlFixtureTests(unittest.TestCase):
             (self.wav_dir / "WAV" / "ABSL - Bestial (2).wav").exists()
         )
         data = json.loads(
-            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+            (self.wav_dir / converter_manifest.MANIFEST_NAME).read_text(
                 encoding="utf-8"
             )
         )
@@ -1585,7 +1585,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(rc_wav, 0)
         self.assertEqual(rc_aiff, 0)
         data = json.loads(
-            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+            (self.wav_dir / converter_manifest.MANIFEST_NAME).read_text(
                 encoding="utf-8"
             )
         )
@@ -1995,7 +1995,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
         self.assertFalse(self.wav_dir.exists())
         self.assertFalse(
-            (self.root / "WAV" / "rekordbox-converter-manifest.json").exists()
+            (self.root / "WAV" / converter_manifest.MANIFEST_NAME).exists()
         )
 
     def test_main_omitted_output_writes_import_xml_under_wav_dir(self) -> None:

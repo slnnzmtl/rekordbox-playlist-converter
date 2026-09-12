@@ -12,9 +12,11 @@ from typing import Any
 
 from cli_error import CliError
 
-MANIFEST_NAME = "rekordbox-converter-manifest.json"
+MANIFEST_NAME = ".rekordbox-converter-manifest.json"
 MANIFEST_VERSION = 1
+MANIFEST_LAYOUT = "format-flat"
 SUPPORTED_FORMATS = frozenset({"wav", "aiff"})
+_FORMAT_DIRS = {"wav": "WAV", "aiff": "AIFF"}
 
 
 class ManifestError(CliError):
@@ -60,7 +62,11 @@ class ConverterManifest:
         return keys
 
     def to_dict(self) -> dict[str, Any]:
-        return {"version": MANIFEST_VERSION, "tracks": self.tracks}
+        return {
+            "version": MANIFEST_VERSION,
+            "layout": MANIFEST_LAYOUT,
+            "tracks": self.tracks,
+        }
 
 
 def manifest_path(wav_dir: Path) -> Path:
@@ -109,11 +115,24 @@ def _validate_dest_relative(dest: object, *, fmt: str, wav_dir: Path) -> str | N
         return f"manifest dest must be a relative posix path (no backslashes): {dest!r}"
     if dest.startswith("/") or PurePosixPath(dest).is_absolute():
         return f"manifest dest must be relative (not absolute): {dest!r}"
-    parts = PurePosixPath(dest).parts
-    if not parts or any(p in (".", "..") for p in parts):
-        return f"manifest dest must not contain '.' or '..' components: {dest!r}"
+    # Split the raw string so '.' / '..' are not normalized away by pathlib.
+    parts = dest.split("/")
+    if len(parts) != 2 or any(p in ("", ".", "..") for p in parts):
+        return (
+            "manifest dest must be exactly two components "
+            f"(WAV/<file>.wav or AIFF/<file>.aiff): {dest!r}"
+        )
+    expected_dir = _FORMAT_DIRS[fmt]
     expected_ext = f".{fmt}"
-    if PurePosixPath(dest).suffix.lower() != expected_ext:
+    directory, filename = parts
+    if directory != expected_dir:
+        return (
+            f"manifest dest directory must be {expected_dir!r} for format "
+            f"{fmt!r}: {dest!r}"
+        )
+    if PurePosixPath(filename).name != filename:
+        return f"manifest dest filename must be a single path segment: {dest!r}"
+    if PurePosixPath(filename).suffix.lower() != expected_ext:
         return (
             f"manifest dest extension must match format {fmt!r}: {dest!r}"
         )
@@ -133,6 +152,11 @@ def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
         errors.append(
             f"manifest version must be {MANIFEST_VERSION}, "
             f"got {data.get('version')!r}"
+        )
+    if data.get("layout") != MANIFEST_LAYOUT:
+        errors.append(
+            f"manifest layout must be {MANIFEST_LAYOUT!r}, "
+            f"got {data.get('layout')!r}"
         )
     tracks = data.get("tracks")
     if not isinstance(tracks, dict):
