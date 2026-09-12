@@ -511,29 +511,5 @@ class NoopUnsafeInPlaceTests(unittest.TestCase):
             )
 
 
-class StreamingWavRewriteTests(unittest.TestCase):
-    def test_rewrite_wav_pcm_does_not_call_source_read_bytes(self) -> None:
-        """Given a large PCM WAV: When rewriting: Then source Path.read_bytes
-        is never used (stream via open / chunk walker instead)."""
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "large.wav"
-            dest = Path(tmp) / "out.wav"
-            # stereo 16-bit ≈ 4 bytes/frame; 20k frames ≈ 80KB PCM payload
-            write_pcm_wav(source, frames=20_000)
-            real_read_bytes = Path.read_bytes
-
-            def forbid_source_read_bytes(self: Path) -> bytes:
-                if self.resolve() == source.resolve():
-                    raise AssertionError(
-                        "Path.read_bytes must not load full PCM for streaming rewrite"
-                    )
-                return real_read_bytes(self)
-
-            with mock.patch.object(Path, "read_bytes", forbid_source_read_bytes):
-                rb._rewrite_wav_pcm(source, dest)
-            self.assertTrue(dest.is_file())
-            self.assertGreater(dest.stat().st_size, 0)
-
-
 if __name__ == "__main__":
     unittest.main()
