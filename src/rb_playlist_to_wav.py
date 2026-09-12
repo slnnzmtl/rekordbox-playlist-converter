@@ -391,13 +391,10 @@ def run_convert_batch(
     xml_output.share_output_root(plans)
 
     if dry_run:
-        for i, plan in enumerate(plans):
-            if len(plans) > 1:
-                print()
-                folder, name = playlist_refs[i]
-                label = playlist_label(folder, name) if folder else name
-                print(f"=== {label} ({i + 1}/{len(plans)}) ===")
-            print_summary(plan, None, dry_run=True)
+        items = convert_plan.collect_batch_unique(plans)
+        convert_plan.share_cover_caches(plans)
+        preview = convert_plan.build_conversion_preview(plans, items, force=force)
+        print_conversion_preview(plans, preview)
         return 0
 
     try:
@@ -449,6 +446,35 @@ def print_errors(errors: list[str]) -> None:
 def print_warnings(warnings: list[str]) -> None:
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
+
+
+def print_conversion_preview(plans: list[Plan], preview: ConversionPreview) -> None:
+    """Print shared ConversionPreview for CLI --dry-run (read-only)."""
+    print(
+        f"{preview.unique_outputs} unique output file(s) · "
+        f"{preview.selected} selected · "
+        f"{preview.resolved} resolved · "
+        f"{preview.duplicates} duplicate(s) · "
+        f"{preview.missing} missing"
+    )
+    print()
+    print("Format directory:")
+    print(plans[0].playlist_dir)
+    print()
+    if preview.items:
+        print("Outputs:")
+        for item in preview.items:
+            quality = f"{item.bit_depth}-bit / {item.sample_rate} Hz"
+            print(
+                f"{item.relative_dest}  {item.action}  {quality}  {item.size_display}"
+            )
+        print()
+    print("New playlist:")
+    for plan in plans:
+        print(plan.wav_playlist_name)
+    print()
+    print("Import XML:")
+    print(plans[0].output)
 
 
 def print_summary(

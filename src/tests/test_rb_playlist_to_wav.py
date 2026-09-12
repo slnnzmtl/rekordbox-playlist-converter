@@ -1977,12 +1977,32 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(self.output.read_text(encoding="utf-8"), "not a rekordbox collection")
 
     def test_dry_run_writes_nothing(self) -> None:
-        """Given --dry-run: When main runs: Then no manifest, format dirs,
-        audio, Import XML, sidecars, or temps appear under the output root."""
-        buf = io.StringIO()
+        """Given --dry-run with one missing source: When main runs: Then nothing
+        is written, and stdout reports ConversionPreview counts, format dir,
+        each unique path/action/quality/size, missing warnings, playlist name,
+        and Import XML path."""
+        self.c.unlink()
+        duration = 10.0
+        # 24-bit stereo PCM estimate: duration × rate × 3 × 2
+        size_est = int(duration * 44100 * 3 * 2)
+
+        def probe_with_duration(path: Path) -> dict:
+            data = self._probe(path)
+            if path.suffix.lower() != ".wav":
+                data = {
+                    "format": {
+                        "format_name": "flac",
+                        "duration": str(duration),
+                    },
+                    "streams": list(data["streams"]),
+                }
+            return data
+
+        out_buf = io.StringIO()
+        err_buf = io.StringIO()
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
-            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch("sys.stdout", buf):
+            ffmpeg_tools, "run_ffprobe", side_effect=probe_with_duration
+        ), patch("sys.stdout", out_buf), patch("sys.stderr", err_buf):
             rc = rb.main(
                 [
                     "--xml",
@@ -2036,6 +2056,62 @@ class XmlFixtureTests(unittest.TestCase):
             [],
             f"dry-run wrote under output root: {audio_or_sidecar}",
         )
+
+        stdout = out_buf.getvalue()
+        stderr = err_buf.getvalue()
+        # summary counts (2 resolved + 1 missing; 2 unique; 0 duplicates)
+        self.assertIn("2 unique output file(s)", stdout)
+        self.assertIn("3 selected", stdout)
+        self.assertIn("2 resolved", stdout)
+        self.assertIn("0 duplicate(s)", stdout)
+        self.assertIn("1 missing", stdout)
+        # selected format directory
+        format_dir = str(self.wav_dir / "WAV")
+        self.assertIn(format_dir, stdout)
+        # unique relative paths + action + effective quality + size
+        for rel in ("WAV/ABSL - Bestial.wav", "WAV/Shogan - Revelation.wav"):
+            self.assertIn(rel, stdout)
+        self.assertNotIn("WAV/Quantum - Movement.wav", stdout)
+        self.assertIn("transcode", stdout)
+        self.assertIn("24-bit / 44100 Hz", stdout)
+        self.assertIn(f"≈ {size_est}", stdout)
+        # missing-source warning
+        self.assertIn("missing source file", stderr)
+        self.assertIn(str(self.c), stderr)
+        # resulting playlist name + Import XML path
+        self.assertIn("Untitled Intelligent List [WAV]", stdout)
+        self.assertIn(str(self.output), stdout)
+
+    def test_normal_cli_convert_has_no_confirmation_prompt(self) -> None:
+        """Given full CLI args without --dry-run: When main converts: Then
+        input() is never called (no conversion confirmation prompt)."""
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ), patch(
+            "builtins.input",
+            side_effect=AssertionError("unexpected confirmation prompt"),
+        ), patch("sys.stdout", io.StringIO()):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.output.is_file())
 
     def test_main_omitted_output_writes_import_xml_under_wav_dir(self) -> None:
         """Given no --output: When main converts: Then import XML is
