@@ -878,6 +878,232 @@ class XmlFixtureTests(unittest.TestCase):
             _, errors = rb.prepare(bad, "Untitled Intelligent List", self.wav_dir, self.output)
         self.assertTrue(any("invalid Rekordbox file URL" in e for e in errors))
 
+    def test_identical_metadata_gets_numbered_suffixes(self) -> None:
+        """Given three sources with identical Artist/Album/Name: When prepare
+        runs: Then dests are Name.wav, Name (2).wav, Name (3).wav and none are
+        dropped for the clash."""
+        srcs = [
+            self.music / "a" / "one.flac",
+            self.music / "b" / "two.flac",
+            self.music / "c" / "three.flac",
+        ]
+        for p in srcs:
+            write_flac(p)
+        xml = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="3">
+    <TRACK TrackID="1" Name="Song" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(srcs[0])}" Kind="FLAC File"/>
+    <TRACK TrackID="2" Name="Song" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(srcs[1])}" Kind="FLAC File"/>
+    <TRACK TrackID="3" Name="Song" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(srcs[2])}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="Triple" Type="1" KeyType="0" Entries="3">
+        <TRACK Key="1"/><TRACK Key="2"/><TRACK Key="3"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        path = self.root / "triple-clash.xml"
+        path.write_text(xml, encoding="utf-8")
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ):
+            plan, errors = rb.prepare(path, "Triple", self.wav_dir, self.output)
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(len(plan.unique), 3)
+        dests = {
+            u.source_path: u.dest_path.relative_to(plan.wav_dir).as_posix()
+            for u in plan.unique
+        }
+        self.assertEqual(dests[srcs[0]], "Same/Hits/Song.wav")
+        self.assertEqual(dests[srcs[1]], "Same/Hits/Song (2).wav")
+        self.assertEqual(dests[srcs[2]], "Same/Hits/Song (3).wav")
+
+    def test_numbered_dest_stays_stable_when_earlier_source_absent(
+        self,
+    ) -> None:
+        """Given Song.wav and Song (2).wav reserved: When only the (2) source
+        remains in the playlist: Then it keeps Song (2).wav (no compact)."""
+        first = self.music / "a" / "one.flac"
+        second = self.music / "b" / "two.flac"
+        for p in (first, second):
+            write_flac(p)
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        both = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="2">
+    <TRACK TrackID="1" Name="Song" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(first)}" Kind="FLAC File"/>
+    <TRACK TrackID="2" Name="Song" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(second)}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="Both" Type="1" KeyType="0" Entries="2">
+        <TRACK Key="1"/><TRACK Key="2"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        path = self.root / "stable-number.xml"
+        path.write_text(both, encoding="utf-8")
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            rc1 = rb.main(
+                [
+                    "--xml",
+                    str(path),
+                    "--playlist",
+                    "Both",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc1, 0)
+        data = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            data["tracks"][convert_plan.source_key(second)]["wav"]["dest"],
+            "Same/Hits/Song (2).wav",
+        )
+
+        only_second = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="1">
+    <TRACK TrackID="2" Name="Song" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(second)}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="OnlySecond" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="2"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        path.write_text(only_second, encoding="utf-8")
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=True
+        ):
+            plan, errors = rb.prepare(
+                path, "OnlySecond", self.wav_dir, self.output
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(len(plan.unique), 1)
+        self.assertEqual(
+            plan.unique[0].dest_path.relative_to(plan.wav_dir).as_posix(),
+            "Same/Hits/Song (2).wav",
+        )
+        data2 = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            data2["tracks"][convert_plan.source_key(second)]["wav"]["dest"],
+            "Same/Hits/Song (2).wav",
+        )
+        self.assertNotEqual(
+            plan.unique[0].dest_path.relative_to(plan.wav_dir).as_posix(),
+            "Same/Hits/Song.wav",
+        )
+
+    def test_unrelated_occupant_forces_numbered_dest_on_first_assign(
+        self,
+    ) -> None:
+        """Given a file already at preferred dest but not in the manifest: When
+        convert assigns that source: Then dest is Name (2).ext and the occupant
+        file is left intact."""
+        src = self.music / "solo" / "track.flac"
+        write_flac(src)
+        preferred = self.wav_dir / "Same" / "Hits" / "Song.wav"
+        preferred.parent.mkdir(parents=True)
+        preferred.write_bytes(b"UNRELATED-OCCUPANT")
+
+        xml = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="1">
+    <TRACK TrackID="1" Name="Song" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(src)}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="Occupy" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        path = self.root / "unrelated-occupant.xml"
+        path.write_text(xml, encoding="utf-8")
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(path),
+                    "--playlist",
+                    "Occupy",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        numbered = self.wav_dir / "Same" / "Hits" / "Song (2).wav"
+        self.assertTrue(numbered.is_file())
+        self.assertEqual(preferred.read_bytes(), b"UNRELATED-OCCUPANT")
+        data = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            data["tracks"][convert_plan.source_key(src)]["wav"]["dest"],
+            "Same/Hits/Song (2).wav",
+        )
+
     def test_collisions_case_and_nfd(self) -> None:
         """Given case and NFD dest twins with different sources: When prepare
         runs: Then each source gets a sticky numbered dest (Name, Name (2), …)
@@ -1089,7 +1315,8 @@ class XmlFixtureTests(unittest.TestCase):
 
     def test_sticky_manifest_reuses_dest_when_metadata_changes(self) -> None:
         """Given an existing wav assignment: When Artist/Album/Name change and
-        convert reruns: Then the sticky dest path is reused (not Preferred)."""
+        convert reruns: Then the sticky dest path is reused (not Preferred) and
+        import XML metadata is refreshed at that Location."""
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
@@ -1113,6 +1340,8 @@ class XmlFixtureTests(unittest.TestCase):
             )
         self.assertEqual(rc1, 0)
         sticky = "ABSL/It's just a bad dream/Bestial.wav"
+        sticky_path = self.wav_dir / Path(sticky)
+        self.assertTrue(sticky_path.is_file())
         root = rb.load_dj_playlists(self.xml_path)
         track = root.find("COLLECTION/TRACK")
         assert track is not None
@@ -1126,18 +1355,22 @@ class XmlFixtureTests(unittest.TestCase):
         ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=True
         ):
-            plan, errors = rb.prepare(
-                self.xml_path,
-                "Untitled Intelligent List",
-                self.wav_dir,
-                self.output,
+            rc2 = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
             )
-        self.assertEqual(errors, [])
-        assert plan is not None
-        bestial = next(u for u in plan.unique if u.source_path == self.a)
-        self.assertEqual(
-            bestial.dest_path.relative_to(plan.wav_dir).as_posix(),
-            sticky,
+        self.assertEqual(rc2, 0)
+        self.assertTrue(sticky_path.is_file())
+        self.assertFalse(
+            (self.wav_dir / "New Artist" / "New Album" / "New Name.wav").exists()
         )
         data = json.loads(
             (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
@@ -1148,9 +1381,111 @@ class XmlFixtureTests(unittest.TestCase):
             data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
             sticky,
         )
-        self.assertFalse(
-            (self.wav_dir / "New Artist" / "New Album" / "New Name.wav").exists()
+        out = ET.parse(self.output).getroot()
+        sticky_loc = rb.encode_location(sticky_path)
+        refreshed = next(
+            t for t in out.findall("COLLECTION/TRACK") if t.get("Location") == sticky_loc
         )
+        self.assertEqual(refreshed.get("Name"), "New Name")
+        self.assertEqual(refreshed.get("Artist"), "New Artist")
+        self.assertEqual(refreshed.get("Album"), "New Album")
+
+    def test_sticky_aiff_metadata_change_refreshes_id3_without_rename(
+        self,
+    ) -> None:
+        """Given a sticky AIFF dest: When Name/Artist/Album change and convert
+        reruns: Then dest path is unchanged and ID3 text matches new metadata."""
+        try:
+            from test_cdj_safe_aiff import RATE_44100, write_pcm_aiff
+        except ImportError:  # python -m unittest src.tests.…
+            from src.tests.test_cdj_safe_aiff import RATE_44100, write_pcm_aiff
+
+        sticky = "ABSL/It's just a bad dream/Bestial.aiff"
+        aiff_writes: list[str] = []
+
+        def fake_aiff(
+            source: Path,
+            dest: Path,
+            source_el: ET.Element,
+            **_kwargs,
+        ) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            write_pcm_aiff(dest, sample_rate_bytes=RATE_44100, bits=24)
+            rb.write_aiff_id3(dest, source_el, None)
+            aiff_writes.append(source_el.get("Name") or "")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "write_aiff_output", side_effect=fake_aiff):
+            rc1 = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.root / "out-aiff.xml"),
+                    "--format",
+                    "aiff",
+                ]
+            )
+        self.assertEqual(rc1, 0)
+        sticky_path = self.wav_dir / Path(sticky)
+        self.assertTrue(sticky_path.is_file())
+        tag = rb._extract_id3_chunk(sticky_path)
+        assert tag is not None
+        text, _ = rb._read_id3_frames(tag)
+        self.assertEqual(text.get("TIT2"), "Bestial")
+
+        root = rb.load_dj_playlists(self.xml_path)
+        track = root.find("COLLECTION/TRACK")
+        assert track is not None
+        track.set("Artist", "New Artist")
+        track.set("Album", "New Album")
+        track.set("Name", "New Name")
+        ET.ElementTree(root).write(self.xml_path, encoding="UTF-8", xml_declaration=True)
+
+        aiff_writes.clear()
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "write_aiff_output", side_effect=fake_aiff):
+            rc2 = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.root / "out-aiff.xml"),
+                    "--format",
+                    "aiff",
+                ]
+            )
+        self.assertEqual(rc2, 0)
+        self.assertTrue(sticky_path.is_file())
+        self.assertFalse(
+            (self.wav_dir / "New Artist" / "New Album" / "New Name.aiff").exists()
+        )
+        data = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            data["tracks"][convert_plan.source_key(self.a)]["aiff"]["dest"],
+            sticky,
+        )
+        self.assertIn("New Name", aiff_writes)
+        tag2 = rb._extract_id3_chunk(sticky_path)
+        assert tag2 is not None
+        text2, _ = rb._read_id3_frames(tag2)
+        self.assertEqual(text2.get("TIT2"), "New Name")
+        self.assertEqual(text2.get("TPE1"), "New Artist")
+        self.assertEqual(text2.get("TALB"), "New Album")
 
     def test_invalid_manifest_fails_before_audio_or_xml(self) -> None:
         """Given a corrupt manifest on disk: When main converts: Then exit is
