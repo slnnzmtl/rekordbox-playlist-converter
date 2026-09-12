@@ -1977,6 +1977,8 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(self.output.read_text(encoding="utf-8"), "not a rekordbox collection")
 
     def test_dry_run_writes_nothing(self) -> None:
+        """Given --dry-run: When main runs: Then no manifest, format dirs,
+        audio, Import XML, sidecars, or temps appear under the output root."""
         buf = io.StringIO()
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
@@ -1997,8 +1999,42 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertFalse(self.output.exists())
         self.assertFalse(self.wav_dir.exists())
-        self.assertFalse(
-            (self.root / "WAV" / converter_manifest.MANIFEST_NAME).exists()
+        self.assertFalse((self.wav_dir / converter_manifest.MANIFEST_NAME).exists())
+        self.assertFalse((self.wav_dir / "WAV").exists())
+        self.assertFalse((self.wav_dir / "AIFF").exists())
+        self.assertFalse((self.root / "WAV" / converter_manifest.MANIFEST_NAME).exists())
+        if self.wav_dir.exists():
+            leftover = [
+                p
+                for p in self.wav_dir.rglob("*")
+                if p.is_file()
+                and (
+                    p.suffix.casefold() in {".wav", ".aiff", ".aif", ".xml", ".tmp", ".json"}
+                    or p.name.startswith(".")
+                    or ".tmp" in p.name
+                    or p.name.endswith("~")
+                )
+            ]
+            self.assertEqual(leftover, [], f"dry-run left artifacts: {leftover}")
+        # Parent of wav_dir must not gain WAV/AIFF audio or converter temps either.
+        audio_or_sidecar = [
+            p
+            for p in self.root.rglob("*")
+            if p.is_file()
+            and p != self.xml_path
+            and not str(p).startswith(str(self.music))
+            and (
+                p.suffix.casefold() in {".wav", ".aiff", ".aif", ".xml"}
+                or p.name == converter_manifest.MANIFEST_NAME
+                or ".manifest-" in p.name
+                or p.suffix.casefold() == ".tmp"
+                or p.name.endswith(".tmp.json")
+            )
+        ]
+        self.assertEqual(
+            audio_or_sidecar,
+            [],
+            f"dry-run wrote under output root: {audio_or_sidecar}",
         )
 
     def test_main_omitted_output_writes_import_xml_under_wav_dir(self) -> None:

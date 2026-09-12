@@ -32,6 +32,7 @@ import time
 import tkinter as tk
 import webbrowser
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
@@ -67,6 +68,19 @@ BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items(
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
 ACTION_BUTTON_WIDTH = 9
 CANCELLED_STATUS_CLEAR_MS = 3000
+
+
+@dataclass
+class PreparedConversion:
+    """In-memory prepare result held until the user confirms or discards."""
+
+    plans: list
+    items: list
+    manifest: converter_manifest.ConverterManifest
+    preview: rb.ConversionPreview
+    wav_dir: Path
+    output: Path
+    skipped: list[str]
 SEARCH_DEBOUNCE_MS = 200
 WAV_DIR_VALIDATE_DEBOUNCE_MS = 300
 # One probe worker; apply this many depths per UI callback so Tk can paint.
@@ -327,6 +341,9 @@ class ConverterApp:
         self.scan_status_var = tk.StringVar(value="")
         self._busy = False
         self._cancel_event = threading.Event()
+        self._prepared_conversion: PreparedConversion | None = None
+        self._write_prepared: PreparedConversion | None = None
+        self._preview_dialog: tk.Toplevel | None = None
         self._usage_window: tk.Toplevel | None = None
         self._update_modal_shown = False
         self._update_check_running = False
@@ -1515,6 +1532,9 @@ class ConverterApp:
     def _request_cancel(self) -> None:
         if not self._busy:
             return
+        if self._prepared_conversion is not None and self._write_prepared is None:
+            self._discard_prepared_conversion()
+            return
         self._cancel_event.set()
         self.status_var.set("Cancelling…")
         self.cancel_btn.configure(state=tk.DISABLED)
@@ -1679,9 +1699,9 @@ class ConverterApp:
         self._convert_max_bit_depth = max_bit_depth
         self._convert_max_sample_rate = max_sample_rate
         self._convert_xml_path = xml_path
-        threading.Thread(target=self._convert_worker, daemon=True).start()
+        threading.Thread(target=self._prepare_worker, daemon=True).start()
 
-    def _convert_worker(self) -> None:
+    def _prepare_worker(self) -> None:
         selected = self._convert_selected
         keys_by_playlist = self._convert_keys_by_playlist
         wav_dir = self._convert_wav_dir
@@ -1691,7 +1711,6 @@ class ConverterApp:
         max_sample_rate = self._convert_max_sample_rate
         xml_path = self._convert_xml_path
         try:
-            summaries: list[str] = []
             skipped: list[str] = []
             plans: list[rb.Plan] = []
             # Reuse UI-loaded tree when it matches this convert's XML; else parse once.
@@ -1757,8 +1776,126 @@ class ConverterApp:
 
             rb.share_output_root(plans)
             items = rb.collect_batch_unique(plans)
-            total = len(items)
             rb.share_cover_caches(plans)
+            if self._cancel_event.is_set():
+                self._ui(self._finish_cancelled)
+                return
+            preview = rb.build_conversion_preview(plans, items, force=False)
+            prepared = PreparedConversion(
+                plans=plans,
+                items=items,
+                manifest=manifest,
+                preview=preview,
+                wav_dir=wav_dir,
+                output=output,
+                skipped=skipped,
+            )
+            self._ui(lambda p=prepared: self._on_prepare_ready(p))
+        except rb.CliError as exc:
+            self._ui(lambda e=str(exc): self._finish_error(e))
+        except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
+            self._ui(lambda e=str(exc): self._finish_error(e))
+
+    def _on_prepare_ready(self, prepared: PreparedConversion) -> None:
+        if self._cancel_event.is_set():
+            self._finish_cancelled()
+            return
+        self._prepared_conversion = prepared
+        self._show_conversion_preview(prepared)
+
+    def _show_conversion_preview(self, prepared: PreparedConversion) -> None:
+        """Minimal confirm dialog (DDD-112 will replace with the full table)."""
+        self._close_preview_dialog()
+        preview = prepared.preview
+        dlg = tk.Toplevel(self.root)
+        self._preview_dialog = dlg
+        dlg.title("Conversion preview")
+        dlg.transient(self.root)
+        dlg.resizable(False, False)
+        frm = ttk.Frame(dlg, padding=16)
+        frm.grid(row=0, column=0, sticky="nsew")
+        summary = (
+            f"{preview.unique_outputs} unique output file(s) · "
+            f"{preview.selected} selected · "
+            f"{preview.missing} missing"
+        )
+        ttk.Label(frm, text=summary, wraplength=420).grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
+        )
+        ttk.Label(
+            frm,
+            text="Confirm to write the library. Back discards this plan.",
+            wraplength=420,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 16))
+
+        def on_back() -> None:
+            self._discard_prepared_conversion()
+
+        def on_convert() -> None:
+            self._confirm_prepared_conversion()
+
+        back_btn = ttk.Button(frm, text="Back", command=on_back, width=ACTION_BUTTON_WIDTH)
+        back_btn.grid(row=2, column=0, sticky="w")
+        convert_btn = ttk.Button(
+            frm, text="Convert", command=on_convert, width=ACTION_BUTTON_WIDTH
+        )
+        convert_btn.grid(row=2, column=1, sticky="e")
+        dlg.protocol("WM_DELETE_WINDOW", on_back)
+        dlg.bind("<Escape>", lambda _e: on_back())
+        try:
+            dlg.grab_set()
+        except tk.TclError:
+            pass
+        self.status_var.set("Review conversion…")
+        self._animate_progress_to(0, snap=True)
+
+    def _close_preview_dialog(self) -> None:
+        dlg = self._preview_dialog
+        self._preview_dialog = None
+        if dlg is None:
+            return
+        try:
+            dlg.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            dlg.destroy()
+        except tk.TclError:
+            pass
+
+    def _discard_prepared_conversion(self) -> None:
+        self._close_preview_dialog()
+        self._prepared_conversion = None
+        self._write_prepared = None
+        self._cancel_event.clear()
+        self._set_busy(False)
+        self._animate_progress_to(0, snap=True)
+        self._set_idle_status(self._tracklist_selection_summary())
+
+    def _confirm_prepared_conversion(self) -> None:
+        prepared = self._prepared_conversion
+        if prepared is None:
+            return
+        self._close_preview_dialog()
+        self._prepared_conversion = None
+        self._write_prepared = prepared
+        self.status_var.set("Converting…")
+        threading.Thread(target=self._write_worker, daemon=True).start()
+
+    def _write_worker(self) -> None:
+        prepared = self._write_prepared
+        if prepared is None:
+            self._ui(lambda: self._finish_error("Nothing to convert."))
+            return
+        plans = prepared.plans
+        items = prepared.items
+        manifest = prepared.manifest
+        wav_dir = prepared.wav_dir
+        output = prepared.output
+        skipped = list(prepared.skipped)
+        try:
+            summaries: list[str] = []
+            total = len(items)
 
             def on_progress(
                 current: int,
@@ -1858,6 +1995,8 @@ class ConverterApp:
             self._ui(lambda e=str(exc): self._finish_error(e))
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
             self._ui(lambda e=str(exc): self._finish_error(e))
+        finally:
+            self._write_prepared = None
 
     def _show_conversion_errors(self, message: str | list[str]) -> None:
         lines = message if isinstance(message, list) else message.splitlines()
@@ -1869,6 +2008,9 @@ class ConverterApp:
         )
 
     def _finish_cancelled(self, errors: str | list[str] | None = None) -> None:
+        self._close_preview_dialog()
+        self._prepared_conversion = None
+        self._write_prepared = None
         self._set_busy(False)
         self.status_var.set("Cancelled.")
         self._cancel_cancelled_clear()
@@ -1879,6 +2021,9 @@ class ConverterApp:
             self._show_conversion_errors(errors)
 
     def _finish_error(self, message: str | list[str]) -> None:
+        self._close_preview_dialog()
+        self._prepared_conversion = None
+        self._write_prepared = None
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Failed.")
@@ -1889,6 +2034,8 @@ class ConverterApp:
         summaries: list[str],
         warnings: list[str] | None = None,
     ) -> None:
+        self._prepared_conversion = None
+        self._write_prepared = None
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Finished with no audio files converted or copied.")
@@ -1910,6 +2057,8 @@ class ConverterApp:
         open_dir: Path | None = None,
         import_xml: Path | None = None,
     ) -> None:
+        self._prepared_conversion = None
+        self._write_prepared = None
         self._set_busy(False)
         self._animate_progress_to(100, snap=True)
         body = "\n".join(summaries)
