@@ -48,9 +48,17 @@ AIFF_SUFFIX = " [AIFF]"
 AIFF_EXT = {".aiff", ".aif"}
 
 # Parallel unique-track converts (clamped when used).
-CONVERT_WORKERS = 4
 CONVERT_WORKERS_MIN = 1
 CONVERT_WORKERS_MAX = 5
+
+
+def default_convert_workers() -> int:
+    """Worker count from cpu_count, capped at 4 and CONVERT_WORKERS_MAX."""
+    n = min(4, max(1, os.cpu_count() or 4))
+    return max(CONVERT_WORKERS_MIN, min(n, CONVERT_WORKERS_MAX))
+
+
+CONVERT_WORKERS = default_convert_workers()
 
 
 class Progress:
@@ -176,7 +184,8 @@ def convert_unique(
         nonlocal completed
         with stats_lock:
             completed += 1
-            bar.update(completed, action, name)
+            done = completed
+        bar.update(done, action, name)
 
     def process_one(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
@@ -234,7 +243,9 @@ def convert_unique(
                 finish("skip", name)
                 return
             if item.copy_wav:
-                shutil.copy2(item.source_path, item.dest_path)
+                _copy_wav_atomic(
+                    item.source_path, item.dest_path, cancel_event=cancel_event
+                )
                 with stats_lock:
                     stats.copied += 1
                 finish("copy", name)
@@ -644,6 +655,42 @@ def _kill_ffmpeg_drain(proc: subprocess.Popen) -> None:
         proc.communicate()
 
 
+_COPY_CHUNK_SIZE = 1024 * 1024
+
+
+def _copy_wav_atomic(
+    source: Path,
+    dest: Path,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> None:
+    """Copy WAV to dest via temp + os.replace; poll cancel between chunks."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=dest.parent, prefix=".wav-", suffix=".tmp.wav"
+    )
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        with open(source, "rb") as src_f, open(tmp, "wb") as dst_f:
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise CancelledError(f"conversion cancelled for {source}")
+                chunk = src_f.read(_COPY_CHUNK_SIZE)
+                if not chunk:
+                    break
+                dst_f.write(chunk)
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError(f"conversion cancelled for {source}")
+        os.replace(tmp, dest)
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 def run_ffmpeg(
     source: Path,
     dest: Path,
@@ -680,6 +727,17 @@ def run_ffmpeg(
             if codec in ("pcm_s16le", "pcm_s24le")
             else pcm_codec_for_depth(depth, output_format="wav")
         )
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if is_aiff:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=dest.parent, prefix=".aiff-", suffix=".tmp.aiff"
+        )
+    else:
+        fd, tmp_name = tempfile.mkstemp(
+            dir=dest.parent, prefix=".wav-", suffix=".tmp.wav"
+        )
+    os.close(fd)
+    out_tmp = Path(tmp_name)
     cmd = [
         exe,
         "-y" if force or dest.exists() else "-n",
@@ -706,84 +764,93 @@ def run_ffmpeg(
             "-nostats",
             "-loglevel",
             "error",
-            str(dest),
+            str(out_tmp),
         ]
     )
     try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-    except FileNotFoundError as exc:
-        raise CliError(
-            "ffmpeg not found on PATH (install with: brew install ffmpeg)"
-        ) from exc
-    deadline = time.monotonic() + ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S
-    while proc.poll() is None:
-        if cancel_event is not None and cancel_event.is_set():
-            _kill_ffmpeg_drain(proc)
-            try:
-                dest.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise CancelledError(f"conversion cancelled for {source}")
-        if time.monotonic() >= deadline:
-            _kill_ffmpeg_drain(proc)
-            try:
-                dest.unlink(missing_ok=True)
-            except OSError:
-                pass
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except FileNotFoundError as exc:
             raise CliError(
-                f"ffmpeg timed out after {ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S}s for {source}"
-            )
-        time.sleep(0.05)
-    _stdout, stderr = proc.communicate()
-    if proc.returncode != 0:
-        err = (stderr or _stdout or "").strip() or f"exit {proc.returncode}"
-        raise CliError(f"ffmpeg conversion failed for {source}: {err}")
-    if is_aiff:
-        if not is_cdj_safe_aiff(dest, bit_depth=depth, sample_rate=rate):
-            # Muxer may leave extras; normalize then re-check.
-            fd, tmp_name = tempfile.mkstemp(
-                dir=dest.parent, prefix=".aiff-ff-", suffix=".tmp.aiff"
-            )
-            os.close(fd)
-            tmp = Path(tmp_name)
-            try:
-                _normalize_aiff_audio_chunks(dest, tmp)
-                os.replace(tmp, dest)
-            except Exception:
+                "ffmpeg not found on PATH (install with: brew install ffmpeg)"
+            ) from exc
+        timeout_s = ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S * CONVERT_WORKERS
+        deadline = time.monotonic() + timeout_s
+        while proc.poll() is None:
+            if cancel_event is not None and cancel_event.is_set():
+                _kill_ffmpeg_drain(proc)
                 try:
-                    tmp.unlink(missing_ok=True)
+                    dest.unlink(missing_ok=True)
                 except OSError:
                     pass
-                raise
-            if not is_cdj_safe_aiff(dest, bit_depth=depth, sample_rate=rate):
-                raise CliError(
-                    f"ffmpeg produced a non-CDJ-safe AIFF for {source}: {dest}"
-                )
-    else:
-        if not is_cdj_safe_wav(dest, bit_depth=depth, sample_rate=rate):
-            fd, tmp_name = tempfile.mkstemp(
-                dir=dest.parent, prefix=".wav-ff-", suffix=".tmp.wav"
-            )
-            os.close(fd)
-            tmp = Path(tmp_name)
-            try:
-                _rewrite_wav_pcm(dest, tmp)
-                os.replace(tmp, dest)
-            except Exception:
+                raise CancelledError(f"conversion cancelled for {source}")
+            if time.monotonic() >= deadline:
+                _kill_ffmpeg_drain(proc)
                 try:
-                    tmp.unlink(missing_ok=True)
+                    dest.unlink(missing_ok=True)
                 except OSError:
                     pass
-                raise
-            if not is_cdj_safe_wav(dest, bit_depth=depth, sample_rate=rate):
                 raise CliError(
-                    f"ffmpeg produced a non-CDJ-safe WAV for {source}: {dest}"
+                    f"ffmpeg timed out after {timeout_s}s for {source}"
                 )
+            time.sleep(0.05)
+        _stdout, stderr = proc.communicate()
+        if proc.returncode != 0:
+            err = (stderr or _stdout or "").strip() or f"exit {proc.returncode}"
+            raise CliError(f"ffmpeg conversion failed for {source}: {err}")
+        if is_aiff:
+            if not is_cdj_safe_aiff(out_tmp, bit_depth=depth, sample_rate=rate):
+                # Muxer may leave extras; normalize then re-check.
+                fd2, norm_name = tempfile.mkstemp(
+                    dir=dest.parent, prefix=".aiff-ff-", suffix=".tmp.aiff"
+                )
+                os.close(fd2)
+                norm = Path(norm_name)
+                try:
+                    _normalize_aiff_audio_chunks(out_tmp, norm)
+                    os.replace(norm, out_tmp)
+                except Exception:
+                    try:
+                        norm.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise
+                if not is_cdj_safe_aiff(out_tmp, bit_depth=depth, sample_rate=rate):
+                    raise CliError(
+                        f"ffmpeg produced a non-CDJ-safe AIFF for {source}: {dest}"
+                    )
+        else:
+            if not is_cdj_safe_wav(out_tmp, bit_depth=depth, sample_rate=rate):
+                fd2, rew_name = tempfile.mkstemp(
+                    dir=dest.parent, prefix=".wav-ff-", suffix=".tmp.wav"
+                )
+                os.close(fd2)
+                rew = Path(rew_name)
+                try:
+                    _rewrite_wav_pcm(out_tmp, rew)
+                    os.replace(rew, out_tmp)
+                except Exception:
+                    try:
+                        rew.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise
+                if not is_cdj_safe_wav(out_tmp, bit_depth=depth, sample_rate=rate):
+                    raise CliError(
+                        f"ffmpeg produced a non-CDJ-safe WAV for {source}: {dest}"
+                    )
+        os.replace(out_tmp, dest)
+    except Exception:
+        try:
+            out_tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def write_aiff_output(

@@ -22,6 +22,7 @@ class VersionDisplayTests(unittest.TestCase):
     def test_spec_bundle_version_matches_app_version(self) -> None:
         spec = (_REPO / "rb_converter.spec").read_text()
         self.assertIn(f'"CFBundleShortVersionString": "{__version__}"', spec)
+        self.assertIn(f'"CFBundleVersion": "{__version__}"', spec)
 
     def test_gui_shows_version_in_window_title(self) -> None:
         try:

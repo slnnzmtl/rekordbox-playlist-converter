@@ -695,5 +695,45 @@ class ApplyXmlRefreshTests(unittest.TestCase):
             self.assertEqual(tracks[0].get("Kind"), "AIFF File")
 
 
+class StreamingAiffRewriteTests(unittest.TestCase):
+    def _forbid_path_read_bytes(self, blocked: Path):
+        real_read_bytes = Path.read_bytes
+
+        def forbid(self: Path) -> bytes:
+            if self.resolve() == blocked.resolve():
+                raise AssertionError(
+                    "Path.read_bytes must not load full PCM for streaming AIFF I/O"
+                )
+            return real_read_bytes(self)
+
+        return mock.patch.object(Path, "read_bytes", forbid)
+
+    def test_normalize_aiff_audio_chunks_does_not_call_source_read_bytes(self) -> None:
+        """Given a large PCM AIFF: When normalizing COMM+SSND: Then source
+        Path.read_bytes is never used."""
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "large.aiff"
+            dest = Path(tmp) / "out.aiff"
+            write_pcm_aiff(source, frames=20_000)
+            with self._forbid_path_read_bytes(source):
+                rb._normalize_aiff_audio_chunks(source, dest)
+            self.assertTrue(dest.is_file())
+            self.assertGreater(dest.stat().st_size, 0)
+
+    def test_write_aiff_id3_does_not_call_path_read_bytes(self) -> None:
+        """Given a large PCM AIFF: When writing ID3: Then path.read_bytes is
+        never used for the full file."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large.aiff"
+            write_pcm_aiff(path, frames=20_000)
+            el = ET.Element(
+                "TRACK",
+                {"Name": "Stream", "Artist": "Test", "Album": "Album"},
+            )
+            with self._forbid_path_read_bytes(path):
+                rb.write_aiff_id3(path, el, None)
+            self.assertTrue(path.is_file())
+
+
 if __name__ == "__main__":
     unittest.main()

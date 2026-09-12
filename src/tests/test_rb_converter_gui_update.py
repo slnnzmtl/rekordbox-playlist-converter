@@ -54,6 +54,57 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_start_update_check_ignores_second_call_while_in_flight(self) -> None:
+        """Given an update check already in flight, when _start_update_check is
+        called again, then a second Thread is not started."""
+        try:
+            import _tkinter  # noqa: F401
+        except ImportError:
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        started: list[object] = []
+
+        class FakeThread:
+            def __init__(self, target=None, daemon=None, **_kwargs):
+                self._target = target
+                self.daemon = daemon
+
+            def start(self) -> None:
+                started.append(self)
+
+            def is_alive(self) -> bool:
+                return True
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch.object(
+                ConverterApp, "_start_update_check"
+            ):
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+
+            with patch("rb_converter_gui.threading.Thread", FakeThread):
+                started.clear()
+                app._start_update_check(manual=True)
+                app._start_update_check(manual=True)
+                self.assertEqual(
+                    len(started),
+                    1,
+                    "second _start_update_check while first is in flight must be a no-op",
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
     def test_view_release_opens_github_page(self) -> None:
         try:
             import _tkinter  # noqa: F401

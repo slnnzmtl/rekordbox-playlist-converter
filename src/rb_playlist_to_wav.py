@@ -173,7 +173,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=48000,
         help=(
             "Maximum sample rate (44100 or 48000). Default 48000. "
-            "44.1 kHz tracks are not upconverted to 48 kHz."
+            "44.1 kHz tracks are not upconverted to 48 kHz. "
+            "Other rates are snapped to 44100 when allowed by the ceiling."
         ),
     )
     parser.add_argument(
@@ -315,6 +316,7 @@ def run_convert_one(
     output_format: str = "wav",
     max_bit_depth: int = 24,
     max_sample_rate: int = 48000,
+    source_root: ET.Element | None = None,
 ) -> int:
     plan, errors = prepare(
         xml_path,
@@ -325,6 +327,7 @@ def run_convert_one(
         output_format=output_format,
         max_bit_depth=max_bit_depth,
         max_sample_rate=max_sample_rate,
+        source_root=source_root,
     )
     if errors:
         print_errors(errors)
@@ -419,17 +422,19 @@ def prepare(
     track_keys: Collection[str] | None = None,
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    source_root: ET.Element | None = None,
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(ffmpeg_tools.require_tools())
     if not xml_path.is_file():
         errors.append(f"source XML not found: {xml_path}")
         return None, errors
-    try:
-        source_root = load_dj_playlists(xml_path)
-    except CliError as exc:
-        errors.append(str(exc))
-        return None, errors
+    if source_root is None:
+        try:
+            source_root = load_dj_playlists(xml_path)
+        except CliError as exc:
+            errors.append(str(exc))
+            return None, errors
 
     found, resolve_errors = resolve_playlist(
         source_root, playlist_name, folder=playlist_folder
@@ -510,6 +515,12 @@ def main(argv: list[str] | None = None) -> int:
         wav_dir = args.wav_dir
         output = args.output
 
+    try:
+        shared_root = load_dj_playlists(xml_path)
+    except CliError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
     for i, (folder, name) in enumerate(playlist_refs):
         if len(playlist_refs) > 1:
             print()
@@ -526,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
             output_format=output_format,
             max_bit_depth=max_bit_depth,
             max_sample_rate=max_sample_rate,
+            source_root=shared_root,
         )
         if rc != 0:
             return rc

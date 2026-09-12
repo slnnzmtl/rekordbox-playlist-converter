@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import os
 import sys
 import tempfile
 import unicodedata
@@ -535,6 +536,138 @@ class XmlFixtureTests(unittest.TestCase):
             self.assertTrue(communicated)
             self.assertFalse(dest.exists())
 
+    def test_run_ffmpeg_encodes_to_temp_not_final_dest(self) -> None:
+        """Given cancel mid-encode: When FakeProc is killed: Then ffmpeg's
+        output argv path is a temp under dest.parent (not the final dest), so a
+        kill mid-write cannot leave a partial final file."""
+        import threading
+
+        cancel = threading.Event()
+        cancel.set()
+        captured: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, cmd: list[str], *_a: object, **_k: object) -> None:
+                captured.append(list(cmd))
+                self.returncode: int | None = None
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+            def wait(self, timeout: float | None = None) -> int:
+                return self.returncode if self.returncode is not None else -9
+
+            def communicate(self) -> tuple[str, str]:
+                return "", ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src.flac"
+            dest = Path(tmp) / "out.wav"
+            src.write_bytes(b"flac")
+            with patch.object(
+                ffmpeg_tools, "tool_path", return_value="/bin/ffmpeg"
+            ), patch.object(
+                ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
+            ), patch.object(convert_plan.subprocess, "Popen", FakeProc), patch.object(
+                convert_plan.time, "sleep", lambda _s: None
+            ):
+                with self.assertRaises(rb.CancelledError):
+                    convert_plan.run_ffmpeg(
+                        src, dest, "pcm_s16le", force=True, cancel_event=cancel
+                    )
+            self.assertEqual(len(captured), 1)
+            out_arg = Path(captured[0][-1])
+            self.assertNotEqual(
+                out_arg.resolve(),
+                dest.resolve(),
+                "ffmpeg must write to a temp path, not the final dest",
+            )
+            self.assertEqual(out_arg.parent.resolve(), dest.parent.resolve())
+            self.assertTrue(
+                out_arg.name.startswith(".wav-") or ".wav-" in out_arg.name,
+                f"temp output should use a .wav- prefix; got {out_arg.name!r}",
+            )
+            self.assertFalse(dest.exists())
+
+    def test_convert_unique_copy_wav_cancel_mid_copy_leaves_no_final_dest(
+        self,
+    ) -> None:
+        """Given copy_wav and cancel mid-copy: When convert_unique returns:
+        Then the final dest must not exist (no incomplete final file)."""
+        import threading
+        import xml.etree.ElementTree as ET
+
+        cancel = threading.Event()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.wav"
+            dest = root / "WAV" / "P" / "out.wav"
+            dest.parent.mkdir(parents=True)
+            src.write_bytes(b"RIFF" + b"\x00" * 40)
+            el = ET.Element(
+                "TRACK", {"TrackID": "1", "Location": rb.encode_location(src)}
+            )
+            item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=rb.encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = rb.Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                wav_dir=root / "WAV",
+                playlist_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+            )
+
+            reads = {"n": 0}
+            real_open = open
+
+            def open_side_effect(path, mode="r", *a, **k):
+                handle = real_open(path, mode, *a, **k)
+                if "rb" in mode and Path(path).resolve() == src.resolve():
+                    inner = handle.read
+
+                    def read_and_cancel(size: int = -1) -> bytes:
+                        out = inner(size)
+                        reads["n"] += 1
+                        if reads["n"] >= 1:
+                            cancel.set()
+                        return out
+
+                    handle.read = read_and_cancel  # type: ignore[method-assign]
+                return handle
+
+            with patch.object(convert_plan, "_COPY_CHUNK_SIZE", 8), patch(
+                "builtins.open", side_effect=open_side_effect
+            ), patch.object(convert_plan, "CONVERT_WORKERS", 1), patch.object(
+                convert_plan, "is_cdj_safe_wav", return_value=False
+            ):
+                rb.convert_unique(
+                    plan, force=False, progress=False, cancel_event=cancel
+                )
+
+            self.assertFalse(
+                dest.exists(),
+                "cancel mid-copy must not leave a partial final dest",
+            )
+
     def test_run_ffmpeg_command_suppresses_progress_stats(self) -> None:
         captured: list[list[str]] = []
 
@@ -564,8 +697,8 @@ class XmlFixtureTests(unittest.TestCase):
 
         self.assertEqual(len(captured), 1)
         cmd = captured[0]
-        dest_idx = cmd.index(str(dest))
-        before_out = cmd[:dest_idx]
+        # Output path is a temp under dest.parent (not final dest).
+        before_out = cmd[:-1]
         self.assertIn("-nostats", before_out)
         self.assertIn("-loglevel", before_out)
         self.assertEqual(before_out[before_out.index("-loglevel") + 1], "error")
@@ -921,6 +1054,69 @@ class XmlFixtureTests(unittest.TestCase):
         pl = rb.find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
         self.assertEqual(len(pl), 1)
         self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2", "3"])
+
+    def test_prepare_with_source_root_skips_load_dj_playlists(self) -> None:
+        """Given a preloaded source_root: When prepare(..., source_root=): Then
+        load_dj_playlists is not called for the source XML."""
+        source_root = rb.load_dj_playlists(self.xml_path)
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(rb, "load_dj_playlists") as load_spy:
+            plan, errors = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+                source_root=source_root,
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        load_spy.assert_not_called()
+
+    def test_two_prepares_with_shared_source_root_load_dj_playlists_once(self) -> None:
+        """Given two playlists: When prepare is called twice with one shared
+        source_root: Then load_dj_playlists runs only for that shared parse."""
+        src = rb.load_dj_playlists(self.xml_path)
+        playlists_root = src.find("PLAYLISTS/NODE")
+        assert playlists_root is not None
+        morning = ET.SubElement(
+            playlists_root,
+            "NODE",
+            {"Name": "Morning", "Type": "1", "KeyType": "0", "Entries": "1"},
+        )
+        ET.SubElement(morning, "TRACK", {"Key": "219211420"})
+        playlists_root.set("Count", "2")
+        ET.ElementTree(src).write(self.xml_path, encoding="UTF-8", xml_declaration=True)
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(
+            rb, "load_dj_playlists", wraps=rb.load_dj_playlists
+        ) as load_spy:
+            source_root = rb.load_dj_playlists(self.xml_path)
+            self.assertEqual(load_spy.call_count, 1)
+            plan_a, errors_a = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+                source_root=source_root,
+            )
+            plan_b, errors_b = rb.prepare(
+                self.xml_path,
+                "Morning",
+                self.wav_dir,
+                self.output,
+                source_root=source_root,
+            )
+            self.assertEqual(errors_a, [])
+            self.assertEqual(errors_b, [])
+            assert plan_a is not None and plan_b is not None
+            self.assertEqual(
+                load_spy.call_count,
+                1,
+                "shared source_root must skip reloading the source XML",
+            )
 
     def test_prepare_all_then_apply_keeps_every_playlist(self) -> None:
         """GUI prepares every playlist before writing; trees must be shared."""
@@ -1399,6 +1595,8 @@ class SubprocessTimeoutTests(unittest.TestCase):
             ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
         ), patch.object(
             ffmpeg_tools, "FFMPEG_CONVERT_TIMEOUT_S", 0.01
+        ), patch.object(
+            convert_plan, "CONVERT_WORKERS", 1
         ), patch.object(convert_plan.subprocess, "Popen", FakeProc), patch.object(
             convert_plan.time, "sleep", lambda _s: None
         ), patch.object(convert_plan.time, "monotonic", side_effect=[0.0, 0.02]):
@@ -1406,6 +1604,56 @@ class SubprocessTimeoutTests(unittest.TestCase):
                 convert_plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
         self.assertIn("timed out", str(ctx.exception).lower())
         self.assertIn(str(src), str(ctx.exception))
+        self.assertTrue(communicated)
+
+    def test_run_ffmpeg_timeout_scales_with_convert_workers(self) -> None:
+        """Given CONVERT_WORKERS=4 and FFMPEG_CONVERT_TIMEOUT_S=100: When
+        ffmpeg hangs past the per-worker budget: Then the CliError deadline is
+        400s (timeout * workers), not the unscaled 100s."""
+        communicated: list[bool] = []
+
+        class FakeProc:
+            def __init__(self, *_a: object, **_k: object) -> None:
+                self.returncode: int | None = None
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def kill(self) -> None:
+                self.returncode = -9
+
+            def wait(self, timeout: float | None = None) -> int:
+                return -9
+
+            def communicate(self) -> tuple[str, str]:
+                communicated.append(True)
+                return "", ""
+
+        src = Path("/tmp/src.flac")
+        dest = Path("/tmp/out.wav")
+        with patch.object(
+            ffmpeg_tools, "tool_path", return_value="/bin/ffmpeg"
+        ), patch.object(
+            ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
+        ), patch.object(
+            ffmpeg_tools, "FFMPEG_CONVERT_TIMEOUT_S", 100
+        ), patch.object(
+            convert_plan, "CONVERT_WORKERS", 4
+        ), patch.object(convert_plan.subprocess, "Popen", FakeProc), patch.object(
+            convert_plan.time, "sleep", lambda _s: None
+        ), patch.object(
+            convert_plan.time, "monotonic", side_effect=[0.0, 401.0]
+        ):
+            with self.assertRaises(rb.CliError) as ctx:
+                convert_plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
+        msg = str(ctx.exception).lower()
+        self.assertIn("timed out", msg)
+        self.assertIn("400", msg, f"deadline must scale to 100*4=400s; got {msg!r}")
+        self.assertNotIn(
+            "after 100s",
+            msg,
+            "must not report the unscaled per-process timeout alone",
+        )
         self.assertTrue(communicated)
 
     def test_extract_cover_jpeg_returns_none_on_timeout(self) -> None:
@@ -1439,6 +1687,26 @@ class SubprocessTimeoutTests(unittest.TestCase):
                 self.assertFalse(ffmpeg_tools.ffmpeg_supports_soxr())
         finally:
             ffmpeg_tools.ffmpeg_supports_soxr.cache_clear()
+
+
+class DefaultConvertWorkersTests(unittest.TestCase):
+    def test_default_convert_workers_clamped_from_cpu_count(self) -> None:
+        """Given cpu_count: When default_convert_workers(): Then result is
+        min(4, max(1, cpu_count or 4)) and within CONVERT_WORKERS_MIN..MAX."""
+        self.assertTrue(
+            hasattr(convert_plan, "default_convert_workers"),
+            "convert_plan must expose default_convert_workers()",
+        )
+        with patch.object(convert_plan.os, "cpu_count", return_value=1):
+            self.assertEqual(convert_plan.default_convert_workers(), 1)
+        with patch.object(convert_plan.os, "cpu_count", return_value=8):
+            self.assertEqual(convert_plan.default_convert_workers(), 4)
+        with patch.object(convert_plan.os, "cpu_count", return_value=None):
+            self.assertEqual(convert_plan.default_convert_workers(), 4)
+        n = convert_plan.default_convert_workers()
+        self.assertGreaterEqual(n, convert_plan.CONVERT_WORKERS_MIN)
+        self.assertLessEqual(n, convert_plan.CONVERT_WORKERS_MAX)
+        self.assertEqual(n, min(4, max(1, os.cpu_count() or 4)))
 
 
 if __name__ == "__main__":

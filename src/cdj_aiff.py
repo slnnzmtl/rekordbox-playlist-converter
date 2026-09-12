@@ -40,50 +40,59 @@ class _AiffAudioInfo:
 def _parse_aiff_audio(path: Path) -> _AiffAudioInfo:
     """Parse FORM/AIFF structure for Pioneer-ceiling safety checks."""
     try:
-        data = path.read_bytes()
+        with path.open("rb") as fp:
+            header = fp.read(12)
+            if len(header) < 12 or header[0:4] != b"FORM":
+                raise CliError(f"not a FORM file: {path}")
+            declared = struct.unpack_from(">I", header, 4)[0]
+            fp.seek(0, 2)
+            file_len = fp.tell()
+            if declared + 8 != file_len:
+                raise CliError(f"invalid FORM length in {path}")
+            form_type = header[8:12]
+            form_ok = form_type == b"AIFF"
+            chunk_ids: list[str] = []
+            channels = sample_frames = bits = 0
+            sample_rate_bytes = b""
+            comm_count = ssnd_count = id3_count = 0
+            ssnd_data_size = ssnd_offset = ssnd_block_size = 0
+            comm_size = 0
+            offset = 12
+            try:
+                for cid, size, payload_start in iff_chunks.iter_chunks_file(
+                    fp, endian="big", start=12, end=file_len
+                ):
+                    chunk_ids.append(cid.decode("ascii", errors="replace"))
+                    if cid == b"COMM":
+                        comm_count += 1
+                        comm_size = size
+                        if size >= 18:
+                            fp.seek(payload_start)
+                            comm = fp.read(18)
+                            if len(comm) >= 18:
+                                channels, sample_frames, bits = struct.unpack(
+                                    ">hIh", comm[0:8]
+                                )
+                                sample_rate_bytes = comm[8:18]
+                    elif cid == b"SSND":
+                        ssnd_count += 1
+                        if size >= 8:
+                            fp.seek(payload_start)
+                            ssnd_hdr = fp.read(8)
+                            if len(ssnd_hdr) >= 8:
+                                ssnd_offset, ssnd_block_size = struct.unpack(
+                                    ">II", ssnd_hdr
+                                )
+                                ssnd_data_size = size - 8 - ssnd_offset
+                    elif cid == b"ID3 ":
+                        id3_count += 1
+                    offset = payload_start + size + (size % 2)
+            except ValueError as exc:
+                raise CliError(f"truncated AIFF chunk in {path}: {exc}") from exc
+            if offset != file_len:
+                raise CliError(f"trailing bytes after AIFF chunks in {path}")
     except OSError as exc:
         raise CliError(f"cannot read AIFF: {path}: {exc}") from exc
-    if len(data) < 12 or data[0:4] != b"FORM":
-        raise CliError(f"not a FORM file: {path}")
-    declared = struct.unpack_from(">I", data, 4)[0]
-    if declared + 8 != len(data):
-        raise CliError(f"invalid FORM length in {path}")
-    form_type = data[8:12]
-    form_ok = form_type == b"AIFF"
-    chunk_ids: list[str] = []
-    channels = sample_frames = bits = 0
-    sample_rate_bytes = b""
-    comm_count = ssnd_count = id3_count = 0
-    ssnd_data_size = ssnd_offset = ssnd_block_size = 0
-    comm_size = 0
-    offset = 12
-    try:
-        for cid, size, payload_start in iff_chunks.iter_chunks(
-            data, endian="big", start=12
-        ):
-            chunk_ids.append(cid.decode("ascii", errors="replace"))
-            if cid == b"COMM":
-                comm_count += 1
-                comm_size = size
-                if size >= 18:
-                    channels, sample_frames, bits = struct.unpack_from(
-                        ">hIh", data, payload_start
-                    )
-                    sample_rate_bytes = data[payload_start + 8 : payload_start + 18]
-            elif cid == b"SSND":
-                ssnd_count += 1
-                if size >= 8:
-                    ssnd_offset, ssnd_block_size = struct.unpack_from(
-                        ">II", data, payload_start
-                    )
-                    ssnd_data_size = size - 8 - ssnd_offset
-            elif cid == b"ID3 ":
-                id3_count += 1
-            offset = payload_start + size + (size % 2)
-    except ValueError as exc:
-        raise CliError(f"truncated AIFF chunk in {path}: {exc}") from exc
-    if offset != len(data):
-        raise CliError(f"trailing bytes after AIFF chunks in {path}")
     if not form_ok:
         raise CliError(f"not uncompressed AIFF (got {form_type!r}): {path}")
     if comm_count != 1 or ssnd_count != 1:
@@ -319,23 +328,57 @@ def _ssnd_pcm_bytes(path: Path) -> bytes:
     raise CliError(f"SSND missing in {path}")
 
 
+def _copy_file_range(
+    src, dest, start: int, size: int, *, bufsize: int = 1024 * 1024
+) -> None:
+    src.seek(start)
+    remaining = size
+    while remaining > 0:
+        chunk = src.read(min(bufsize, remaining))
+        if not chunk:
+            raise CliError("truncated AIFF data while streaming copy")
+        dest.write(chunk)
+        remaining -= len(chunk)
+
+
+def _stream_comm_ssnd_chunks(
+    src, end: int
+) -> list[tuple[bytes, int, int]]:
+    selected: list[tuple[bytes, int, int]] = []
+    for cid, size, payload_start in iff_chunks.iter_chunks_file(
+        src, endian="big", start=12, end=end
+    ):
+        if cid in (b"COMM", b"SSND"):
+            selected.append((cid, size, payload_start))
+    return selected
+
+
+def _write_form_aiff_chunks(
+    src, out, selected: list[tuple[bytes, int, int]], *, extra: bytes = b""
+) -> None:
+    body_size = sum(8 + size + (size % 2) for _, size, _ in selected) + len(extra)
+    out.write(b"FORM" + struct.pack(">I", 4 + body_size) + b"AIFF")
+    for cid, size, payload_start in selected:
+        out.write(cid + struct.pack(">I", size))
+        _copy_file_range(src, out, payload_start, size)
+        if size % 2:
+            out.write(b"\x00")
+    if extra:
+        out.write(extra)
+
+
 def _normalize_aiff_audio_chunks(source: Path, dest: Path) -> None:
     """Copy COMM+SSND only from source into dest (SSND PCM bit-identical)."""
-    info = _parse_aiff_audio(source)
-    data = source.read_bytes()
-    pieces: list[bytes] = []
-    offset = 12
-    for cid in info.chunk_ids:
-        size = struct.unpack_from(">I", data, offset + 4)[0]
-        if cid in ("COMM", "SSND"):
-            payload = data[offset + 8 : offset + 8 + size]
-            pieces.append(cid.encode("ascii") + struct.pack(">I", len(payload)) + payload)
-            if len(payload) % 2:
-                pieces.append(b"\x00")
-        offset += 8 + size + (size % 2)
-    body = b"".join(pieces)
-    form = b"AIFF" + body
-    dest.write_bytes(b"FORM" + struct.pack(">I", len(form)) + form)
+    _parse_aiff_audio(source)
+    try:
+        with source.open("rb") as src:
+            src.seek(0, 2)
+            end = src.tell()
+            selected = _stream_comm_ssnd_chunks(src, end)
+            with dest.open("wb") as out:
+                _write_form_aiff_chunks(src, out, selected)
+    except OSError as exc:
+        raise CliError(f"cannot read AIFF: {source}: {exc}") from exc
 
 
 def write_aiff_id3(
@@ -344,24 +387,25 @@ def write_aiff_id3(
     """Replace/add ID3 chunk; drop NAME and other non-COMM/SSND/ID3 chunks."""
     text = expected_id3_text_from_track(source_el)
     tag = build_id3v23_tag(text, cover_jpeg)
-    info = _parse_aiff_audio(path)
-    data = path.read_bytes()
-    pieces: list[bytes] = []
-    offset = 12
-    for cid in info.chunk_ids:
-        size = struct.unpack_from(">I", data, offset + 4)[0]
-        payload = data[offset + 8 : offset + 8 + size]
-        if cid in ("COMM", "SSND"):
-            pieces.append(cid.encode("ascii") + struct.pack(">I", len(payload)) + payload)
-            if len(payload) % 2:
-                pieces.append(b"\x00")
-        offset += 8 + size + (size % 2)
-    pieces.append(b"ID3 " + struct.pack(">I", len(tag)) + tag)
+    _parse_aiff_audio(path)
+    id3_chunk = b"ID3 " + struct.pack(">I", len(tag)) + tag
     if len(tag) % 2:
-        pieces.append(b"\x00")
-    body = b"".join(pieces)
-    form = b"AIFF" + body
-    path.write_bytes(b"FORM" + struct.pack(">I", len(form)) + form)
+        id3_chunk += b"\x00"
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with path.open("rb") as src:
+            src.seek(0, 2)
+            end = src.tell()
+            selected = _stream_comm_ssnd_chunks(src, end)
+            with tmp.open("wb") as out:
+                _write_form_aiff_chunks(src, out, selected, extra=id3_chunk)
+        tmp.replace(path)
+    except OSError as exc:
+        tmp.unlink(missing_ok=True)
+        raise CliError(f"cannot write AIFF: {path}: {exc}") from exc
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def extract_cover_jpeg(source: Path, *, max_side: int = 600) -> bytes | None:

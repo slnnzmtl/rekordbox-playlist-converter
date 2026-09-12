@@ -602,6 +602,102 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_late_cancel_after_atomic_write_finishes_cancelled_not_done(
+        self,
+    ) -> None:
+        """Given convert_unique + apply_xml + atomic_write_xml succeed: When
+        cancel_event is set before finish scheduling: Then the GUI takes the
+        _finish_cancelled path (status Cancelled.), not _finish_ok / Done."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from types import SimpleNamespace
+        from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
+
+        plan = SimpleNamespace(
+            warnings=[],
+            playlist_dir=Path("/tmp"),
+            unique=[object()],
+            wav_playlist_name="Test [WAV]",
+            output_root=object(),
+            output=Path("/tmp/out.xml"),
+        )
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch(
+                "rb_converter_gui.load_preferences",
+                return_value={},
+            ), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch(
+                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
+            ), patch(
+                "rb_converter_gui.save_preferences"
+            ), patch.object(
+                ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
+            ), patch(
+                "rb_converter_gui.rb.prepare", return_value=(plan, [])
+            ), patch(
+                "rb_converter_gui.rb.share_output_root"
+            ), patch(
+                "rb_converter_gui.rb.convert_unique",
+                return_value=rb.ConvertStats(converted=1),
+            ), patch(
+                "rb_converter_gui.rb.apply_xml", return_value=1
+            ) as apply_xml, patch(
+                "rb_converter_gui.rb.atomic_write_xml"
+            ) as atomic_write, patch(
+                "rb_converter_gui.messagebox.showerror"
+            ) as showerror, patch.object(
+                ConverterApp, "_show_done_dialog"
+            ) as show_done:
+
+                def run_inline(target=None, **_kwargs):
+                    class _T:
+                        def start(self_inner):
+                            target()
+
+                    return _T()
+
+                with patch("rb_converter_gui.threading.Thread", side_effect=run_inline):
+                    root = tk.Tk()
+                    root.withdraw()
+                    app = ConverterApp(root, documents_accessible=False)
+                    app.xml_var.set("/tmp/test.xml")
+                    _seed_track_selection(app)
+
+                    def atomic_then_cancel(*_a, **_k):
+                        app._cancel_event.set()
+
+                    atomic_write.side_effect = atomic_then_cancel
+                    app._start_convert()
+                    root.update_idletasks()
+                    for _ in range(20):
+                        root.update()
+
+                    apply_xml.assert_called()
+                    atomic_write.assert_called()
+                    showerror.assert_not_called()
+                    self.assertEqual(
+                        app.status_var.get(),
+                        "Cancelled.",
+                        "late cancel after XML write must finish cancelled, "
+                        f"not Done; got {app.status_var.get()!r}",
+                    )
+                    show_done.assert_not_called()
+                    self.assertFalse(app._busy)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
 
 class ProgressStatusHintTests(unittest.TestCase):
     def test_progress_action_status_hint_puts_counter_after_action(self) -> None:

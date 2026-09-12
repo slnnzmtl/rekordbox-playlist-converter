@@ -11,6 +11,7 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+import preview_bit_depth as preview_bit_depth_mod
 from preview_bit_depth import (
     cached_preview_bit_depth,
     peek_cached_preview_bit_depth,
@@ -217,6 +218,78 @@ class PreviewBitDepthTests(unittest.TestCase):
             self.assertTrue(hit)
             self.assertEqual(bits, 24)
             self.assertGreater(held["n"], before)
+
+    def test_preview_cache_evicts_when_over_max(self) -> None:
+        """Given more than PREVIEW_CACHE_MAX entries: When caching bit depths:
+        Then cache length stays ≤ PREVIEW_CACHE_MAX (LRU eviction)."""
+        self.assertTrue(
+            hasattr(preview_bit_depth_mod, "PREVIEW_CACHE_MAX"),
+            "preview_bit_depth must expose PREVIEW_CACHE_MAX",
+        )
+        max_entries = preview_bit_depth_mod.PREVIEW_CACHE_MAX
+        self.assertEqual(max_entries, 4096)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cache: dict = {}
+            calls = {"n": 0}
+
+            def counting_read(p: Path) -> int | None:
+                calls["n"] += 1
+                return 24
+
+            paths: list[Path] = []
+            for i in range(max_entries + 8):
+                path = root / f"track-{i}.flac"
+                path.write_bytes(_flac_with_bit_depth(24))
+                paths.append(path)
+                self.assertEqual(
+                    cached_preview_bit_depth(path, cache, read=counting_read), 24
+                )
+            self.assertLessEqual(len(cache), max_entries)
+            # Oldest entry should have been evicted; re-read after touching new keys.
+            self.assertEqual(
+                cached_preview_bit_depth(paths[0], cache, read=counting_read), 24
+            )
+            self.assertGreater(calls["n"], max_entries)
+
+    def test_cached_preview_negative_caches_failed_and_missing_reads(self) -> None:
+        """Given failed or missing header reads: When caching: Then None is
+        stored so a second call does not re-invoke read."""
+        with tempfile.TemporaryDirectory() as tmp:
+            junk = Path(tmp) / "junk.wav"
+            junk.write_bytes(b"RIFF")
+            calls = {"n": 0}
+
+            def counting_read(p: Path) -> int | None:
+                calls["n"] += 1
+                return read_preview_bit_depth(p)
+
+            cache: dict = {}
+            self.assertIsNone(
+                cached_preview_bit_depth(junk, cache, read=counting_read)
+            )
+            self.assertIsNone(
+                cached_preview_bit_depth(junk, cache, read=counting_read)
+            )
+            self.assertEqual(calls["n"], 1)
+            self.assertIn(None, cache.values())
+
+        missing = Path("/no/such/preview-negative-cache.flac")
+        miss_calls = {"n": 0}
+
+        def counting_missing(p: Path) -> int | None:
+            miss_calls["n"] += 1
+            return read_preview_bit_depth(p)
+
+        miss_cache: dict = {}
+        self.assertIsNone(
+            cached_preview_bit_depth(missing, miss_cache, read=counting_missing)
+        )
+        self.assertIsNone(
+            cached_preview_bit_depth(missing, miss_cache, read=counting_missing)
+        )
+        self.assertEqual(miss_calls["n"], 1)
+        self.assertIn(None, miss_cache.values())
 
 
 if __name__ == "__main__":

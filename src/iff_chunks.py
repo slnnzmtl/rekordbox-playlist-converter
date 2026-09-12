@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 from collections.abc import Iterator
-from typing import Literal
+from typing import BinaryIO, Literal
 
 
 def iter_chunks(
@@ -28,6 +28,40 @@ def iter_chunks(
         payload_offset = offset + 8
         payload_end = payload_offset + size
         if payload_end > len(data):
+            raise ValueError(f"truncated chunk {cid!r}")
+        yield cid, size, payload_offset
+        offset = payload_end + (size % 2)
+
+
+def iter_chunks_file(
+    fp: BinaryIO,
+    *,
+    endian: Literal["little", "big"] = "little",
+    start: int = 12,
+    end: int | None = None,
+) -> Iterator[tuple[bytes, int, int]]:
+    """Yield ``(cid, size, payload_offset)`` by reading only 8-byte headers from *fp*.
+
+    Does not load chunk payloads. If *end* is omitted, uses the current file
+    size (seek to EOF). Raises ``ValueError`` if a payload would extend past *end*.
+    """
+    fmt = "<I" if endian == "little" else ">I"
+    if end is None:
+        pos = fp.tell()
+        fp.seek(0, 2)
+        end = fp.tell()
+        fp.seek(pos)
+    offset = start
+    while offset + 8 <= end:
+        fp.seek(offset)
+        hdr = fp.read(8)
+        if len(hdr) < 8:
+            break
+        cid = hdr[0:4]
+        size = struct.unpack(fmt, hdr[4:8])[0]
+        payload_offset = offset + 8
+        payload_end = payload_offset + size
+        if payload_end > end:
             raise ValueError(f"truncated chunk {cid!r}")
         yield cid, size, payload_offset
         offset = payload_end + (size % 2)
