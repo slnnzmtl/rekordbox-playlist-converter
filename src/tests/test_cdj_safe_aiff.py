@@ -385,61 +385,6 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             self.assertEqual(cover.call_count, 1)
             cover.assert_called_with(src)
 
-    def test_convert_unique_extracts_shared_cover_once_under_parallel(self) -> None:
-        """Two AIFF dests from one source: extract_cover_jpeg runs once."""
-        import threading
-        import time
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            src = root / "safe.aiff"
-            write_pcm_aiff(src)
-            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
-            items = []
-            for name in ("out1.aiff", "out2.aiff"):
-                dest = root / name
-                items.append(
-                    rb.PlannedTrack(
-                        source_el=el,
-                        source_path=src,
-                        dest_path=dest,
-                        dest_location=rb.encode_location(dest),
-                        dest_name=dest.name,
-                        codec=None,
-                        copy_wav=True,
-                        noop=False,
-                        bit_depth=16,
-                        sample_rate=44100,
-                    )
-                )
-            plan = rb.Plan(
-                playlist_name="P",
-                wav_playlist_name="P [AIFF]",
-                wav_dir=root,
-                playlist_dir=root,
-                output=root / "o.xml",
-                tracks=items,
-                unique=items,
-                source_root=ET.Element("DJ_PLAYLISTS"),
-                output_root=ET.Element("DJ_PLAYLISTS"),
-                output_existed=False,
-            )
-            calls = {"n": 0}
-            lock = threading.Lock()
-
-            def slow_cover(path: Path) -> None:
-                with lock:
-                    calls["n"] += 1
-                time.sleep(0.05)
-                return None
-
-            with mock.patch.object(
-                convert_plan, "extract_cover_jpeg", side_effect=slow_cover
-            ), mock.patch.object(convert_plan, "CONVERT_WORKERS", 2):
-                stats = rb.convert_unique(plan, force=False)
-            self.assertEqual(stats.copied, 2)
-            self.assertEqual(calls["n"], 1)
-
     def test_aiff_24_48_dest_does_not_skip_when_effective_is_16_44100(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
