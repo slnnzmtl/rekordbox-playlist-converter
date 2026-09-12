@@ -496,6 +496,51 @@ class GuiPreferencesStartupTests(unittest.TestCase):
 
 
 class GuiPreferencesPersistTests(unittest.TestCase):
+    def test_sampling_combobox_change_persists_preferences(self) -> None:
+        """Given ConverterApp, when bit depth / sample rate combobox handlers run,
+        then save_preferences is called with the newly selected values."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
+                "rb_converter_gui.save_preferences"
+            ) as save_prefs:
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                save_prefs.reset_mock()
+
+                app.bit_depth_combo.set("16Bit")
+                app._on_bit_depth_selected()
+                self.assertEqual(app.bit_depth_var.get(), "16")
+                save_prefs.assert_called()
+                self.assertEqual(save_prefs.call_args.kwargs.get("bit_depth"), "16")
+                save_prefs.reset_mock()
+
+                app.sample_rate_combo.set("44.1KHz")
+                app._on_sample_rate_selected()
+                self.assertEqual(app.sample_rate_var.get(), "44100")
+                save_prefs.assert_called()
+                self.assertEqual(
+                    save_prefs.call_args.kwargs.get("sample_rate"), "44100"
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
     def test_browse_wav_dir_saves_preferences(self) -> None:
         if not _tk_available():
             self.skipTest("_tkinter not available")

@@ -26,7 +26,7 @@ Pre-built **macOS app** (universal2): see [GitHub Releases](https://github.com/s
 
 MP3, AAC, and other lossy files are skipped with an error.
 
-Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are WAV / 24-bit / 48 kHz.
+Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 kHz tracks stay 44.1 kHz. Other sample rates (for example 88.2 kHz or 22.05 kHz) are snapped to 44100 when that rate is allowed by the ceiling. Defaults are WAV / 24-bit / 48 kHz.
 
 **WAV profile:** uncompressed stereo `WAVE_FORMAT_PCM` (not extensible), `fmt `+`data` only, at the effective depth/rate.
 
@@ -35,7 +35,7 @@ Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 k
 
 Download **Simple Rekordbox Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon). Defaults write to `~/Documents/rekordbox-converter` (a different folder than the CLI’s `./output`); the app remembers your last Rekordbox XML, WAV folder, and Import XML between launches. On launch it searches only your home folder (top-level files) and `~/Documents` for `*rekordbox*.xml` (skipping Desktop, Downloads, and iCloud) and auto-loads a single match, or asks you to choose if several are found. First launch: right-click → **Open** if Gatekeeper blocks it (ad-hoc signed). macOS may ask for Documents access on first open; if you decline, the app still opens and defaults to `~/rekordbox-converter` — Browse… can prompt again when you navigate into Documents.
 
-Import into Rekordbox the same way as the CLI — point **Imported Library** at the app’s import XML. In the app, **Help → How to Use…** (or the **How to use** button) covers the full Rekordbox click-path. Same steps are also in **[USAGE.md](USAGE.md)**.
+Import into Rekordbox the same way as the CLI — point **Imported Library** at the app’s import XML. In the app, **Help → How to Use…** covers the full Rekordbox click-path. Same steps are also in **[USAGE.md](USAGE.md)**.
 
 ### Build the .app
 
@@ -100,7 +100,7 @@ Most people can ignore this and use the prompts.
 | `--playlist` | asked                               | Playlist name, exactly as in Rekordbox                          |
 | `--format`   | `wav`                               | `wav` or `aiff`                                                 |
 | `--bit-depth` | `24`                               | Max bit depth `16` or `24` (never upconvert 16-bit to 24-bit)   |
-| `--sample-rate` | `48000`                         | Max rate `44100` or `48000` (never upconvert 44.1 to 48 kHz)    |
+| `--sample-rate` | `48000`                         | Max rate `44100` or `48000` (never upconvert 44.1 to 48 kHz; other rates snap to 44100 when allowed) |
 | `--wav-dir`  | `./output`                          | Folder for audio files (`output/<playlist>/`)                   |
 | `--output`   | `./output/rekordbox-import.xml` | File Rekordbox should import (appended on re-run)               |
 | `--force`    | off                                 | Rebuild even if dest already matches the profile                |

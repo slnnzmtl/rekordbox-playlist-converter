@@ -574,6 +574,75 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_convert_worker_passes_shared_source_root_for_two_playlists(self) -> None:
+        """Given two playlists: When _convert_worker runs: Then prepare gets the
+        same source_root for each playlist (one shared XML parse)."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from unittest.mock import MagicMock, patch
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark, morning = tree.get_children("")
+                tree.selection_set(dark, morning)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app.tracklist_tree
+                groups = preview.get_children("")
+                all_leaves = [
+                    leaf for group in groups for leaf in preview.get_children(group)
+                ]
+                preview.selection_set(*all_leaves)
+                preview.event_generate("<<TreeviewSelect>>")
+
+                prepare_calls: list[tuple] = []
+
+                def fake_prepare(*args, **kwargs):
+                    prepare_calls.append((args, kwargs))
+                    # First playlist succeeds so the worker continues to the second.
+                    if len(prepare_calls) < 2:
+                        return (MagicMock(), [])
+                    return (None, ["stop"])
+
+                def run_inline(target=None, **_kwargs):
+                    class _T:
+                        def start(self_inner):
+                            target()
+
+                        def is_alive(self_inner):
+                            return False
+
+                        def join(self_inner, timeout=None):
+                            return None
+
+                    return _T()
+
+                with patch(
+                    "rb_converter_gui.rb.prepare", side_effect=fake_prepare
+                ), patch(
+                    "rb_converter_gui.threading.Thread", side_effect=run_inline
+                ), patch("rb_converter_gui.messagebox.showerror"):
+                    app._start_convert()
+                    root.update()
+
+                self.assertEqual(len(prepare_calls), 2)
+                roots = [kwargs.get("source_root") for _args, kwargs in prepare_calls]
+                self.assertIsNotNone(roots[0])
+                self.assertIs(roots[0], roots[1])
+                names = [args[1] for args, _kwargs in prepare_calls]
+                self.assertEqual(sorted(names), ["Dark forest", "Morning"])
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
     def test_convert_passes_selected_track_keys_to_prepare(self) -> None:
         """Deselected (including missing) Keys are not prepared; empty errors."""
         if not _tk_available():

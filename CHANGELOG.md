@@ -8,6 +8,10 @@
 - Conversion failure and cancel-with-errors dialogs use the same scrollable list view as skipped missing tracks (not a flat alert).
 - Prepare (ffprobe) runs in parallel with the same worker cap; File → Search for Rekordbox XML runs off the UI thread with a timeout; tracklist search is debounced and collection indexes are cached for the loaded XML.
 - ffmpeg encodes use `-nostats -loglevel error` and drain pipes on cancel/timeout so long parallel encodes cannot wedge on a full stderr pipe.
+- WAV encode/copy writes via temp + `os.replace` (cancel mid-copy leaves no partial dest); ffmpeg timeout scales with worker count; progress callbacks run outside the convert stats lock.
+- WAV/AIFF CDJ rewrite streams chunk headers instead of loading whole files; preview bit-depth cache is capped (LRU) and negative-caches missing reads; convert worker count defaults from CPU count (1–4, max 5).
+- Multi-playlist convert parses the source XML once; sampling-format prefs persist on change; Check for Updates ignores overlapping requests.
+- Non-{44100,48000} source rates snap to 44100 when allowed by the ceiling (documented); Info.plist includes `CFBundleVersion`.
 - Skip the post-ffmpeg WAV rewrite when output is already CDJ-safe (e.g. 16-bit PCM); skip the redundant AIFF re-normalize after a successful ffmpeg stage.
 - While tracklist bit depth headers are read, `Scanning bit depth…` appears beside the idle unique-tracks status line.
 - Tracklist lists only convertible lossless formats (by file extension); missing collection rows stay visible. Column headers are left-aligned and clickable to sort by Track, Format, Bit depth, or Sample rate within each playlist group. Playlist / tracklist panes default to a 30% / 70% split.

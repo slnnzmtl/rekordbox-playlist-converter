@@ -11,6 +11,8 @@ _FLAC_READ = 256
 _RIFF_READ = 4096
 _CONTAINER = {b"moov", b"trak", b"mdia", b"minf", b"stbl"}
 
+PREVIEW_CACHE_MAX = 4096
+
 
 def read_preview_bit_depth(path: Path) -> int | None:
     try:
@@ -45,24 +47,24 @@ def cached_preview_bit_depth(
     lock=None,
 ) -> int | None:
     """Return bit depth, reading the header only once per path+mtime+size."""
-    key = _stat_cache_key(path)
-    if key is None:
-        return None
+    key = _cache_lookup_key(path)
     if lock is None:
         if key in cache:
-            return cache[key]
+            return _cache_touch(cache, key)
         bits = read(path)
-        cache[key] = bits
+        _cache_store(cache, key, bits)
         return bits
     with lock:
         if key in cache:
-            return cache[key]
+            return _cache_touch(cache, key)
     bits = read(path)
     with lock:
         # Another worker may have filled it; prefer the first write.
         if key not in cache:
-            cache[key] = bits
-        return cache[key]
+            _cache_store(cache, key, bits)
+        else:
+            bits = cache[key]
+        return bits
 
 
 def peek_cached_preview_bit_depth(
@@ -75,11 +77,11 @@ def peek_cached_preview_bit_depth(
     if lock is None:
         if key not in cache:
             return False, None
-        return True, cache[key]
+        return True, _cache_touch(cache, key)
     with lock:
         if key not in cache:
             return False, None
-        return True, cache[key]
+        return True, _cache_touch(cache, key)
 
 
 def _stat_cache_key(path: Path) -> tuple[str, int, int] | None:
@@ -88,6 +90,27 @@ def _stat_cache_key(path: Path) -> tuple[str, int, int] | None:
     except OSError:
         return None
     return (str(path.resolve()), st.st_mtime_ns, st.st_size)
+
+
+def _cache_lookup_key(path: Path):
+    key = _stat_cache_key(path)
+    if key is None:
+        return str(path)
+    return key
+
+
+def _cache_touch(cache: dict, key):
+    value = cache.pop(key)
+    cache[key] = value
+    return value
+
+
+def _cache_store(cache: dict, key, value) -> None:
+    if key in cache:
+        cache.pop(key)
+    while len(cache) >= PREVIEW_CACHE_MAX:
+        cache.pop(next(iter(cache)))
+    cache[key] = value
 
 
 def _flac_bit_depth(data: bytes) -> int | None:

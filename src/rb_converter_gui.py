@@ -30,6 +30,7 @@ import threading
 import time
 import tkinter as tk
 import webbrowser
+from collections import Counter
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
@@ -318,6 +319,7 @@ class ConverterApp:
         self._cancel_event = threading.Event()
         self._usage_window: tk.Toplevel | None = None
         self._update_modal_shown = False
+        self._update_check_running = False
         self._progress_target = 0.0
         self._progress_anim_id: str | None = None
         self._cancelled_clear_id: str | None = None
@@ -663,10 +665,18 @@ class ConverterApp:
         format_opts = ttk.Frame(frm)
         format_opts.grid(row=4, column=1, sticky="w", **pad)
         ttk.Radiobutton(
-            format_opts, text="WAV", variable=self.format_var, value="wav"
+            format_opts,
+            text="WAV",
+            variable=self.format_var,
+            value="wav",
+            command=self._persist_output_preferences,
         ).pack(side=tk.LEFT)
         ttk.Radiobutton(
-            format_opts, text="AIFF", variable=self.format_var, value="aiff"
+            format_opts,
+            text="AIFF",
+            variable=self.format_var,
+            value="aiff",
+            command=self._persist_output_preferences,
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         quality = ttk.Frame(frm)
@@ -835,10 +845,12 @@ class ConverterApp:
     def _on_bit_depth_selected(self, _event: object = None) -> None:
         label = self.bit_depth_combo.get().strip()
         self.bit_depth_var.set(BIT_DEPTH_FROM_LABEL.get(label, "24"))
+        self._persist_output_preferences()
 
     def _on_sample_rate_selected(self, _event: object = None) -> None:
         label = self.sample_rate_combo.get().strip()
         self.sample_rate_var.set(SAMPLE_RATE_FROM_LABEL.get(label, "48000"))
+        self._persist_output_preferences()
 
     def _resolved_output_paths(self) -> tuple[Path, Path]:
         wav_dir = Path(self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)).expanduser()
@@ -1365,7 +1377,7 @@ class ConverterApp:
         if unique_names:
             names = [name for _folder, name in chosen]
             # Same output playlist name `{name} [WAV]` — refuse converting two at once.
-            dupes = {n for n in names if names.count(n) > 1}
+            dupes = {n for n, c in Counter(names).items() if c > 1}
             if dupes:
                 listed = ", ".join(sorted(dupes))
                 raise rb.CliError(
@@ -1514,7 +1526,7 @@ class ConverterApp:
             messagebox.showerror("Selection", "Select at least one track.")
             return
         names = [name for _folder, name in selected]
-        dupes = {n for n in names if names.count(n) > 1}
+        dupes = {n for n, c in Counter(names).items() if c > 1}
         if dupes:
             listed = ", ".join(sorted(dupes))
             messagebox.showerror(
@@ -1571,6 +1583,18 @@ class ConverterApp:
             all_stats: list[rb.ConvertStats] = []
             playlist_dirs: list[Path] = []
             plans: list[rb.Plan] = []
+            # Reuse UI-loaded tree when it matches this convert's XML; else parse once.
+            loaded_xml = Path(self.xml_var.get().strip()).expanduser()
+            if self._source_root is not None and loaded_xml == xml_path:
+                source_root = self._source_root
+            elif xml_path.is_file():
+                try:
+                    source_root = rb.load_dj_playlists(xml_path)
+                except rb.CliError as exc:
+                    self._ui(lambda e=[str(exc)]: self._finish_error(e))
+                    return
+            else:
+                source_root = None
             for i, (folder, name) in enumerate(selected):
                 if self._cancel_event.is_set():
                     self._ui(self._finish_cancelled)
@@ -1602,6 +1626,7 @@ class ConverterApp:
                     track_keys=keys_by_playlist[(folder, name)],
                     on_progress=prepare_tick,
                     cancel_event=self._cancel_event,
+                    source_root=source_root,
                 )
                 if self._cancel_event.is_set():
                     self._ui(self._finish_cancelled)
@@ -1665,6 +1690,9 @@ class ConverterApp:
                     return
                 stats.appended = rb.apply_xml(plan)
                 rb.atomic_write_xml(plan.output_root, plan.output)
+                if self._cancel_event.is_set():
+                    _finish_cancel_with_errors()
+                    return
                 parts = []
                 if stats.converted:
                     parts.append(f"{stats.converted} converted")
@@ -1885,9 +1913,18 @@ class ConverterApp:
         dlg.wait_window()
 
     def _start_update_check(self, *, manual: bool) -> None:
+        if self._update_check_running:
+            return
+        self._update_check_running = True
+
         def worker() -> None:
             result = check_for_update(__version__)
-            self._ui(lambda r=result, m=manual: self._handle_update_check_result(r, manual=m))
+
+            def on_ui(r=result, m=manual) -> None:
+                self._update_check_running = False
+                self._handle_update_check_result(r, manual=m)
+
+            self._ui(on_ui)
 
         threading.Thread(target=worker, daemon=True).start()
 
