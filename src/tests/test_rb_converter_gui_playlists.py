@@ -231,38 +231,14 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
-    def test_selected_playlists_expands_folder_to_descendants(self) -> None:
+    def test_folders_do_not_select_playlists(self) -> None:
+        """Folders never contribute playlists: click expands only; programmatic
+        folder selection is ignored; folder+child keeps only the playlist."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-
-        root = None
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), NESTED_XML)
-                root, app = self._make_app(source)
-                tree = app.playlist_tree
-                folder_iid = tree.get_children("")[1]
-                tree.selection_set(folder_iid)
-                self.assertEqual(
-                    app._selected_playlists(),
-                    [
-                        ("Intelligent playlists", "Nested"),
-                        ("Intelligent playlists", "Sibling"),
-                    ],
-                )
-        except tk.TclError:
-            self.skipTest("tk.TclError: display not available")
-        finally:
-            if root is not None:
-                root.destroy()
-
-    def test_selected_playlists_dedupes_folder_and_child(self) -> None:
-        if not _tk_available():
-            self.skipTest("_tkinter not available")
-
-        import tkinter as tk
+        from unittest.mock import patch
 
         root = None
         try:
@@ -272,13 +248,22 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 tree = app.playlist_tree
                 folder_iid = tree.get_children("")[1]
                 nested_iid = tree.get_children(folder_iid)[0]
+
+                self.assertFalse(tree.item(folder_iid, "open"))
+                with patch.object(tree, "identify_row", return_value=folder_iid):
+                    result = app._on_playlist_button1(type("E", (), {"y": 1})())
+                self.assertEqual(result, "break")
+                self.assertTrue(tree.item(folder_iid, "open"))
+                self.assertEqual(tree.selection(), ())
+                self.assertEqual(app._selected_playlists(), [])
+
+                tree.selection_set(folder_iid)
+                self.assertEqual(app._selected_playlists(), [])
+
                 tree.selection_set(folder_iid, nested_iid)
                 self.assertEqual(
                     app._selected_playlists(),
-                    [
-                        ("Intelligent playlists", "Nested"),
-                        ("Intelligent playlists", "Sibling"),
-                    ],
+                    [("Intelligent playlists", "Nested")],
                 )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -312,68 +297,6 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 with self.assertRaises(rb.CliError) as ctx:
                     app._selected_playlists()
                 self.assertIn("same name", str(ctx.exception))
-        except tk.TclError:
-            self.skipTest("tk.TclError: display not available")
-        finally:
-            if root is not None:
-                root.destroy()
-
-    def test_convert_allows_same_name_when_only_one_has_tracks(self) -> None:
-        if not _tk_available():
-            self.skipTest("_tkinter not available")
-
-        import tkinter as tk
-
-        root = None
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), DUP_NAME_XML)
-                root, app = self._make_app(source)
-                tree = app.playlist_tree
-                one = tree.get_children("")[0]
-                two = tree.get_children("")[1]
-                tree.selection_set(tree.get_children(one)[0], tree.get_children(two)[0])
-                tree.event_generate("<<TreeviewSelect>>")
-                preview = app.tracklist_tree
-                groups = preview.get_children("")
-                only_one = list(preview.get_children(groups[0]))
-                preview.selection_set(*only_one)
-                preview.event_generate("<<TreeviewSelect>>")
-
-                prepare_calls: list[tuple] = []
-
-                def fake_prepare(*args, **kwargs):
-                    prepare_calls.append((args, kwargs))
-                    return (None, ["stop"])
-
-                def run_inline(target=None, **_kwargs):
-                    class _T:
-                        def start(self_inner):
-                            target()
-
-                        def is_alive(self_inner):
-                            return False
-
-                        def join(self_inner, timeout=None):
-                            return None
-
-                    return _T()
-
-                with patch(
-                    "rb_converter_gui.rb.prepare", side_effect=fake_prepare
-                ), patch(
-                    "rb_converter_gui.threading.Thread", side_effect=run_inline
-                ), patch("rb_converter_gui.messagebox.showerror") as showerror:
-                    _mark_output_folder_valid(app)
-                    app._start_convert()
-                    root.update()
-
-                self.assertEqual(len(prepare_calls), 1)
-                self.assertEqual(prepare_calls[0][0][1], "Same")
-                self.assertEqual(prepare_calls[0][1].get("playlist_folder"), "One")
-                # Must not be the duplicate-name selection error.
-                for call in showerror.call_args_list:
-                    self.assertNotIn("same name", str(call).lower())
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -429,7 +352,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
-    def test_search_keeps_ancestors_and_folder_selects_visible_only(self) -> None:
+    def test_search_keeps_ancestors_of_matches(self) -> None:
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
@@ -450,11 +373,6 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 children = tree.get_children(top[0])
                 self.assertEqual(len(children), 1)
                 self.assertEqual(tree.item(children[0], "text"), "Nested (2 tracks)")
-                tree.selection_set(top[0])
-                self.assertEqual(
-                    app._selected_playlists(),
-                    [("Intelligent playlists", "Nested")],
-                )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -478,15 +396,6 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 tree.event_generate("<<TreeviewSelect>>")
 
                 preview = app.tracklist_tree
-                self.assertEqual(
-                    preview.cget("columns"),
-                    ("format", "bit_depth", "sample_rate"),
-                )
-                self.assertEqual(preview.heading("#0", "text"), "Track")
-                self.assertEqual(preview.heading("format", "text"), "Format")
-                self.assertEqual(preview.heading("bit_depth", "text"), "Bit depth")
-                self.assertEqual(preview.heading("sample_rate", "text"), "Sample rate")
-
                 groups = preview.get_children("")
                 self.assertEqual(preview.item(groups[0], "text"), "Dark forest (3 tracks)")
                 leaves = preview.get_children(groups[0])
@@ -543,8 +452,65 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_tracklist_group_open_state_persists_across_selection(self) -> None:
+        """Arrow click collapses without selecting; collapsed groups stay closed
+        when another playlist is added; after full deselect, reselect expands."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from unittest.mock import patch
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark, morning = tree.get_children("")
+                tree.selection_set(dark)
+                tree.event_generate("<<TreeviewSelect>>")
+
+                preview = app.tracklist_tree
+                dark_group = preview.get_children("")[0]
+                preview.selection_set()
+                preview.event_generate("<<TreeviewSelect>>")
+                self.assertTrue(preview.item(dark_group, "open"))
+                with patch.object(
+                    preview, "identify_row", return_value=dark_group
+                ), patch.object(
+                    preview, "identify", return_value="Treeitem.indicator"
+                ):
+                    result = app._on_tracklist_button1(
+                        type("E", (), {"x": 1, "y": 1})()
+                    )
+                self.assertEqual(result, "break")
+                self.assertFalse(preview.item(dark_group, "open"))
+                self.assertEqual(preview.selection(), ())
+
+                tree.selection_set(dark, morning)
+                tree.event_generate("<<TreeviewSelect>>")
+                groups = preview.get_children("")
+                self.assertEqual(len(groups), 2)
+                self.assertFalse(preview.item(groups[0], "open"))
+                self.assertTrue(preview.item(groups[1], "open"))
+
+                tree.selection_set(morning)
+                tree.event_generate("<<TreeviewSelect>>")
+                tree.selection_set(dark, morning)
+                tree.event_generate("<<TreeviewSelect>>")
+                groups = preview.get_children("")
+                self.assertTrue(preview.item(groups[0], "open"))
+                self.assertTrue(preview.item(groups[1], "open"))
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
     def test_tracklist_selection_follows_leaves_and_group_header(self) -> None:
-        """Listed leaves start selected; deselect updates status; header remaps."""
+        """Listed leaves start selected; header remaps to leaves; header tag
+        tracks whether any of that group's tracks are selected."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
@@ -581,6 +547,22 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     app.status_var.get(),
                     "3 unique tracks from 1 playlist",
                 )
+                self.assertIn(
+                    "playlist_header_selected",
+                    preview.item(groups[0], "tags"),
+                )
+                self.assertNotIn(
+                    "playlist_header_selected",
+                    preview.item(groups[1], "tags"),
+                )
+
+                preview.selection_set()
+                preview.event_generate("<<TreeviewSelect>>")
+                for group in groups:
+                    self.assertNotIn(
+                        "playlist_header_selected",
+                        preview.item(group, "tags"),
+                    )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

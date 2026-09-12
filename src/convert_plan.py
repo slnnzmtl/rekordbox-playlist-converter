@@ -132,6 +132,7 @@ class ConversionPreviewItem:
     sample_rate: int
     size_bytes: int | None = None
     size_display: str = "—"
+    source_display: str = ""
 
 
 @dataclass
@@ -260,13 +261,19 @@ def _plan_for_preview_item(plans: list[Plan], item: PlannedTrack) -> Plan:
     return plans[0]
 
 
+def _format_size_mb(nbytes: int, *, approximate: bool = False) -> str:
+    """Human-readable size in mebibytes (1024²), one decimal place."""
+    text = f"{nbytes / (1024 * 1024):.1f} MB"
+    return f"≈ {text}" if approximate else text
+
+
 def _preview_size(item: PlannedTrack, action: str) -> tuple[int | None, str]:
     """Return (bytes, display). Reuse uses dest size; else estimate PCM."""
     if action == "reuse":
         try:
             if item.dest_path.is_file():
                 size = item.dest_path.stat().st_size
-                return size, str(size)
+                return size, _format_size_mb(size)
         except OSError:
             pass
         return None, "—"
@@ -275,7 +282,7 @@ def _preview_size(item: PlannedTrack, action: str) -> tuple[int | None, str]:
         return None, "—"
     bytes_per_sample = 2 if item.bit_depth == 16 else 3
     estimated = int(duration * item.sample_rate * bytes_per_sample * 2)
-    return estimated, f"≈ {estimated}"
+    return estimated, _format_size_mb(estimated, approximate=True)
 
 
 def build_conversion_preview(
@@ -316,6 +323,7 @@ def build_conversion_preview(
                 sample_rate=item.sample_rate,
                 size_bytes=size_bytes,
                 size_display=size_display,
+                source_display=item.source_path.name,
             )
         )
     return ConversionPreview(

@@ -23,19 +23,6 @@ class ManifestValidationTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_to_dict_writes_version_layout_and_tracks(self) -> None:
-        """Given an in-memory assignment: When to_dict: Then version, layout
-        format-flat, and tracks are written."""
-        m = cm.empty_manifest()
-        m.set_dest("/music/a.flac", "wav", "WAV/Artist - Track.wav")
-        data = m.to_dict()
-        self.assertEqual(data["version"], 1)
-        self.assertEqual(data["layout"], "format-flat")
-        self.assertEqual(
-            data["tracks"]["/music/a.flac"]["wav"]["dest"],
-            "WAV/Artist - Track.wav",
-        )
-
     def test_load_rejects_duplicate_dest_ownership(self) -> None:
         """Given two sources claiming the same dest after collision_key: When
         validate: Then duplicate ownership is rejected."""
@@ -98,21 +85,9 @@ class ManifestValidationTests(unittest.TestCase):
                 errors = cm.validate_manifest_data(data, self.wav_dir)
                 self.assertTrue(errors, f"expected errors for {dest!r}/{fmt}")
 
-    def test_validate_accepts_format_flat_wav_and_aiff_dests(self) -> None:
-        """Given two-component format-flat dests: When validate: Then ok."""
-        data = {
-            "version": 1,
-            "layout": "format-flat",
-            "tracks": {
-                "/a": {"wav": {"dest": "WAV/Artist - Track.wav"}},
-                "/b": {"aiff": {"dest": "AIFF/Artist - Track.aiff"}},
-            },
-        }
-        self.assertEqual(cm.validate_manifest_data(data, self.wav_dir), [])
-
     def test_save_manifest_uses_hidden_name(self) -> None:
         """Given a valid assignment: When save: Then hidden MANIFEST_NAME is
-        written atomically with layout."""
+        written atomically with layout, version, and dest."""
         m = cm.empty_manifest()
         m.set_dest("/music/a.flac", "wav", "WAV/Artist - Track.wav")
         cm.save_manifest(m, self.wav_dir)
@@ -122,28 +97,34 @@ class ManifestValidationTests(unittest.TestCase):
         data = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(data["layout"], "format-flat")
         self.assertEqual(data["version"], 1)
+        self.assertEqual(
+            data["tracks"]["/music/a.flac"]["wav"]["dest"],
+            "WAV/Artist - Track.wav",
+        )
+        self.assertEqual(cm.validate_manifest_data(data, self.wav_dir), [])
 
 
 class LibraryFolderValidationTests(unittest.TestCase):
-    def test_empty_existing_dir_is_ok(self) -> None:
+    def test_empty_or_missing_dir_is_ok(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            wav_dir = Path(tmp) / "lib"
-            wav_dir.mkdir()
-            self.assertIsNone(cm.validate_library_folder(wav_dir))
-
-    def test_missing_dir_with_writable_parent_is_ok(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            wav_dir = Path(tmp) / "new-lib"
-            self.assertIsNone(cm.validate_library_folder(wav_dir))
+            existing = Path(tmp) / "lib"
+            existing.mkdir()
+            self.assertIsNone(cm.validate_library_folder(existing))
+            self.assertIsNone(cm.validate_library_folder(Path(tmp) / "new-lib"))
 
     def test_legacy_audio_without_manifest_is_refused(self) -> None:
-        """Given format-flat audio and no hidden manifest: When validate:
-        Then refuse."""
+        """Given WAV/AIFF audio and no hidden manifest: When validate: Then
+        refuse."""
         with tempfile.TemporaryDirectory() as tmp:
             wav_dir = Path(tmp) / "lib"
-            dest = wav_dir / "WAV"
-            dest.mkdir(parents=True)
-            (dest / "Artist - Track.wav").write_bytes(b"RIFF")
+            for folder, name in (
+                ("WAV", "Artist - One.wav"),
+                ("AIFF", "Artist - Two.aiff"),
+            ):
+                dest = wav_dir / folder
+                dest.mkdir(parents=True)
+                (dest / name).write_bytes(b"RIFF")
+            self.assertFalse((wav_dir / cm.MANIFEST_NAME).exists())
             err = cm.validate_library_folder(wav_dir)
             self.assertIsNotNone(err)
             self.assertIn("new empty output folder", err.lower())
@@ -155,23 +136,6 @@ class LibraryFolderValidationTests(unittest.TestCase):
             (wav_dir / "rekordbox-import.xml").write_text(
                 "<DJ_PLAYLISTS/>", encoding="utf-8"
             )
-            err = cm.validate_library_folder(wav_dir)
-            self.assertIsNotNone(err)
-            self.assertIn("new empty output folder", err.lower())
-
-    def test_deleted_manifest_beside_generated_audio_is_refused(self) -> None:
-        """Given WAV/AIFF audio as if the hidden manifest was deleted: When
-        validate: Then refuse like other unmanaged libraries."""
-        with tempfile.TemporaryDirectory() as tmp:
-            wav_dir = Path(tmp) / "lib"
-            for folder, name in (
-                ("WAV", "Artist - One.wav"),
-                ("AIFF", "Artist - Two.aiff"),
-            ):
-                dest = wav_dir / folder
-                dest.mkdir(parents=True)
-                (dest / name).write_bytes(b"RIFF")
-            self.assertFalse((wav_dir / cm.MANIFEST_NAME).exists())
             err = cm.validate_library_folder(wav_dir)
             self.assertIsNotNone(err)
             self.assertIn("new empty output folder", err.lower())

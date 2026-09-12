@@ -51,6 +51,13 @@ FALLBACK_WAV_DIR, FALLBACK_OUTPUT = default_output_paths(documents_accessible=Fa
 SEARCH_PLACEHOLDER = "Search playlists…"
 TRACK_SEARCH_PLACEHOLDER = "Search tracks…"
 SCANNING_BIT_DEPTH = "Scanning bit depth…"
+
+# Tracklist playlist-group highlight when any of its tracks are selected
+# (darker than the Treeview selection blue used on leaf rows).
+TRACKLIST_HEADER_TAG = "playlist_header"
+TRACKLIST_HEADER_SELECTED_TAG = "playlist_header_selected"
+TRACKLIST_HEADER_SELECTED_BG = "#0a2f55"
+TRACKLIST_HEADER_SELECTED_FG = "#ffffff"
 APP_LOGO_NAME = "rpc-logo-white.png"
 XML_SEARCH_TIMEOUT_SECONDS = 30.0
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
@@ -366,7 +373,11 @@ class ConverterApp:
         # leaf iid -> (folder, name, key); group iids are absent
         self._tracklist_iids: dict[str, tuple[str, str, str]] = {}
         self._tracklist_paths: dict[str, Path] = {}
+        # (folder, name) -> open state for tracklist playlist groups
+        self._tracklist_group_open: dict[tuple[str, str], bool] = {}
+        self._tracklist_group_iids: dict[str, tuple[str, str]] = {}
         self._tracklist_selecting = False
+        self._playlist_selecting = False
         self._tracklist_tech_gen = 0
         self._preview_bit_depth_cache: dict = {}
         self._preview_bit_depth_lock = threading.Lock()
@@ -625,6 +636,7 @@ class ConverterApp:
         self.playlist_tree.grid(row=1, column=0, sticky="nsew")
         scroll.grid(row=1, column=1, sticky="ns")
         self.playlist_tree.bind("<<TreeviewSelect>>", self._on_playlist_select, add="+")
+        self.playlist_tree.bind("<Button-1>", self._on_playlist_button1, add="+")
 
         right = ttk.Frame(panes)
         right.columnconfigure(0, weight=1)
@@ -668,6 +680,11 @@ class ConverterApp:
         self.tracklist_tree.column(
             "sample_rate", width=90, stretch=False, anchor="center"
         )
+        self.tracklist_tree.tag_configure(
+            TRACKLIST_HEADER_SELECTED_TAG,
+            background=TRACKLIST_HEADER_SELECTED_BG,
+            foreground=TRACKLIST_HEADER_SELECTED_FG,
+        )
         track_scroll = ttk.Scrollbar(
             right, orient=tk.VERTICAL, command=self.tracklist_tree.yview
         )
@@ -676,6 +693,13 @@ class ConverterApp:
         track_scroll.grid(row=1, column=1, sticky="ns")
         self.tracklist_tree.bind(
             "<<TreeviewSelect>>", self._on_tracklist_select, add="+"
+        )
+        self.tracklist_tree.bind("<Button-1>", self._on_tracklist_button1, add="+")
+        self.tracklist_tree.bind(
+            "<<TreeviewOpen>>", self._remember_tracklist_group_open, add="+"
+        )
+        self.tracklist_tree.bind(
+            "<<TreeviewClose>>", self._remember_tracklist_group_open, add="+"
         )
 
         panes.add(left, weight=1)
@@ -1131,10 +1155,68 @@ class ConverterApp:
 
         self._refresh_tracklist_preview()
 
-    def _on_playlist_select(self, _event: object = None) -> None:
+    def _on_playlist_button1(self, event: object) -> str | None:
+        """Folder row clicks only expand/collapse; playlists keep normal select."""
         if self._busy:
+            return None
+        tree = self.playlist_tree
+        y = getattr(event, "y", None)
+        if y is None:
+            return None
+        row = tree.identify_row(y)
+        if not row:
+            return None
+        meta = self._playlist_iids.get(row)
+        if meta is None or meta[0] != "folder":
+            return None
+        tree.item(row, open=not bool(tree.item(row, "open")))
+        return "break"
+
+    def _on_playlist_select(self, _event: object = None) -> None:
+        if self._busy or self._playlist_selecting:
             return
+        tree = self.playlist_tree
+        keep = [
+            iid
+            for iid in tree.selection()
+            if (meta := self._playlist_iids.get(iid)) is not None
+            and meta[0] == "playlist"
+        ]
+        if set(keep) != set(tree.selection()):
+            self._playlist_selecting = True
+            try:
+                tree.selection_set(keep)
+            finally:
+                self._playlist_selecting = False
         self._refresh_tracklist_preview()
+
+    def _on_tracklist_button1(self, event: object) -> str | None:
+        """Expand/collapse arrow on a playlist group must not change selection."""
+        if self._busy:
+            return None
+        tree = self.tracklist_tree
+        y = getattr(event, "y", None)
+        x = getattr(event, "x", None)
+        if y is None or x is None:
+            return None
+        row = tree.identify_row(y)
+        if not row or row not in self._tracklist_group_iids:
+            return None
+        element = tree.identify("element", x, y)
+        if element != "Treeitem.indicator":
+            return None
+        is_open = not bool(tree.item(row, "open"))
+        tree.item(row, open=is_open)
+        self._tracklist_group_open[self._tracklist_group_iids[row]] = is_open
+        return "break"
+
+    def _remember_tracklist_group_open(self, _event: object = None) -> None:
+        iid = self.tracklist_tree.focus()
+        key = self._tracklist_group_iids.get(iid)
+        if key is not None:
+            self._tracklist_group_open[key] = bool(
+                self.tracklist_tree.item(iid, "open")
+            )
 
     def _on_tracklist_select(self, _event: object = None) -> None:
         if self._busy or self._tracklist_selecting:
@@ -1165,7 +1247,22 @@ class ConverterApp:
                 preview.selection_set(unique_leaves)
             finally:
                 self._tracklist_selecting = False
+        self._sync_tracklist_header_highlights()
         self._set_idle_status(self._tracklist_selection_summary())
+
+    def _sync_tracklist_header_highlights(self) -> None:
+        """Darker blue on playlist group rows when any of their tracks are selected."""
+        preview = self.tracklist_tree
+        selected = set(preview.selection())
+        for group_iid in preview.get_children(""):
+            children = preview.get_children(group_iid)
+            active = bool(children) and any(child in selected for child in children)
+            tags = (
+                (TRACKLIST_HEADER_TAG, TRACKLIST_HEADER_SELECTED_TAG)
+                if active
+                else (TRACKLIST_HEADER_TAG,)
+            )
+            preview.item(group_iid, tags=tags)
 
     def _tracklist_selection_summary(self) -> str | None:
         unique_keys: set[str] = set()
@@ -1230,15 +1327,22 @@ class ConverterApp:
         self.tracklist_tree.delete(*self.tracklist_tree.get_children())
         self._tracklist_iids = {}
         self._tracklist_paths = {}
+        self._tracklist_group_iids = {}
         if self._source_root is None:
+            self._tracklist_group_open.clear()
             self._set_preview_scan_active(False)
             self._set_idle_status()
             return
         selected = self._selected_playlists(unique_names=False)
         if not selected:
+            self._tracklist_group_open.clear()
             self._set_preview_scan_active(False)
             self._set_idle_status()
             return
+        selected_keys = set(selected)
+        for key in list(self._tracklist_group_open):
+            if key not in selected_keys:
+                del self._tracklist_group_open[key]
         query = self._track_search.query().casefold()
         if self._collection_indexes_cache is None:
             self._collection_indexes_cache = rb.collection_indexes(self._source_root)
@@ -1285,10 +1389,18 @@ class ConverterApp:
                 matched.append((key, label, (fmt, depth, rate), path))
             if not matched:
                 continue
+            group_key = (folder, name)
+            is_open = self._tracklist_group_open.setdefault(group_key, True)
             group_text = f"{name} ({len(matched)} tracks)"
             group_iid = self.tracklist_tree.insert(
-                "", tk.END, text=group_text, open=True, values=("", "", "")
+                "",
+                tk.END,
+                text=group_text,
+                open=is_open,
+                values=("", "", ""),
+                tags=(TRACKLIST_HEADER_TAG,),
             )
+            self._tracklist_group_iids[group_iid] = group_key
             painted += 1
             for key, label, values, path in matched:
                 leaf_iid = self.tracklist_tree.insert(
@@ -1308,6 +1420,7 @@ class ConverterApp:
                 self.tracklist_tree.selection_set(leaf_iids)
         finally:
             self._tracklist_selecting = False
+        self._sync_tracklist_header_highlights()
         self._set_idle_status(self._tracklist_selection_summary())
         if self._tracklist_sort_column is not None:
             self._apply_tracklist_sort()
@@ -1443,9 +1556,6 @@ class ConverterApp:
             kind, folder, name = meta
             if kind == "playlist":
                 add_playlist(folder, name)
-                return
-            for child in self.playlist_tree.get_children(iid):
-                collect_from_iid(child)
 
         for iid in self.playlist_tree.selection():
             collect_from_iid(iid)
@@ -1873,7 +1983,7 @@ class ConverterApp:
             selectmode="browse",
             height=12,
         )
-        table.heading("#0", text="Output file", anchor="w")
+        table.heading("#0", text="Input file", anchor="w")
         table.heading("action", text="Action", anchor="w")
         table.heading("quality", text="Quality", anchor="w")
         table.heading("size", text="Size", anchor="e")
@@ -1898,7 +2008,7 @@ class ConverterApp:
             table.insert(
                 "",
                 tk.END,
-                text=item.relative_dest,
+                text=item.source_display,
                 values=(action, quality, item.size_display),
             )
 

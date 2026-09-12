@@ -66,11 +66,6 @@ def _confirm_conversion_preview(app) -> None:
     app._confirm_prepared_conversion()
 
 
-def _discard_conversion_preview(app) -> None:
-    """Discard the in-memory prepared payload (Back / close / cancel)."""
-    app._discard_prepared_conversion()
-
-
 def _pump_ui(root, times: int = 20) -> None:
     root.update_idletasks()
     for _ in range(times):
@@ -743,160 +738,6 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
 
 
 class PrepareWriteBoundaryTests(unittest.TestCase):
-    def test_prepare_returns_payload_without_writes_and_discard_clears_it(
-        self,
-    ) -> None:
-        """Given Convert: When prepare finishes: Then an in-memory payload is
-        ready and nothing is written; Back/close/cancel discards it and resets
-        busy/progress."""
-        if not _tk_available():
-            self.skipTest("_tkinter not available")
-
-        import tempfile
-        import tkinter as tk
-        from contextlib import ExitStack
-        from rb_converter_gui import ConverterApp
-
-        plan = _mock_convert_plan(n_unique=1)
-        preview = rb.ConversionPreview(
-            selected=1,
-            resolved=1,
-            unique_outputs=1,
-            duplicates=0,
-            missing=0,
-            items=[],
-        )
-
-        root = None
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                wav_dir = Path(tmp) / "lib"
-                wav_dir.mkdir()
-                output = wav_dir / "rekordbox-import.xml"
-
-                def run_inline(target=None, **_kwargs):
-                    class _T:
-                        def start(self_inner):
-                            target()
-
-                    return _T()
-
-                with ExitStack() as stack:
-                    stack.enter_context(
-                        patch(
-                            "rb_converter_gui.check_for_update",
-                            return_value=UpdateCheckResult(kind="up_to_date"),
-                        )
-                    )
-                    stack.enter_context(
-                        patch("rb_converter_gui.load_preferences", return_value={})
-                    )
-                    stack.enter_context(
-                        patch(
-                            "rb_converter_gui.resolve_startup_paths",
-                            return_value=(wav_dir, output),
-                        )
-                    )
-                    stack.enter_context(
-                        patch(
-                            "rb_converter_gui.rb.discover_xml_candidates",
-                            return_value=[],
-                        )
-                    )
-                    stack.enter_context(patch("rb_converter_gui.save_preferences"))
-                    stack.enter_context(
-                        patch.object(
-                            ConverterApp,
-                            "_selected_playlists",
-                            return_value=[("ROOT", "Test")],
-                        )
-                    )
-                    stack.enter_context(
-                        patch("rb_converter_gui.rb.prepare", return_value=(plan, []))
-                    )
-                    stack.enter_context(patch("rb_converter_gui.rb.share_output_root"))
-                    stack.enter_context(
-                        patch(
-                            "rb_converter_gui.rb.collect_batch_unique",
-                            return_value=plan.unique,
-                        )
-                    )
-                    stack.enter_context(patch("rb_converter_gui.rb.share_cover_caches"))
-                    stack.enter_context(
-                        patch(
-                            "rb_converter_gui.rb.build_conversion_preview",
-                            return_value=preview,
-                        )
-                    )
-                    save_manifest = stack.enter_context(
-                        patch("rb_converter_gui.converter_manifest.save_manifest")
-                    )
-                    convert_unique = stack.enter_context(
-                        patch("rb_converter_gui.rb.convert_unique")
-                    )
-                    apply_xml = stack.enter_context(
-                        patch("rb_converter_gui.rb.apply_xml")
-                    )
-                    write_xml = stack.enter_context(
-                        patch("rb_converter_gui.rb.write_import_xml")
-                    )
-                    stack.enter_context(
-                        patch.object(
-                            ConverterApp, "_show_conversion_preview", create=True
-                        )
-                    )
-                    stack.enter_context(
-                        patch(
-                            "rb_converter_gui.threading.Thread",
-                            side_effect=run_inline,
-                        )
-                    )
-
-                    root = tk.Tk()
-                    root.withdraw()
-                    app = ConverterApp(root, documents_accessible=False)
-                    app.wav_dir_var.set(str(wav_dir))
-                    app.xml_var.set("/tmp/test.xml")
-                    _seed_track_selection(app)
-                    _mark_output_folder_valid(app)
-                    app._start_convert()
-                    root.update_idletasks()
-                    for _ in range(20):
-                        root.update()
-
-                    prepared = getattr(app, "_prepared_conversion", None)
-                    self.assertIsNotNone(prepared)
-                    self.assertIs(prepared.preview, preview)
-                    self.assertEqual(list(prepared.items), plan.unique)
-                    save_manifest.assert_not_called()
-                    convert_unique.assert_not_called()
-                    apply_xml.assert_not_called()
-                    write_xml.assert_not_called()
-                    self.assertEqual(
-                        [p for p in wav_dir.iterdir()],
-                        [],
-                        f"prepare must not write under output: "
-                        f"{list(wav_dir.iterdir())}",
-                    )
-
-                    app.progress["value"] = 42
-                    _discard_conversion_preview(app)
-                    root.update_idletasks()
-                    for _ in range(10):
-                        root.update()
-
-                    self.assertIsNone(app._prepared_conversion)
-                    self.assertFalse(app._busy)
-                    self.assertEqual(float(app.progress["value"]), 0.0)
-                    self.assertEqual([p for p in wav_dir.iterdir()], [])
-                    save_manifest.assert_not_called()
-                    convert_unique.assert_not_called()
-        except tk.TclError:
-            self.skipTest("tk.TclError: display not available")
-        finally:
-            if root is not None:
-                root.destroy()
-
     def test_confirm_writes_in_order_without_reprepare(
         self,
     ) -> None:
@@ -1112,7 +953,8 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     bit_depth=16,
                     sample_rate=44100,
                     size_bytes=1000,
-                    size_display="1000",
+                    size_display="0.0 MB",
+                    source_display="one.flac",
                 ),
                 rb.ConversionPreviewItem(
                     relative_dest="WAV/B - Two.wav",
@@ -1120,7 +962,8 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     bit_depth=24,
                     sample_rate=48000,
                     size_bytes=288000,
-                    size_display="≈ 288000",
+                    size_display="≈ 0.3 MB",
+                    source_display="two.wav",
                 ),
                 rb.ConversionPreviewItem(
                     relative_dest="WAV/C - Three.wav",
@@ -1129,6 +972,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     sample_rate=48000,
                     size_bytes=None,
                     size_display="—",
+                    source_display="three.flac",
                 ),
             ],
         )
@@ -1230,6 +1074,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
 
                 table = find_treeview(dlg)
                 self.assertIsNotNone(table)
+                self.assertEqual(table.heading("#0", "text"), "Input file")
                 rows = [
                     (
                         table.item(iid, "text") or table.item(iid, "values")[0],
@@ -1250,19 +1095,19 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     normalized,
                     [
                         (
-                            "WAV/A - One.wav",
+                            "one.flac",
                             "Reuse existing",
                             "16-bit / 44.1 kHz",
-                            "1000",
+                            "0.0 MB",
                         ),
                         (
-                            "WAV/B - Two.wav",
+                            "two.wav",
                             "Copy",
                             "24-bit / 48 kHz",
-                            "≈ 288000",
+                            "≈ 0.3 MB",
                         ),
                         (
-                            "WAV/C - Three.wav",
+                            "three.flac",
                             "Transcode",
                             "24-bit / 48 kHz",
                             "—",

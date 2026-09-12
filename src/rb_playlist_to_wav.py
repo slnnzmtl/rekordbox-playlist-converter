@@ -462,11 +462,11 @@ def print_conversion_preview(plans: list[Plan], preview: ConversionPreview) -> N
     print(plans[0].playlist_dir)
     print()
     if preview.items:
-        print("Outputs:")
+        print("Inputs:")
         for item in preview.items:
             quality = f"{item.bit_depth}-bit / {item.sample_rate} Hz"
             print(
-                f"{item.relative_dest}  {item.action}  {quality}  {item.size_display}"
+                f"{item.source_display}  {item.action}  {quality}  {item.size_display}"
             )
         print()
     print("New playlist:")
