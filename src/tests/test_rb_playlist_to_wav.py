@@ -1110,6 +1110,11 @@ class XmlFixtureTests(unittest.TestCase):
         preferred = self.wav_dir / "Same" / "Hits" / "Song.wav"
         preferred.parent.mkdir(parents=True)
         preferred.write_bytes(b"UNRELATED-OCCUPANT")
+        # Managed library (valid empty manifest) so orphan audio is allowed.
+        (self.wav_dir / "rekordbox-converter-manifest.json").write_text(
+            json.dumps({"version": 1, "tracks": {}}),
+            encoding="utf-8",
+        )
 
         xml = f"""\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1576,6 +1581,67 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertIn("manifest", stderr.getvalue().casefold())
         self.assertFalse(self.output.exists())
         self.assertFalse(any(self.wav_dir.rglob("*.wav")))
+
+    def test_cli_refuses_legacy_playlist_dir_without_manifest(self) -> None:
+        """Given an old playlist-dir tree with WAV and no manifest: When main
+        converts: Then exit is nonzero, stderr asks for a new empty output
+        folder, and no new audio/XML is written."""
+        legacy = self.wav_dir / "Old Playlist"
+        legacy.mkdir(parents=True)
+        (legacy / "track.wav").write_bytes(b"RIFF")
+        stderr = io.StringIO()
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(sys, "stderr", stderr):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 1)
+        err = stderr.getvalue().casefold()
+        self.assertIn("new empty output folder", err)
+        self.assertFalse(self.output.exists())
+        self.assertFalse(
+            (self.wav_dir / "rekordbox-converter-manifest.json").exists()
+        )
+
+    def test_cli_refuses_legacy_import_xml_without_manifest(self) -> None:
+        """Given rekordbox-import.xml under wav_dir with no manifest: When main
+        converts: Then exit is nonzero and stderr asks for a new empty output
+        folder before any convert."""
+        self.wav_dir.mkdir(parents=True)
+        (self.wav_dir / "rekordbox-import.xml").write_text(
+            "<DJ_PLAYLISTS/>", encoding="utf-8"
+        )
+        stderr = io.StringIO()
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(sys, "stderr", stderr):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("new empty output folder", stderr.getvalue().casefold())
+        self.assertFalse(
+            (self.wav_dir / "rekordbox-converter-manifest.json").exists()
+        )
 
     def test_failed_encodes_keep_manifest_reservations(self) -> None:
         """Given encode failures: When main returns nonzero: Then the manifest

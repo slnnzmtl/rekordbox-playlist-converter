@@ -47,12 +47,13 @@ export.
    refine which tracks to convert (across playlists). Playlist search filters
    the left tree; track search filters the current tracklist (artist / title /
    filename).
-3. Confirm output folder and Import XML. Defaults are ~/Documents/rekordbox-converter
-   and ~/Documents/rekordbox-converter/rekordbox-import.xml when Documents access
-   is allowed. If you decline that request, defaults are ~/rekordbox-converter and
-   ~/rekordbox-converter/rekordbox-import.xml; Browse… can prompt again when you
-   open Documents. The app remembers your last-used output folder and Import XML
-   between launches.
+3. Confirm the output folder. Defaults are ~/Documents/rekordbox-converter when
+   Documents access is allowed, or ~/rekordbox-converter if you decline that
+   request; Browse… can prompt again when you open Documents. Import XML is
+   always <output folder>/rekordbox-import.xml (shown as a label, not a
+   separate Browse). The app remembers your last-used output folder between
+   launches. Older playlist-folder libraries without a
+   rekordbox-converter-manifest.json are refused — choose a new empty folder.
 4. Choose Format: WAV or AIFF.
 5. Choose Sampling format (bit depth 16Bit/24Bit and rate 44.1KHz/48KHz).
    These are maxima, not targets: 16-bit tracks stay 16-bit; 44.1 kHz tracks
@@ -64,16 +65,20 @@ export.
    tracks still finish and all errors are reported together.
 
 What you get:
-• Audio files in <output folder>/<playlist name>/
+• Audio files in <output folder>/<artist>/<album>/ (shared across playlists)
   — WAV: stereo WAVE_FORMAT_PCM, fmt + data only, at the effective depth/rate
   — AIFF: stereo PCM at the effective depth/rate, plus ID3v2.3 (COMM + SSND + ID3)
-• Import file at the Import XML path
+• Sticky rekordbox-converter-manifest.json in the output folder
+• Import file <output folder>/rekordbox-import.xml
 • Playlist inside that file named {your playlist} [WAV] or [AIFF]
 
-Your original files stay where they are. Re-running with the same import file
+Your original files stay where they are. Re-running with the same output folder
 adds new tracks and refreshes metadata for existing dest paths; it does not
-replace the playlist. Dest files that already match the chosen profile are
-skipped unless you force a rebuild (CLI: --force).
+replace the playlist. Each unique source converts once per batch even if it
+appears in several playlists. If two different sources would share
+Artist/Album/Name, the second gets Name (2), then Name (3), and so on.
+Dest files that already match the chosen profile are skipped unless you force
+a rebuild (CLI: --force).
 
 ────────────────────────────────────────
 3. Bring it into Rekordbox
@@ -88,9 +93,8 @@ Show the rekordbox xml pane (once):
 
 Point Rekordbox at this app’s XML:
 1. Preferences → Advanced → Database.
-2. Under rekordbox xml, set Imported Library to the Import XML this app wrote
-   (default: ~/Documents/rekordbox-converter/rekordbox-import.xml) — not your
-   original collection export.
+2. Under rekordbox xml, set Imported Library to
+   <output folder>/rekordbox-import.xml — not your original collection export.
 3. Close Preferences. You should see rekordbox xml in the browser tree.
 
 If that pane already pointed at another XML, change Imported Library to this
@@ -121,5 +125,5 @@ Play one track. Confirm it is on a disk Rekordbox can read.
 • Original lossless files are untouched.
 
 New tracks later: export XML from Rekordbox again, convert with the same output
-folder and Import XML, refresh Imported Library, then import the new rows.
+folder, refresh Imported Library, then import the new rows.
 """

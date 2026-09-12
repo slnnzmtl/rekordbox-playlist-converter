@@ -343,6 +343,10 @@ def run_convert_batch(
     """Prepare all playlists, convert unique (source_key, format) once, apply XML."""
     if not playlist_refs:
         return 1
+    library_error = converter_manifest.validate_library_folder(wav_dir)
+    if library_error is not None:
+        print(library_error, file=sys.stderr)
+        return 1
     if source_root is None:
         try:
             source_root = load_dj_playlists(xml_path)

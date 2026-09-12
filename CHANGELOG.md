@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Shared media library layout: converted files live under `<output>/<artist>/<album>/` across playlists (no per-playlist audio folders).
+- Sticky `rekordbox-converter-manifest.json` remembers per-source, per-format destinations so reruns stay stable when metadata changes; `Name (2)` / `Name (3)` numbering applies only when different sources collide.
+- Batch convert encodes each unique source once even if it appears in several playlists; Import XML is written once from the success set.
+- GUI and CLI derive Import XML as `<wav-dir>/rekordbox-import.xml` (CLI `--output` remains an optional override).
+- Legacy playlist-folder trees or an existing `rekordbox-import.xml` without a manifest are refused — choose a new empty output folder.
+
 ## 2.0.0
 
 - Unique-track conversion runs up to **4 encodes in parallel** (capped at 5). Progress counts completed tracks; Cancel stops in-flight encodes (completed files kept; interrupted playlist is not written to Import XML).
