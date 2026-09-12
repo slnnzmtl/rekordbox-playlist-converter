@@ -14,6 +14,7 @@ import rb_playlist_to_wav as rb
 from rb_converter_gui import (
     center_over_window_geometry,
     fit_window_geometry,
+    progress_action_status_hint,
     total_successful_conversions,
 )
 from update_check import UpdateCheckResult
@@ -388,6 +389,20 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
         finally:
             if root is not None:
                 root.destroy()
+
+
+class ProgressStatusHintTests(unittest.TestCase):
+    def test_progress_action_status_hint_puts_counter_after_action(self) -> None:
+        """Hint reads Convert (n/m) TrackName… so the counter stays visible."""
+        self.assertEqual(
+            progress_action_status_hint(
+                "convert",
+                357,
+                1958,
+                "0190 - Posij - Sun Tracker.wav",
+            ),
+            "Convert (357/1958) 0190 - Posij - Sun Tracker.wav…",
+        )
 
 
 if __name__ == "__main__":
