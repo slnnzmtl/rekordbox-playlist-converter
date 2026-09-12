@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import struct
 import sys
 import tempfile
 import unicodedata
@@ -19,6 +20,32 @@ import rb_playlist_to_wav as rb
 import convert_plan
 import converter_manifest
 import ffmpeg_tools
+
+
+def write_pcm_wav(
+    path: Path,
+    *,
+    sample_rate: int = 44100,
+    channels: int = 2,
+    bits: int = 16,
+    frames: int = 8,
+) -> None:
+    """Minimal stereo WAVE_FORMAT_PCM for skip/rebuild tests."""
+    block_align = channels * (bits // 8)
+    byte_rate = sample_rate * block_align
+    data = b"\x00" * (frames * block_align)
+    fmt_payload = struct.pack(
+        "<HHIIHH",
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits,
+    )
+    body = b"fmt " + struct.pack("<I", len(fmt_payload)) + fmt_payload
+    body += b"data" + struct.pack("<I", len(data)) + data
+    path.write_bytes(b"RIFF" + struct.pack("<I", 4 + len(body)) + b"WAVE" + body)
 
 FIXTURE = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1185,6 +1212,215 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(
             data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
             "ABSL/It's just a bad dream/Bestial.wav",
+        )
+
+    def test_missing_dest_recreates_at_same_sticky_path(self) -> None:
+        """Given a reserved sticky dest whose file was deleted: When convert
+        reruns: Then the file is recreated at the same path (no Name (2))."""
+        sticky = "ABSL/It's just a bad dream/Bestial.wav"
+        wrote: list[Path] = []
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+            wrote.append(dest)
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            rc1 = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc1, 0)
+        dest = self.wav_dir / Path(sticky)
+        self.assertTrue(dest.is_file())
+        dest.unlink()
+        self.assertFalse(dest.exists())
+        wrote.clear()
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            rc2 = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc2, 0)
+        self.assertTrue(dest.is_file())
+        self.assertIn(dest, wrote)
+        self.assertFalse(
+            (self.wav_dir / "ABSL" / "It's just a bad dream" / "Bestial (2).wav").exists()
+        )
+        data = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
+            sticky,
+        )
+
+    def test_ceiling_raise_skips_when_effective_quality_unchanged(self) -> None:
+        """Given a 16/44.1 source already converted: When the ceiling rises to
+        24/48: Then convert skips (effective quality unchanged) at the sticky path."""
+        sticky = "ABSL/It's just a bad dream/Bestial.wav"
+        converted: list[Path] = []
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            write_pcm_wav(dest, bits=16, sample_rate=44100)
+            converted.append(dest)
+
+        def probe16(path: Path) -> dict:
+            if path.suffix.lower() == ".wav":
+                return wav_probe(bits=16)
+            return flac_probe(bits=16)
+
+        args_low = [
+            "--xml",
+            str(self.xml_path),
+            "--playlist",
+            "Untitled Intelligent List",
+            "--wav-dir",
+            str(self.wav_dir),
+            "--output",
+            str(self.output),
+            "--bit-depth",
+            "16",
+            "--sample-rate",
+            "44100",
+        ]
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=probe16
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+            self.assertEqual(rb.main(args_low), 0)
+        dest = self.wav_dir / Path(sticky)
+        self.assertTrue(dest.is_file())
+        prior = dest.read_bytes()
+        converted.clear()
+
+        args_high = [
+            "--xml",
+            str(self.xml_path),
+            "--playlist",
+            "Untitled Intelligent List",
+            "--wav-dir",
+            str(self.wav_dir),
+            "--output",
+            str(self.output),
+            "--bit-depth",
+            "24",
+            "--sample-rate",
+            "48000",
+        ]
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=probe16
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+            self.assertEqual(rb.main(args_high), 0)
+        self.assertEqual(converted, [])
+        self.assertEqual(dest.read_bytes(), prior)
+        self.assertFalse(
+            (self.wav_dir / "ABSL" / "It's just a bad dream" / "Bestial (2).wav").exists()
+        )
+
+    def test_effective_quality_mismatch_rebuilds_in_place_sticky_path(self) -> None:
+        """Given a reduced dest for a higher-quality source: When the ceiling
+        rises so effective depth/rate no longer matches: Then replace in place
+        at the sticky path (no Name (2))."""
+        sticky = "ABSL/It's just a bad dream/Bestial.wav"
+        converted: list[Path] = []
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            bits = kwargs.get("bit_depth", 16)
+            rate = kwargs.get("sample_rate", 44100)
+            write_pcm_wav(dest, bits=bits, sample_rate=rate)
+            converted.append(dest)
+
+        def probe24(path: Path) -> dict:
+            if path.suffix.lower() == ".wav":
+                return wav_probe(bits=24)
+            return flac_probe(bits=24)
+
+        args_low = [
+            "--xml",
+            str(self.xml_path),
+            "--playlist",
+            "Untitled Intelligent List",
+            "--wav-dir",
+            str(self.wav_dir),
+            "--output",
+            str(self.output),
+            "--bit-depth",
+            "16",
+            "--sample-rate",
+            "44100",
+        ]
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=probe24
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+            self.assertEqual(rb.main(args_low), 0)
+        dest = self.wav_dir / Path(sticky)
+        self.assertTrue(
+            convert_plan.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100)
+        )
+        converted.clear()
+
+        args_high = [
+            "--xml",
+            str(self.xml_path),
+            "--playlist",
+            "Untitled Intelligent List",
+            "--wav-dir",
+            str(self.wav_dir),
+            "--output",
+            str(self.output),
+            "--bit-depth",
+            "24",
+            "--sample-rate",
+            "48000",
+        ]
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=probe24
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+            self.assertEqual(rb.main(args_high), 0)
+        self.assertIn(dest, converted)
+        self.assertTrue(
+            convert_plan.is_cdj_safe_wav(dest, bit_depth=24, sample_rate=44100)
+        )
+        self.assertFalse(
+            (self.wav_dir / "ABSL" / "It's just a bad dream" / "Bestial (2).wav").exists()
+        )
+        data = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
+            sticky,
         )
 
     def test_wav_and_aiff_assignments_coexist_in_manifest(self) -> None:

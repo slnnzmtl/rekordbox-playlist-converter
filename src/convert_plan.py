@@ -301,12 +301,10 @@ def convert_unique(
                 stats.converted += 1
             finish("convert", name)
         except CancelledError:
-            _unlink_quiet(item.dest_path)
             return
         except Exception as exc:  # noqa: BLE001 — collect all; report after pool
             with stats_lock:
                 stats.errors.append(str(exc))
-            _unlink_quiet(item.dest_path)
             finish("error", name)
 
     try:

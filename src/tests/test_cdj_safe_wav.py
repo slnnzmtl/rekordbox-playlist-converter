@@ -448,6 +448,57 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             self.assertEqual(stats.converted, 1)
             self.assertEqual(converted, [dest])
 
+    def test_failed_force_rebuild_preserves_previously_valid_dest(self) -> None:
+        """Given a valid dest: When force convert fails mid-way: Then dest
+        content is unchanged (temp/sidecar cleaned; final dest not unlinked)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            playlist_dir = root / "WAV" / "P"
+            playlist_dir.mkdir(parents=True)
+            dest = playlist_dir / "a.wav"
+            write_pcm_wav(dest, bits=16, sample_rate=44100)
+            prior = dest.read_bytes()
+            el = ET.Element(
+                "TRACK", {"TrackID": "1", "Location": rb.encode_location(src)}
+            )
+            item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=rb.encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                copy_wav=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = rb.Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                wav_dir=root / "WAV",
+                playlist_dir=playlist_dir,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+            )
+
+            def boom(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                raise rb.CliError(f"encode failed for {source}")
+
+            with mock.patch.object(convert_plan, "run_ffmpeg", side_effect=boom):
+                stats = rb.convert_unique(plan, force=True)
+            self.assertEqual(len(stats.errors), 1)
+            self.assertTrue(dest.is_file())
+            self.assertEqual(dest.read_bytes(), prior)
+
     def test_classify_preserves_16_44100_under_24_48_ceiling(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
