@@ -50,14 +50,14 @@ export.
 3. Confirm the output folder. Defaults are ~/Documents/rekordbox-converter when
    Documents access is allowed, or ~/rekordbox-converter if you decline that
    request; Browse… can prompt again when you open Documents. Import XML is
-   always <output folder>/rekordbox-import.xml (shown as a label, not a
-   separate Browse). The app remembers your last-used output folder between
+   always <output folder>/rekordbox-import.xml in a read-only field (click to
+   copy the full path). The app remembers your last-used output folder between
    launches. Older playlist-folder libraries without a
    rekordbox-converter-manifest.json are refused — choose a new empty folder.
 4. Choose Format: WAV or AIFF.
-5. Choose Sampling format (bit depth 16Bit/24Bit and rate 44.1KHz/48KHz).
-   These are maxima, not targets: 16-bit tracks stay 16-bit; 44.1 kHz tracks
-   stay 44.1 kHz. Defaults are 24Bit / 48KHz.
+5. Choose Maximum output quality (bit depth 16-bit/24-bit and rate
+   44.1 kHz/48 kHz). These are maxima, not targets: 16-bit tracks stay
+   16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are 24-bit / 48 kHz.
 6. Click Convert (beside the progress bar). While converting, Cancel replaces
    Convert in that spot. Cancel stops in-flight encodes (up to 4 at once);
    files already written are kept (re-run Convert to finish). Import XML is

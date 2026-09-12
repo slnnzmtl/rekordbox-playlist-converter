@@ -5,7 +5,8 @@
 - Shared media library layout: converted files live under `<output>/<artist>/<album>/` across playlists (no per-playlist audio folders).
 - Sticky `rekordbox-converter-manifest.json` remembers per-source, per-format destinations so reruns stay stable when metadata changes; `Name (2)` / `Name (3)` numbering applies only when different sources collide.
 - Batch convert encodes each unique source once even if it appears in several playlists; Import XML is written once from the success set.
-- GUI and CLI derive Import XML as `<wav-dir>/rekordbox-import.xml` (CLI `--output` remains an optional override).
+- GUI and CLI derive Import XML as `<wav-dir>/rekordbox-import.xml` (CLI `--output` remains an optional override). The GUI shows a read-only path field (click to copy); ignore legacy `import_xml` preferences.
+- GUI quality control is **Max. quality** (`16-bit` / `24-bit` / `44.1 kHz` / `48 kHz`). Output-folder validation runs off the UI thread and disables Convert when the folder is invalid. Success offers **Reveal library** and **Reveal import XML**.
 - Legacy playlist-folder trees or an existing `rekordbox-import.xml` without a manifest are refused — choose a new empty output folder.
 
 ## 2.0.0

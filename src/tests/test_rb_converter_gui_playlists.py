@@ -26,7 +26,7 @@ def _mark_output_folder_valid(app) -> None:
         app._wav_dir_validate_after_id = None
     app._wav_dir_checking = False
     app._wav_dir_valid = True
-    app.wav_dir_error_var.set("")
+    app._set_wav_dir_error("")
     app._update_convert_enabled()
 
 

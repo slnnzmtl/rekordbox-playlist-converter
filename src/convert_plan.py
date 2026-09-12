@@ -348,10 +348,6 @@ def abs_path(path: Path) -> Path:
         path = Path.cwd() / path
     return path
 
-def dest_name_for(source: Path, *, output_format: str = "wav") -> str:
-    ext = ".aiff" if output_format == "aiff" else ".wav"
-    return unicodedata.normalize("NFC", source.stem) + ext
-
 
 _RESERVED_FILENAME_CHARS = '<>:"|?*'
 
@@ -413,8 +409,7 @@ def playlist_dir_name(playlist_name: str) -> str:
     return name
 
 
-def collision_key(name: str) -> str:
-    return unicodedata.normalize("NFC", name).casefold()
+collision_key = converter_manifest.collision_key
 
 
 def resolve_existing_file(path: Path) -> Path | None:
@@ -572,8 +567,6 @@ def build_plan(
     errors.extend(resolve_errors)
 
     wav_dir_abs = abs_path(wav_dir)
-    # Library root (field name kept for hand-built Plan compatibility).
-    playlist_dir = wav_dir_abs
     if manifest is None:
         manifest = converter_manifest.empty_manifest()
 
@@ -603,7 +596,7 @@ def build_plan(
             wav_dir=wav_dir_abs,
             source_path=source_path,
         )
-        dest_path = playlist_dir.joinpath(*PurePosixPath(rel).parts)
+        dest_path = wav_dir_abs.joinpath(*PurePosixPath(rel).parts)
         dest_name = dest_path.name
         dest_location = encode_location(dest_path)
         planned.append(
@@ -728,7 +721,7 @@ def build_plan(
         playlist_name=playlist_name,
         wav_playlist_name=wav_playlist_name,
         wav_dir=wav_dir_abs,
-        playlist_dir=playlist_dir,
+        playlist_dir=wav_dir_abs,
         output=output,
         tracks=planned,
         unique=unique,

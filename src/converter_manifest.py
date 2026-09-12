@@ -28,7 +28,7 @@ def _abs_path(path: Path) -> Path:
     return path
 
 
-def _collision_key(name: str) -> str:
+def collision_key(name: str) -> str:
     return unicodedata.normalize("NFC", name).casefold()
 
 
@@ -39,14 +39,8 @@ class ConverterManifest:
     tracks: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
 
     def get_dest(self, source_key: str, output_format: str) -> str | None:
-        entry = self.tracks.get(source_key)
-        if entry is None:
-            return None
-        fmt = entry.get(output_format)
-        if not fmt:
-            return None
-        dest = fmt.get("dest")
-        return dest if dest else None
+        dest = self.tracks.get(source_key, {}).get(output_format, {}).get("dest")
+        return dest or None
 
     def set_dest(self, source_key: str, output_format: str, dest: str) -> None:
         self.tracks.setdefault(source_key, {})[output_format] = {"dest": dest}
@@ -62,7 +56,7 @@ class ConverterManifest:
                     continue
                 dest = record.get("dest")
                 if dest:
-                    keys.add(_collision_key(dest))
+                    keys.add(collision_key(dest))
         return keys
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,30 +71,34 @@ def empty_manifest() -> ConverterManifest:
     return ConverterManifest()
 
 
+def _require_under_wav_dir(wav_dir: Path, dest: Path, detail: str) -> Path:
+    root = _abs_path(wav_dir).resolve()
+    try:
+        dest.relative_to(root)
+    except ValueError as exc:
+        raise ManifestError(detail) from exc
+    return dest
+
+
 def resolve_dest_under_wav_dir(wav_dir: Path, relative_dest: str) -> Path:
     """Resolve relative_dest under wav_dir; raise if it escapes wav_dir."""
     root = _abs_path(wav_dir).resolve()
     dest = root.joinpath(*PurePosixPath(relative_dest).parts).resolve()
-    try:
-        dest.relative_to(root)
-    except ValueError as exc:
-        raise ManifestError(
-            f"manifest dest resolves outside wav_dir: {relative_dest!r}"
-        ) from exc
-    return dest
+    return _require_under_wav_dir(
+        wav_dir,
+        dest,
+        f"manifest dest resolves outside wav_dir: {relative_dest!r}",
+    )
 
 
 def ensure_dest_path_under_wav_dir(wav_dir: Path, dest_path: Path) -> Path:
     """Resolve dest_path and refuse if it is outside wav_dir."""
-    root = _abs_path(wav_dir).resolve()
     dest = dest_path.expanduser().resolve()
-    try:
-        dest.relative_to(root)
-    except ValueError as exc:
-        raise ManifestError(
-            f"dest path resolves outside wav_dir: {dest_path}"
-        ) from exc
-    return dest
+    return _require_under_wav_dir(
+        wav_dir,
+        dest,
+        f"dest path resolves outside wav_dir: {dest_path}",
+    )
 
 
 def _validate_dest_relative(dest: object, *, fmt: str, wav_dir: Path) -> str | None:
@@ -169,7 +167,7 @@ def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
                 errors.append(dest_err)
                 continue
             assert isinstance(dest, str)
-            ck = _collision_key(dest)
+            ck = collision_key(dest)
             prior = ownership.get(ck)
             if prior is not None and prior != (source_key, fmt):
                 errors.append(
@@ -194,7 +192,7 @@ def load_manifest(wav_dir: Path) -> ConverterManifest:
         raise ManifestError(
             f"invalid converter manifest JSON: {path}: {exc}"
         ) from exc
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         raise ManifestError(f"cannot read converter manifest: {path}: {exc}") from exc
     errors = validate_manifest_data(data, _abs_path(wav_dir))
     if errors:
@@ -267,16 +265,11 @@ def validate_library_folder(wav_dir: Path) -> str | None:
         if not _parent_writable_for_create(expanded):
             return "Output folder is not accessible or not writable."
 
-    manifest_file = expanded / MANIFEST_NAME if expanded.is_dir() else None
-    if manifest_file is not None and manifest_file.is_file():
+    if expanded.is_dir() and (expanded / MANIFEST_NAME).is_file():
         try:
-            raw = manifest_file.read_text(encoding="utf-8")
-            data = json.loads(raw)
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            load_manifest(expanded)
+        except ManifestError as exc:
             return f"Converter manifest is invalid: {exc}"
-        errors = validate_manifest_data(data, expanded)
-        if errors:
-            return f"Converter manifest is invalid: {errors[0]}"
         return None
 
     if expanded.is_dir() and _has_legacy_library_content(expanded):
@@ -320,7 +313,7 @@ def relative_dest_occupied(
     source_path: Path | None = None,
 ) -> bool:
     """True if dest is taken by another assignment or an unrelated file on disk."""
-    ck = _collision_key(relative_dest)
+    ck = collision_key(relative_dest)
     if ck in manifest.dest_collision_keys(exclude=exclude):
         return True
     try:
@@ -340,9 +333,9 @@ def relative_dest_occupied(
         return not _is_source(dest)
     parent = dest.parent
     if parent.is_dir():
-        key = _collision_key(dest.name)
+        key = collision_key(dest.name)
         for entry in parent.iterdir():
-            if entry.is_file() and _collision_key(entry.name) == key:
+            if entry.is_file() and collision_key(entry.name) == key:
                 return not _is_source(entry)
     return False
 

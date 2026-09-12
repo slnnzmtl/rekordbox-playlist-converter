@@ -294,6 +294,7 @@ class ConverterApp:
 
         self.xml_var = tk.StringVar()
         self.wav_dir_var = tk.StringVar()
+        self.output_var = tk.StringVar()
         # Start with home fallback so the window can appear before Documents TCC.
         saved_prefs = load_preferences()
         startup_wav, _startup_output = resolve_startup_paths(
@@ -303,6 +304,7 @@ class ConverterApp:
             documents_accessible=False,
         )
         self.wav_dir_var.set(str(startup_wav))
+        self._sync_import_xml_display()
         saved_format = saved_prefs.get("output_format", "wav")
         if saved_format not in ("wav", "aiff"):
             saved_format = "wav"
@@ -331,6 +333,7 @@ class ConverterApp:
         self._progress_target = 0.0
         self._progress_anim_id: str | None = None
         self._cancelled_clear_id: str | None = None
+        self._copy_status_clear_id: str | None = None
         self._documents_accessible = False
         self._source_root = None
         self._collection_indexes_cache: tuple[dict, dict] | None = None
@@ -373,7 +376,7 @@ class ConverterApp:
         )
         self.wav_dir_var.trace_add(
             "write",
-            lambda *_: self._schedule_wav_dir_validation(),
+            lambda *_: self._on_wav_dir_changed(),
         )
         if not self.search_var.get():
             self._playlist_search.show()
@@ -667,16 +670,23 @@ class ConverterApp:
             width=ACTION_BUTTON_WIDTH,
             command=self._browse_wav_dir,
         ).grid(row=2, column=2, sticky="e", **pad)
-        ttk.Label(
+        self.wav_dir_error_label = ttk.Label(
             frm,
             textvariable=self.wav_dir_error_var,
             foreground="#a40000",
             wraplength=720,
-        ).grid(row=3, column=1, columnspan=2, sticky="w", padx=10)
-
-        ttk.Label(frm, text=f"Import XML: {IMPORT_XML_NAME}").grid(
-            row=4, column=0, columnspan=2, sticky="w", **pad
         )
+        # Row 3 is used only while validation has a message (grid_remove otherwise).
+
+        ttk.Label(frm, text="Import XML").grid(row=4, column=0, sticky="w", **pad)
+        self.import_xml_entry = ttk.Entry(
+            frm, textvariable=self.output_var, state="readonly", cursor="hand2"
+        )
+        self.import_xml_entry.grid(row=4, column=1, sticky="ew", **pad)
+        self.import_xml_entry.bind(
+            "<Button-1>", self._copy_import_xml_path, add="+"
+        )
+        _HoverTooltip(self.import_xml_entry, "Click to copy the Import XML path")
 
         ttk.Label(frm, text="Format").grid(row=5, column=0, sticky="w", **pad)
         format_opts = ttk.Frame(frm)
@@ -696,9 +706,9 @@ class ConverterApp:
             command=self._persist_output_preferences,
         ).pack(side=tk.LEFT, padx=(8, 0))
 
+        ttk.Label(frm, text="Max. quality").grid(row=6, column=0, sticky="w", **pad)
         quality = ttk.Frame(frm)
-        quality.grid(row=6, column=0, columnspan=2, sticky="w", **pad)
-        ttk.Label(quality, text="Maximum output quality").pack(side=tk.LEFT)
+        quality.grid(row=6, column=1, sticky="w", **pad)
         self.bit_depth_combo = ttk.Combobox(
             quality,
             values=list(BIT_DEPTH_LABELS.values()),
@@ -708,7 +718,7 @@ class ConverterApp:
         self.bit_depth_combo.set(
             BIT_DEPTH_LABELS.get(self.bit_depth_var.get(), "24-bit")
         )
-        self.bit_depth_combo.pack(side=tk.LEFT, padx=(8, 0))
+        self.bit_depth_combo.pack(side=tk.LEFT)
         self.bit_depth_combo.bind(
             "<<ComboboxSelected>>", self._on_bit_depth_selected, add="+"
         )
@@ -869,6 +879,10 @@ class ConverterApp:
         self.sample_rate_var.set(SAMPLE_RATE_FROM_LABEL.get(label, "48000"))
         self._persist_output_preferences()
 
+    def _on_wav_dir_changed(self) -> None:
+        self._sync_import_xml_display()
+        self._schedule_wav_dir_validation()
+
     def _resolved_output_paths(self) -> tuple[Path, Path]:
         wav_dir = Path(
             self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)
@@ -876,6 +890,39 @@ class ConverterApp:
         if not wav_dir.is_absolute():
             wav_dir = Path.home() / wav_dir
         return wav_dir, import_xml_path(wav_dir)
+
+    def _sync_import_xml_display(self) -> None:
+        _wav_dir, output = self._resolved_output_paths()
+        self.output_var.set(str(output))
+
+    def _copy_import_xml_path(self, _event: object = None) -> str | None:
+        path = str(self._resolved_output_paths()[1])
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(path)
+            self.root.update_idletasks()
+        except tk.TclError:
+            return "break"
+        if not self._busy:
+            self._cancel_copy_status_clear()
+            self.status_var.set(f"Copied path: {path}")
+            self._copy_status_clear_id = self.root.after(
+                CANCELLED_STATUS_CLEAR_MS, self._clear_copy_status
+            )
+        return "break"
+
+    def _cancel_copy_status_clear(self) -> None:
+        if self._copy_status_clear_id is not None:
+            self.root.after_cancel(self._copy_status_clear_id)
+            self._copy_status_clear_id = None
+
+    def _clear_copy_status(self) -> None:
+        self._copy_status_clear_id = None
+        if self._busy:
+            return
+        if not self.status_var.get().startswith("Copied path:"):
+            return
+        self._set_idle_status(self._tracklist_selection_summary())
 
     def _persist_output_preferences(self, *, include_source_xml: bool = False) -> None:
         wav_dir, _output = self._resolved_output_paths()
@@ -1409,12 +1456,22 @@ class ConverterApp:
         enabled = self._wav_dir_valid and not self._wav_dir_checking
         self.convert_btn.configure(state=tk.NORMAL if enabled else tk.DISABLED)
 
+    def _set_wav_dir_error(self, message: str) -> None:
+        self.wav_dir_error_var.set(message)
+        if message:
+            self.wav_dir_error_label.grid(
+                row=3, column=1, columnspan=2, sticky="w", padx=10, pady=(0, 4)
+            )
+        else:
+            self.wav_dir_error_label.grid_remove()
+
     def _schedule_wav_dir_validation(self) -> None:
         prev = self._wav_dir_validate_after_id
         if prev is not None:
             self.root.after_cancel(prev)
         self._wav_dir_checking = True
         self._wav_dir_valid = False
+        self._set_wav_dir_error("")
         self._update_convert_enabled()
 
         def fire() -> None:
@@ -1431,7 +1488,9 @@ class ConverterApp:
         gen = self._wav_dir_validate_gen
         self._wav_dir_checking = True
         self._wav_dir_valid = False
-        self.wav_dir_error_var.set("Checking output folder…")
+        # Do not show a temporary "Checking…" in the error row — it flickers
+        # and then hides for valid folders. Convert stays disabled via
+        # _wav_dir_checking until the result lands.
         self._update_convert_enabled()
 
         def worker() -> None:
@@ -1443,10 +1502,10 @@ class ConverterApp:
                 self._wav_dir_checking = False
                 if error:
                     self._wav_dir_valid = False
-                    self.wav_dir_error_var.set(error)
+                    self._set_wav_dir_error(error)
                 else:
                     self._wav_dir_valid = True
-                    self.wav_dir_error_var.set("")
+                    self._set_wav_dir_error("")
                 self._update_convert_enabled()
 
             self._ui(on_ui)
@@ -1634,7 +1693,6 @@ class ConverterApp:
         try:
             summaries: list[str] = []
             skipped: list[str] = []
-            all_stats: list[rb.ConvertStats] = []
             plans: list[rb.Plan] = []
             # Reuse UI-loaded tree when it matches this convert's XML; else parse once.
             loaded_xml = Path(self.xml_var.get().strip()).expanduser()
@@ -1714,8 +1772,9 @@ class ConverterApp:
                     )
                 )
 
-            def _finish_cancel_with_errors() -> None:
-                encode_errors = [err for s in all_stats for err in s.errors]
+            def _finish_cancel_with_errors(
+                encode_errors: list[str] | None = None,
+            ) -> None:
                 self._ui(lambda e=encode_errors: self._finish_cancelled(e or None))
 
             if self._cancel_event.is_set():
@@ -1738,7 +1797,6 @@ class ConverterApp:
                 cancel_event=self._cancel_event,
                 items=items,
             )
-            all_stats.append(batch_stats)
             completed_plans: list[rb.Plan] = []
             cancelled = self._cancel_event.is_set()
             for plan in plans:
@@ -1775,19 +1833,18 @@ class ConverterApp:
                     cancelled = True
 
             if cancelled:
-                _finish_cancel_with_errors()
+                _finish_cancel_with_errors(batch_stats.errors or None)
                 return
             if total == 0:
                 self._ui(lambda: self._set_progress(0, 0))
             else:
                 self._ui(lambda t=total: self._set_progress(t, t))
-            encode_errors = [err for s in all_stats for err in s.errors]
-            if encode_errors:
-                self._ui(lambda e=encode_errors: self._finish_error(e))
+            if batch_stats.errors:
+                self._ui(lambda e=batch_stats.errors: self._finish_error(e))
                 return
             open_dir = wav_dir
             out = str(output)
-            if total_successful_conversions(all_stats) == 0:
+            if total_successful_conversions([batch_stats]) == 0:
                 self._ui(
                     lambda s=summaries, w=skipped: self._finish_no_conversions(s, w)
                 )

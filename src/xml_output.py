@@ -61,12 +61,8 @@ def share_output_root(plans: list[Plan]) -> None:
         plan.output_root = shared
 
 
-def rewrite_counts(output_root: ET.Element, wav_node: ET.Element | None = None) -> None:
-    """Recompute COLLECTION Entries and every folder Count / playlist Entries.
-
-    wav_node is accepted for call-site compatibility; the whole tree is walked.
-    """
-    _ = wav_node
+def rewrite_counts(output_root: ET.Element) -> None:
+    """Recompute COLLECTION Entries and every folder Count / playlist Entries."""
     collection = output_root.find("COLLECTION")
     if collection is not None:
         collection.set("Entries", str(len(collection.findall("TRACK"))))

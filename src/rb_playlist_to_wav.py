@@ -91,7 +91,6 @@ Plan = convert_plan.Plan
 ConvertStats = convert_plan.ConvertStats
 cached_cover_jpeg = convert_plan.cached_cover_jpeg
 abs_path = convert_plan.abs_path
-dest_name_for = convert_plan.dest_name_for
 sanitize_path_component = convert_plan.sanitize_path_component
 preferred_relative_dest = convert_plan.preferred_relative_dest
 playlist_dir_name = convert_plan.playlist_dir_name
@@ -433,34 +432,6 @@ def run_convert_batch(
         print_errors(stats.errors)
         return 1
     return 0
-
-
-def run_convert_one(
-    xml_path: Path,
-    playlist_name: str,
-    wav_dir: Path,
-    output: Path,
-    *,
-    force: bool,
-    dry_run: bool,
-    playlist_folder: str | None = None,
-    output_format: str = "wav",
-    max_bit_depth: int = 24,
-    max_sample_rate: int = 48000,
-    source_root: ET.Element | None = None,
-) -> int:
-    return run_convert_batch(
-        xml_path,
-        [(playlist_folder, playlist_name)],
-        wav_dir,
-        output,
-        force=force,
-        dry_run=dry_run,
-        output_format=output_format,
-        max_bit_depth=max_bit_depth,
-        max_sample_rate=max_sample_rate,
-        source_root=source_root,
-    )
 
 
 def print_errors(errors: list[str]) -> None:

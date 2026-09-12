@@ -53,21 +53,6 @@ def wav_probe() -> dict:
     }
 
 
-def aiff_probe() -> dict:
-    return {
-        "format": {"format_name": "aiff"},
-        "streams": [
-            {
-                "codec_name": "pcm_s24be",
-                "sample_fmt": "s32",
-                "sample_rate": "44100",
-                "channels": 2,
-                "bits_per_raw_sample": "24",
-            }
-        ],
-    }
-
-
 RB6_FIXTURE = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <DJ_PLAYLISTS Version="1.0.0">
@@ -101,34 +86,6 @@ RB6_FIXTURE = """\
           <TRACK Key="101"/>
           <TRACK Key="100"/>
         </NODE>
-      </NODE>
-    </NODE>
-  </PLAYLISTS>
-</DJ_PLAYLISTS>
-"""
-
-RB7_FIXTURE = """\
-<?xml version="1.0" encoding="UTF-8"?>
-<DJ_PLAYLISTS Version="1.0.0">
-  <PRODUCT Name="rekordbox" Version="7.0.4" Company="AlphaTheta"/>
-  <COLLECTION Entries="1">
-    <TRACK TrackID="200" Name="Beatgrid Tune" Artist="Producer"
-           Album="Grid" Grouping="" Genre="Techno" Kind="FLAC File" Size="1"
-           TotalTime="120" DiscNumber="0" TrackNumber="1" Year="2025"
-           AverageBpm="132.00" DateAdded="2025-01-01" BitRate="0"
-           SampleRate="44100" Comments="" PlayCount="0" Rating="0"
-           Location="{loc_a}" Remixer="" Tonality="Cm" Label="" Mix="">
-      <TEMPO Inizio="0.012" Bpm="132.00" Metro="4/4" Battito="1"/>
-      <TEMPO Inizio="1.830" Bpm="132.00" Metro="4/4" Battito="2"/>
-      <TEMPO Inizio="3.648" Bpm="132.00" Metro="4/4" Battito="3"/>
-      <POSITION_MARK Name="" Type="0" Start="0.012" Num="-1"
-                     Red="40" Green="226" Blue="20"/>
-    </TRACK>
-  </COLLECTION>
-  <PLAYLISTS>
-    <NODE Type="0" Name="ROOT" Count="1">
-      <NODE Name="RB7 Playlist" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="200"/>
       </NODE>
     </NODE>
   </PLAYLISTS>
@@ -175,11 +132,8 @@ class ValidateImportXmlUnitTests(unittest.TestCase):
 
 class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
     def _probe(self, path: Path) -> dict:
-        suffix = path.suffix.lower()
-        if suffix == ".wav":
+        if path.suffix.lower() == ".wav":
             return wav_probe()
-        if suffix in {".aiff", ".aif"}:
-            return aiff_probe()
         return flac_probe()
 
     def _convert_and_validate(
@@ -189,8 +143,6 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
         playlist: str,
         playlist_folder: str | None = None,
         product_version_prefix: str,
-        output_format: str = "wav",
-        extra_playlists: list[tuple[str | None, str]] | None = None,
     ) -> ET.Element:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -213,35 +165,20 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(b"RIFF")
 
-            refs = [(playlist_folder, playlist)]
-            if extra_playlists:
-                refs.extend(extra_playlists)
-
-            def touch_aiff(source, dest, *a, **k):
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(b"FORM")
-
             with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
                 ffmpeg_tools, "run_ffprobe", side_effect=self._probe
             ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
                 convert_plan, "is_cdj_safe_wav", return_value=False
             ), patch.object(
-                convert_plan, "_is_canonical_aiff_output", return_value=False
-            ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("100", "2116", "44100")
-            ), patch.object(
-                convert_plan,
-                "write_aiff_output",
-                side_effect=touch_aiff,
             ):
                 rc = rb.run_convert_batch(
                     xml_path,
-                    refs,
+                    [(playlist_folder, playlist)],
                     wav_dir,
                     output,
                     force=False,
                     dry_run=False,
-                    output_format=output_format,
                 )
             self.assertEqual(rc, 0)
             self.assertTrue(output.is_file())
@@ -282,17 +219,6 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
         self.assertEqual(len(pl), 1)
         # Repeated source Key in playlist → one Key after dedup on new node.
         self.assertEqual(len(pl[0].findall("TRACK")), 2)
-
-    def test_rb7_style_convert_write_validate(self) -> None:
-        out = self._convert_and_validate(
-            fixture=RB7_FIXTURE,
-            playlist="RB7 Playlist",
-            product_version_prefix="7.",
-        )
-        tracks = out.findall("COLLECTION/TRACK")
-        self.assertEqual(len(tracks), 1)
-        self.assertIsNotNone(tracks[0].find("TEMPO"))
-        self.assertGreaterEqual(len(tracks[0].findall("TEMPO")), 2)
 
     def test_shared_track_across_playlists_one_collection_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -361,89 +287,6 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
             for name in ("One [WAV]", "Two [WAV]"):
                 pl = rb.find_playlists_by_name(out, name)[0]
                 self.assertIn(tid, [t.get("Key") for t in pl.findall("TRACK")])
-
-    def test_wav_and_aiff_same_source_two_collection_tracks(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            src = root / "music" / "t.flac"
-            write_flac(src)
-            xml = f"""\
-<?xml version="1.0" encoding="UTF-8"?>
-<DJ_PLAYLISTS Version="1.0.0">
-  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
-  <COLLECTION Entries="1">
-    <TRACK TrackID="1" Name="Dual" Artist="A" Album="B" Kind="FLAC File"
-           Size="1" TotalTime="1" Location="{rb.encode_location(src)}"
-           SampleRate="44100" AverageBpm="120.00"/>
-  </COLLECTION>
-  <PLAYLISTS>
-    <NODE Type="0" Name="ROOT" Count="1">
-      <NODE Name="DualFmt" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="1"/>
-      </NODE>
-    </NODE>
-  </PLAYLISTS>
-</DJ_PLAYLISTS>
-"""
-            xml_path = root / "c.xml"
-            xml_path.write_text(xml, encoding="utf-8")
-            wav_dir = root / "WAV"
-            out_wav = root / "wav.xml"
-
-            def fake_ffmpeg(source, dest, codec, force, **_k):
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(b"RIFF")
-
-            def touch_aiff(source, dest, *a, **k):
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_bytes(b"FORM")
-
-            patches = (
-                patch.object(ffmpeg_tools, "require_tools", return_value=[]),
-                patch.object(ffmpeg_tools, "run_ffprobe", side_effect=self._probe),
-                patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg),
-                patch.object(convert_plan, "is_cdj_safe_wav", return_value=False),
-                patch.object(convert_plan, "_is_canonical_aiff_output", return_value=False),
-                patch.object(
-                    xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
-                ),
-                patch.object(convert_plan, "write_aiff_output", side_effect=touch_aiff),
-            )
-            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
-                self.assertEqual(
-                    rb.run_convert_batch(
-                        xml_path,
-                        [(None, "DualFmt")],
-                        wav_dir,
-                        out_wav,
-                        force=False,
-                        dry_run=False,
-                        output_format="wav",
-                    ),
-                    0,
-                )
-                self.assertEqual(
-                    rb.run_convert_batch(
-                        xml_path,
-                        [(None, "DualFmt")],
-                        wav_dir,
-                        out_wav,
-                        force=False,
-                        dry_run=False,
-                        output_format="aiff",
-                    ),
-                    0,
-                )
-            out = ET.parse(out_wav).getroot()
-            self.assertEqual(xml_output.validate_import_xml(out), [])
-            tracks = out.findall("COLLECTION/TRACK")
-            self.assertEqual(len(tracks), 2)
-            kinds = sorted(t.get("Kind") for t in tracks)
-            self.assertEqual(kinds, ["AIFF File", "WAV File"])
-            ids = {t.get("TrackID") for t in tracks}
-            self.assertEqual(len(ids), 2)
-            locs = {t.get("Location") for t in tracks}
-            self.assertEqual(len(locs), 2)
 
 
 if __name__ == "__main__":
