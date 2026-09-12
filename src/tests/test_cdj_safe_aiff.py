@@ -448,7 +448,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.copied, 1)
             self.assertEqual(cover.call_count, 1)
-            cover.assert_called_with(src)
+            cover.assert_called_with(src, cancel_event=None)
 
     def test_aiff_24_48_dest_does_not_skip_when_effective_is_16_44100(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

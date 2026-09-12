@@ -1880,24 +1880,25 @@ class ConverterApp:
             except rb.CliError as exc:
                 self._ui(lambda e=[str(exc)]: self._finish_error(e))
                 return
+
+            def progress_tick(
+                current: int,
+                total: int,
+                action: str,
+                track_name: str,
+            ) -> None:
+                self._ui(
+                    lambda c=current, t=total, a=action, n=track_name: self._set_progress(
+                        c, t, action=a, name=n
+                    )
+                )
+
             for i, (folder, name) in enumerate(selected):
                 if self._cancel_event.is_set():
                     self._ui(self._finish_cancelled)
                     return
                 label = f"{name} ({i + 1}/{len(selected)})"
                 self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
-
-                def prepare_tick(
-                    current: int,
-                    total: int,
-                    action: str,
-                    track_name: str,
-                ) -> None:
-                    self._ui(
-                        lambda c=current, t=total, a=action, n=track_name: self._set_progress(
-                            c, t, action=a, name=n
-                        )
-                    )
 
                 plan, errors = rb.prepare(
                     xml_path,
@@ -1909,7 +1910,7 @@ class ConverterApp:
                     max_bit_depth=max_bit_depth,
                     max_sample_rate=max_sample_rate,
                     track_keys=keys_by_playlist[(folder, name)],
-                    on_progress=prepare_tick,
+                    on_progress=progress_tick,
                     cancel_event=self._cancel_event,
                     source_root=source_root,
                     manifest=manifest,
@@ -1930,7 +1931,17 @@ class ConverterApp:
             if self._cancel_event.is_set():
                 self._ui(self._finish_cancelled)
                 return
-            preview = rb.build_conversion_preview(plans, items, force=False)
+
+            preview = rb.build_conversion_preview(
+                plans,
+                items,
+                force=False,
+                cancel_event=self._cancel_event,
+                on_progress=progress_tick,
+            )
+            if self._cancel_event.is_set():
+                self._ui(self._finish_cancelled)
+                return
             prepared = PreparedConversion(
                 plans=plans,
                 items=items,
@@ -1941,6 +1952,8 @@ class ConverterApp:
                 skipped=skipped,
             )
             self._ui(lambda p=prepared: self._on_prepare_ready(p))
+        except rb.CancelledError:
+            self._ui(self._finish_cancelled)
         except rb.CliError as exc:
             self._ui(lambda e=str(exc): self._finish_error(e))
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI

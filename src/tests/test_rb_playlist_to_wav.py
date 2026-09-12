@@ -26,6 +26,25 @@ import xml_output
 from test_cdj_safe_aiff import write_pcm_aiff
 
 
+class _HangProc:
+    def __init__(self, *_a: object, **_k: object) -> None:
+        self.returncode: int | None = None
+        self.stdout = io.StringIO("")
+        self.stderr = io.StringIO("")
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def kill(self) -> None:
+        self.returncode = -9
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode if self.returncode is not None else -9
+
+    def communicate(self) -> tuple[str, str]:
+        return "", ""
+
+
 def write_pcm_wav(
     path: Path,
     *,
@@ -195,7 +214,7 @@ class XmlFixtureTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def _probe(self, path: Path) -> dict:
+    def _probe(self, path: Path, **_kwargs: object) -> dict:
         if path.suffix.lower() == ".wav":
             return wav_probe()
         return flac_probe()
@@ -562,23 +581,14 @@ class XmlFixtureTests(unittest.TestCase):
         killed: list[bool] = []
         communicated: list[bool] = []
 
-        class FakeProc:
-            def __init__(self, *_a: object, **_k: object) -> None:
-                self.returncode: int | None = None
-
-            def poll(self) -> int | None:
-                return self.returncode
-
+        class FakeProc(_HangProc):
             def kill(self) -> None:
                 killed.append(True)
-                self.returncode = -9
-
-            def wait(self, timeout: float | None = None) -> int:
-                return self.returncode if self.returncode is not None else -9
+                super().kill()
 
             def communicate(self) -> tuple[str, str]:
                 communicated.append(True)
-                return "", ""
+                return super().communicate()
 
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "src.flac"
@@ -590,7 +600,7 @@ class XmlFixtureTests(unittest.TestCase):
             ), patch.object(
                 ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
             ), patch.object(convert_plan.subprocess, "Popen", FakeProc), patch.object(
-                convert_plan.time, "sleep", lambda _s: None
+                ffmpeg_tools.time, "sleep", lambda _s: None
             ):
                 with self.assertRaises(rb.CancelledError):
                     convert_plan.run_ffmpeg(
@@ -605,6 +615,32 @@ class XmlFixtureTests(unittest.TestCase):
                 if p.name != dest.name and p.name != src.name
             ]
             self.assertEqual(leftover, [])
+
+    def test_run_ffprobe_kills_process_when_cancel_event_set(self) -> None:
+        """Given cancel_event already set: When run_ffprobe runs: Then the
+        ffprobe process is killed and CancelledError is raised."""
+        import threading
+
+        cancel = threading.Event()
+        cancel.set()
+        killed: list[bool] = []
+
+        class FakeProc(_HangProc):
+            def kill(self) -> None:
+                killed.append(True)
+                super().kill()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src.flac"
+            src.write_bytes(b"flac")
+            with patch.object(
+                ffmpeg_tools, "tool_path", return_value="/bin/ffprobe"
+            ), patch.object(
+                ffmpeg_tools.subprocess, "Popen", FakeProc
+            ), patch.object(ffmpeg_tools.time, "sleep", lambda _s: None):
+                with self.assertRaises(rb.CancelledError):
+                    ffmpeg_tools.run_ffprobe(src, cancel_event=cancel)
+            self.assertTrue(killed)
 
     def test_convert_unique_copy_wav_cancel_mid_copy_leaves_no_final_dest(
         self,
@@ -723,7 +759,7 @@ class XmlFixtureTests(unittest.TestCase):
         cancel = threading.Event()
         probed: list[Path] = []
 
-        def probe_and_cancel(path: Path) -> dict:
+        def probe_and_cancel(path: Path, **_kwargs: object) -> dict:
             probed.append(path)
             cancel.set()
             return self._probe(path)
@@ -742,6 +778,53 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertIsNone(plan)
         self.assertEqual(errors, [])
 
+    def test_prepare_does_not_wait_out_leftover_probes_after_cancel(self) -> None:
+        """Given CONVERT_WORKERS>1 and cancel mid-probe: When prepare returns:
+        Then it does not wait for a still-running leftover probe."""
+        import threading
+        import time
+
+        cancel = threading.Event()
+        release_slow = threading.Event()
+        probed: list[Path] = []
+        lock = threading.Lock()
+        both_inside = threading.Barrier(2)
+
+        def probe_side_effect(path: Path, **_kwargs: object) -> dict:
+            with lock:
+                probed.append(path)
+                n = len(probed)
+            # Ensure two probes are in-flight before either finishes.
+            both_inside.wait(timeout=5)
+            if n == 1:
+                cancel.set()
+                return self._probe(path)
+            # Leftover in-flight probe: block until released (must not block prepare).
+            if not release_slow.wait(timeout=30):
+                raise AssertionError("leftover probe was never released")
+            return self._probe(path)
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=probe_side_effect
+        ), patch.object(convert_plan, "CONVERT_WORKERS", 2):
+            t0 = time.monotonic()
+            plan, errors = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+                cancel_event=cancel,
+            )
+            elapsed = time.monotonic() - t0
+        release_slow.set()
+        self.assertIsNone(plan)
+        self.assertEqual(errors, [])
+        self.assertLess(
+            elapsed,
+            2.0,
+            f"prepare waited {elapsed:.2f}s for leftover probe after cancel",
+        )
+
     def test_prepare_probes_unique_tracks_concurrently(self) -> None:
         """Given CONVERT_WORKERS>1: When prepare probes unique tracks:
         Then at least two run_ffprobe calls overlap (barrier of 2 completes)."""
@@ -752,7 +835,7 @@ class XmlFixtureTests(unittest.TestCase):
         barrier_slots = 0
         overlapped = threading.Event()
 
-        def probe_with_overlap(path: Path) -> dict:
+        def probe_with_overlap(path: Path, **_kwargs: object) -> dict:
             nonlocal barrier_slots
             join = False
             with lock:
@@ -789,7 +872,7 @@ class XmlFixtureTests(unittest.TestCase):
         CONVERT_WORKERS>1: Then plan.unique bit_depth/sample_rate/codec stay in
         playlist order (not completion order)."""
 
-        def probe_by_source(path: Path) -> dict:
+        def probe_by_source(path: Path, **_kwargs: object) -> dict:
             if path.name == "07 - Bestial.flac":
                 return flac_probe(16)
             if path.name == "Revelation.flac":
@@ -1472,7 +1555,7 @@ class XmlFixtureTests(unittest.TestCase):
             write_pcm_wav(dest, bits=bits, sample_rate=rate)
             converted.append(dest)
 
-        def probe24(path: Path) -> dict:
+        def probe24(path: Path, **_kwargs: object) -> dict:
             if path.suffix.lower() == ".wav":
                 return wav_probe(bits=24)
             return flac_probe(bits=24)
@@ -1984,7 +2067,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.c.unlink()
         duration = 10.0
 
-        def probe_with_duration(path: Path) -> dict:
+        def probe_with_duration(path: Path, **_kwargs: object) -> dict:
             data = self._probe(path)
             if path.suffix.lower() != ".wav":
                 data = {
@@ -2116,7 +2199,7 @@ class XmlFixtureTests(unittest.TestCase):
         mystery = self.music / "odd.flac"
         write_flac(mystery)
 
-        def probe(path: Path) -> dict:
+        def probe(path: Path, **_kwargs: object) -> dict:
             if path.suffix == ".mp3":
                 return {
                     "format": {"format_name": "mp3"},
@@ -2383,16 +2466,15 @@ class WizardHelperTests(unittest.TestCase):
 
 class SubprocessTimeoutTests(unittest.TestCase):
     def test_run_ffprobe_maps_timeout_to_cli_error(self) -> None:
-        import subprocess
-
         path = Path("/tmp/track.flac")
+
         with patch.object(
             ffmpeg_tools, "tool_path", return_value="/bin/ffprobe"
         ), patch.object(
-            ffmpeg_tools.subprocess,
-            "run",
-            side_effect=subprocess.TimeoutExpired(cmd="ffprobe", timeout=60),
-        ):
+            ffmpeg_tools.subprocess, "Popen", _HangProc
+        ), patch.object(
+            ffmpeg_tools.time, "monotonic", side_effect=[0.0, 100.0]
+        ), patch.object(ffmpeg_tools.time, "sleep", lambda _s: None):
             with self.assertRaises(rb.CliError) as ctx:
                 ffmpeg_tools.run_ffprobe(path)
         self.assertIn("timed out", str(ctx.exception).lower())
@@ -2404,22 +2486,10 @@ class SubprocessTimeoutTests(unittest.TestCase):
         400s (timeout * workers), not the unscaled 100s."""
         communicated: list[bool] = []
 
-        class FakeProc:
-            def __init__(self, *_a: object, **_k: object) -> None:
-                self.returncode: int | None = None
-
-            def poll(self) -> int | None:
-                return self.returncode
-
-            def kill(self) -> None:
-                self.returncode = -9
-
-            def wait(self, timeout: float | None = None) -> int:
-                return -9
-
+        class FakeProc(_HangProc):
             def communicate(self) -> tuple[str, str]:
                 communicated.append(True)
-                return "", ""
+                return super().communicate()
 
         src = Path("/tmp/src.flac")
         dest = Path("/tmp/out.wav")
@@ -2432,9 +2502,9 @@ class SubprocessTimeoutTests(unittest.TestCase):
         ), patch.object(
             convert_plan, "CONVERT_WORKERS", 4
         ), patch.object(convert_plan.subprocess, "Popen", FakeProc), patch.object(
-            convert_plan.time, "sleep", lambda _s: None
+            ffmpeg_tools.time, "sleep", lambda _s: None
         ), patch.object(
-            convert_plan.time, "monotonic", side_effect=[0.0, 401.0]
+            ffmpeg_tools.time, "monotonic", side_effect=[0.0, 401.0]
         ):
             with self.assertRaises(rb.CliError) as ctx:
                 convert_plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
@@ -2449,19 +2519,17 @@ class SubprocessTimeoutTests(unittest.TestCase):
         self.assertTrue(communicated)
 
     def test_extract_cover_jpeg_returns_none_on_timeout(self) -> None:
-        import subprocess
         import cdj_aiff
 
         with tempfile.TemporaryDirectory() as tmp:
             src = Path(tmp) / "song.aiff"
             src.write_bytes(b"x")
+
             with patch.object(
                 ffmpeg_tools, "tool_path", return_value="/bin/ffmpeg"
-            ), patch.object(
-                cdj_aiff.subprocess,
-                "run",
-                side_effect=subprocess.TimeoutExpired(cmd="ffmpeg", timeout=30),
-            ):
+            ), patch.object(cdj_aiff.subprocess, "Popen", _HangProc), patch.object(
+                ffmpeg_tools.time, "monotonic", side_effect=[0.0, 100.0]
+            ), patch.object(ffmpeg_tools.time, "sleep", lambda _s: None):
                 self.assertIsNone(rb.extract_cover_jpeg(src))
 
     def test_ffmpeg_supports_soxr_false_on_timeout(self) -> None:
@@ -2617,6 +2685,162 @@ class ConversionPreviewTests(unittest.TestCase):
                 rb.planned_action(plan, tx_item, force=False), "transcode"
             )
 
+    def test_planned_action_aiff_missing_dest_skips_cover_extract(self) -> None:
+        """Given AIFF item with missing dest: When planned_action runs:
+        Then extract_cover_jpeg is not called and action is copy/transcode."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            src = root / "src.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "AIFF" / "out.aiff"
+            dest.parent.mkdir(parents=True)
+            item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=rb.encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = self._plan_with(item, output_format="aiff")
+            with patch.object(
+                convert_plan, "extract_cover_jpeg", return_value=None
+            ) as extract:
+                action = rb.planned_action(plan, item, force=False)
+            self.assertEqual(action, "copy")
+            extract.assert_not_called()
+
+            tx_item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=rb.encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s24le",
+                copy_wav=False,
+                noop=False,
+                bit_depth=24,
+                sample_rate=48000,
+            )
+            plan = self._plan_with(tx_item, output_format="aiff")
+            with patch.object(
+                convert_plan, "extract_cover_jpeg", return_value=None
+            ) as extract:
+                action = rb.planned_action(plan, tx_item, force=False)
+            self.assertEqual(action, "transcode")
+            extract.assert_not_called()
+
+    def test_build_conversion_preview_stops_when_cancel_event_set(self) -> None:
+        """Given cancel_event set after the first item: When
+        build_conversion_preview runs: Then CancelledError is raised and later
+        items are not classified."""
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            items: list[rb.PlannedTrack] = []
+            for i in range(3):
+                src = root / f"src{i}.flac"
+                src.write_bytes(b"fLaC")
+                dest = root / "AIFF" / f"out{i}.aiff"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                items.append(
+                    rb.PlannedTrack(
+                        source_el=el,
+                        source_path=src,
+                        dest_path=dest,
+                        dest_location=rb.encode_location(dest),
+                        dest_name=dest.name,
+                        codec="pcm_s24le",
+                        copy_wav=False,
+                        noop=False,
+                        bit_depth=24,
+                        sample_rate=48000,
+                    )
+                )
+            plan = rb.Plan(
+                playlist_name="P",
+                wav_playlist_name="P [AIFF]",
+                wav_dir=root,
+                playlist_dir=root / "AIFF",
+                output=root / "o.xml",
+                tracks=items,
+                unique=items,
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                output_format="aiff",
+            )
+            cancel = threading.Event()
+            calls: list[str] = []
+
+            def action_side_effect(plan_arg, item, force, **_kwargs):
+                calls.append(item.dest_name)
+                if len(calls) == 1:
+                    cancel.set()
+                return "transcode"
+
+            with patch.object(
+                convert_plan, "planned_action", side_effect=action_side_effect
+            ):
+                with self.assertRaises(rb.CancelledError):
+                    rb.build_conversion_preview(
+                        [plan], items, force=False, cancel_event=cancel
+                    )
+            self.assertEqual(calls, ["out0.aiff"])
+
+    def test_build_conversion_preview_reports_progress(self) -> None:
+        """Given unique items: When build_conversion_preview runs with
+        on_progress: Then each item emits preview progress."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            items: list[rb.PlannedTrack] = []
+            for i in range(2):
+                src = root / f"src{i}.flac"
+                src.write_bytes(b"fLaC")
+                dest = root / "WAV" / f"out{i}.wav"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                items.append(
+                    rb.PlannedTrack(
+                        source_el=el,
+                        source_path=src,
+                        dest_path=dest,
+                        dest_location=rb.encode_location(dest),
+                        dest_name=dest.name,
+                        codec="pcm_s24le",
+                        copy_wav=False,
+                        noop=False,
+                        bit_depth=24,
+                        sample_rate=48000,
+                    )
+                )
+            plan = self._plan_with(items[0])
+            plan.tracks = items
+            plan.unique = items
+            progress_calls: list[tuple[int, int, str, str]] = []
+
+            def on_progress(current: int, total: int, action: str, name: str) -> None:
+                progress_calls.append((current, total, action, name))
+
+            preview = rb.build_conversion_preview(
+                [plan], items, force=False, on_progress=on_progress
+            )
+            self.assertEqual(len(preview.items), 2)
+            self.assertEqual(
+                progress_calls,
+                [
+                    (1, 2, "preview", "out0.wav"),
+                    (2, 2, "preview", "out1.wav"),
+                ],
+            )
+
     def test_preview_counts_and_item_fields_use_effective_quality(self) -> None:
         """Given two playlists sharing one source plus a missing track and a
         collision suffix: When build_conversion_preview runs: Then counts and
@@ -2660,7 +2884,7 @@ class ConversionPreviewTests(unittest.TestCase):
             wav_dir = root / "out"
             output = root / "import.xml"
 
-            def probe(path: Path) -> dict:
+            def probe(path: Path, **_kwargs: object) -> dict:
                 return {
                     "format": {"format_name": "flac", "duration": "10.0"},
                     "streams": [

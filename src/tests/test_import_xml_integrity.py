@@ -131,7 +131,7 @@ class ValidateImportXmlUnitTests(unittest.TestCase):
 
 
 class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
-    def _probe(self, path: Path) -> dict:
+    def _probe(self, path: Path, **_kwargs: object) -> dict:
         if path.suffix.lower() == ".wav":
             return wav_probe()
         return flac_probe()

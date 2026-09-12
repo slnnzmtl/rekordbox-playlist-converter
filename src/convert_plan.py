@@ -9,7 +9,6 @@ import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -169,15 +168,16 @@ def cached_cover_jpeg(
     cache: dict[Path, bytes | None],
     *,
     lock: threading.Lock | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> bytes | None:
     """Extract cover once per source path for the duration of a convert run."""
     if lock is None:
         if source not in cache:
-            cache[source] = extract_cover_jpeg(source)
+            cache[source] = extract_cover_jpeg(source, cancel_event=cancel_event)
         return cache[source]
     with lock:
         if source not in cache:
-            cache[source] = extract_cover_jpeg(source)
+            cache[source] = extract_cover_jpeg(source, cancel_event=cancel_event)
         return cache[source]
 
 
@@ -225,6 +225,7 @@ def planned_action(
     force: bool,
     *,
     cover_lock: threading.Lock | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> str:
     """Classify read-only action: reuse, copy, or transcode."""
     if item.noop:
@@ -232,17 +233,25 @@ def planned_action(
     is_aiff = item.dest_path.suffix.lower() == ".aiff"
     if not force:
         if is_aiff:
-            cover = cached_cover_jpeg(
-                item.source_path, plan.cover_cache, lock=cover_lock
-            )
-            if _is_canonical_aiff_output(
+            if is_cdj_safe_aiff(
                 item.dest_path,
-                item.source_el,
-                cover,
                 bit_depth=item.bit_depth,
                 sample_rate=item.sample_rate,
             ):
-                return "reuse"
+                cover = cached_cover_jpeg(
+                    item.source_path,
+                    plan.cover_cache,
+                    lock=cover_lock,
+                    cancel_event=cancel_event,
+                )
+                if _is_canonical_aiff_output(
+                    item.dest_path,
+                    item.source_el,
+                    cover,
+                    bit_depth=item.bit_depth,
+                    sample_rate=item.sample_rate,
+                ):
+                    return "reuse"
         elif is_cdj_safe_wav(
             item.dest_path,
             bit_depth=item.bit_depth,
@@ -289,6 +298,9 @@ def build_conversion_preview(
     plans: list[Plan],
     items: list[PlannedTrack],
     force: bool,
+    *,
+    cancel_event: threading.Event | None = None,
+    on_progress: Callable[[int, int, str, str], None] | None = None,
 ) -> ConversionPreview:
     """Build a read-only conversion preview from prepared plans and unique items."""
     if not plans:
@@ -307,9 +319,14 @@ def build_conversion_preview(
     duplicates = resolved - unique_outputs
     wav_dir = plans[0].wav_dir
     preview_items: list[ConversionPreviewItem] = []
-    for item in items:
+    total = len(items)
+    for index, item in enumerate(items):
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("conversion cancelled during preview")
         plan = _plan_for_preview_item(plans, item)
-        action = planned_action(plan, item, force)
+        action = planned_action(
+            plan, item, force, cancel_event=cancel_event
+        )
         try:
             relative_dest = item.dest_path.relative_to(wav_dir).as_posix()
         except ValueError:
@@ -326,6 +343,8 @@ def build_conversion_preview(
                 source_display=item.source_path.name,
             )
         )
+        if on_progress is not None:
+            on_progress(index + 1, total, "preview", item.dest_name)
     return ConversionPreview(
         selected=selected,
         resolved=resolved,
@@ -370,7 +389,9 @@ def convert_unique(
             return
         name = item.dest_name
         is_aiff = item.dest_path.suffix.lower() == ".aiff"
-        action = planned_action(plan, item, force, cover_lock=cover_lock)
+        action = planned_action(
+            plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
+        )
         if action == "reuse":
             with stats_lock:
                 stats.skipped += 1
@@ -785,7 +806,11 @@ def build_plan(
         if cancel_event is not None and cancel_event.is_set():
             return
         try:
-            probe = ffmpeg_tools.run_ffprobe(item.source_path)
+            probe = ffmpeg_tools.run_ffprobe(
+                item.source_path, cancel_event=cancel_event
+            )
+        except CancelledError:
+            return
         except CliError as exc:
             _record_error(str(exc))
             _finish_progress(item)
@@ -820,7 +845,10 @@ def build_plan(
         if output_format == "aiff":
             if in_place:
                 cover = cached_cover_jpeg(
-                    item.source_path, cover_cache, lock=cover_lock
+                    item.source_path,
+                    cover_cache,
+                    lock=cover_lock,
+                    cancel_event=cancel_event,
                 )
                 if _is_canonical_aiff_output(
                     item.dest_path,
@@ -849,12 +877,16 @@ def build_plan(
 
     if unique:
         workers = convert_worker_count(len(unique))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=workers)
+        try:
             futures = [pool.submit(probe_one, item) for item in unique]
             for fut in as_completed(futures):
                 fut.result()
                 if cancel_event is not None and cancel_event.is_set():
                     break
+        finally:
+            cancelled = cancel_event is not None and cancel_event.is_set()
+            pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
         if cancel_event is not None and cancel_event.is_set():
             return None, []
 
@@ -880,14 +912,6 @@ def build_plan(
     if errors:
         return plan, errors
     return plan, []
-
-
-def _kill_ffmpeg_drain(proc: subprocess.Popen) -> None:
-    try:
-        proc.kill()
-        proc.wait()
-    finally:
-        proc.communicate()
 
 
 _COPY_CHUNK_SIZE = 1024 * 1024
@@ -1028,18 +1052,17 @@ def run_ffmpeg(
                 "ffmpeg not found on PATH (install with: brew install ffmpeg)"
             ) from exc
         timeout_s = ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S * CONVERT_WORKERS
-        deadline = time.monotonic() + timeout_s
-        while proc.poll() is None:
-            if cancel_event is not None and cancel_event.is_set():
-                _kill_ffmpeg_drain(proc)
-                raise CancelledError(f"conversion cancelled for {source}")
-            if time.monotonic() >= deadline:
-                _kill_ffmpeg_drain(proc)
-                raise CliError(
-                    f"ffmpeg timed out after {timeout_s}s for {source}"
-                )
-            time.sleep(0.05)
-        _stdout, stderr = proc.communicate()
+        try:
+            _stdout, stderr = ffmpeg_tools.wait_proc(
+                proc,
+                cancel_event=cancel_event,
+                timeout_s=timeout_s,
+                cancel_message=f"conversion cancelled for {source}",
+            )
+        except subprocess.TimeoutExpired:
+            raise CliError(
+                f"ffmpeg timed out after {timeout_s}s for {source}"
+            )
         if proc.returncode != 0:
             err = (stderr or _stdout or "").strip() or f"exit {proc.returncode}"
             raise CliError(f"ffmpeg conversion failed for {source}: {err}")
@@ -1078,9 +1101,11 @@ def write_aiff_output(
     """Atomically write AIFF: PCM then ID3, validate, os.replace."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     if cover_cache is None:
-        cover = extract_cover_jpeg(source)
+        cover = extract_cover_jpeg(source, cancel_event=cancel_event)
     else:
-        cover = cached_cover_jpeg(source, cover_cache, lock=cover_lock)
+        cover = cached_cover_jpeg(
+            source, cover_cache, lock=cover_lock, cancel_event=cancel_event
+        )
     tmp = _temp_beside(dest, aiff=True)
     try:
         if passthrough:
