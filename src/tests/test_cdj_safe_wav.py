@@ -527,8 +527,8 @@ class NoopUnsafeInPlaceTests(unittest.TestCase):
             root = Path(tmp)
             wav_dir = root / "out"
             playlist = "Set"
-            # Dest is Artist/Album/Name.wav — put out-of-profile source there.
-            src = wav_dir / "Unknown Artist" / "Unknown Album" / "t.wav"
+            # Dest is WAV/Artist - Name.wav — put out-of-profile source there.
+            src = wav_dir / "WAV" / "Unknown Artist - t.wav"
             src.parent.mkdir(parents=True)
             write_pcm_wav(src, sample_rate=96000)
             xml_path = root / "c.xml"

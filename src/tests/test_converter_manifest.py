@@ -29,8 +29,8 @@ class ManifestValidationTests(unittest.TestCase):
         data = {
             "version": 1,
             "tracks": {
-                "/a": {"wav": {"dest": "Same/Hits/Intro.wav"}},
-                "/b": {"wav": {"dest": "same/hits/intro.wav"}},
+                "/a": {"wav": {"dest": "WAV/Same - Intro.wav"}},
+                "/b": {"wav": {"dest": "wav/same - intro.wav"}},
             },
         }
         errors = cm.validate_manifest_data(data, self.wav_dir)
@@ -71,15 +71,15 @@ class LibraryFolderValidationTests(unittest.TestCase):
     def test_valid_manifest_allows_existing_audio(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             wav_dir = Path(tmp) / "lib"
-            dest = wav_dir / "Artist" / "Album"
+            dest = wav_dir / "WAV"
             dest.mkdir(parents=True)
-            (dest / "Name.wav").write_bytes(b"RIFF")
+            (dest / "Artist - Name.wav").write_bytes(b"RIFF")
             (wav_dir / cm.MANIFEST_NAME).write_text(
                 json.dumps(
                     {
                         "version": 1,
                         "tracks": {
-                            "/music/a.flac": {"wav": {"dest": "Artist/Album/Name.wav"}}
+                            "/music/a.flac": {"wav": {"dest": "WAV/Artist - Name.wav"}}
                         },
                     }
                 ),

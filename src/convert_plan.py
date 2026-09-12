@@ -384,19 +384,31 @@ def preferred_relative_dest(
     output_format: str = "wav",
     stem_fallback: str = "",
 ) -> str:
-    """Relative Artist/Album/Name.ext path under wav_dir for first assignment."""
+    """Relative FORMAT/Artist - Name.ext path under wav_dir for first assignment."""
     ext = ".aiff" if output_format == "aiff" else ".wav"
+    fmt = format_dir_name(output_format)
     artist = sanitize_path_component(
         track_el.get("Artist") or "", fallback="Unknown Artist"
-    )
-    album = sanitize_path_component(
-        track_el.get("Album") or "", fallback="Unknown Album"
     )
     name = sanitize_path_component(
         track_el.get("Name") or "",
         fallback=stem_fallback or "Unknown Track",
     )
-    return f"{artist}/{album}/{name}{ext}"
+    return f"{fmt}/{artist} - {name}{ext}"
+
+
+def format_dir_name(output_format: str) -> str:
+    """Return WAV or AIFF directory name for the output format."""
+    if output_format == "wav":
+        return "WAV"
+    if output_format == "aiff":
+        return "AIFF"
+    raise CliError(f"unsupported output format: {output_format!r}")
+
+
+def format_media_dir(wav_dir: Path, output_format: str) -> Path:
+    """Return wav_dir/WAV or wav_dir/AIFF for audio output."""
+    return wav_dir / format_dir_name(output_format)
 
 
 def playlist_dir_name(playlist_name: str) -> str:
@@ -721,7 +733,7 @@ def build_plan(
         playlist_name=playlist_name,
         wav_playlist_name=wav_playlist_name,
         wav_dir=wav_dir_abs,
-        playlist_dir=wav_dir_abs,
+        playlist_dir=format_media_dir(wav_dir_abs, output_format),
         output=output,
         tracks=planned,
         unique=unique,

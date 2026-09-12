@@ -956,9 +956,9 @@ class XmlFixtureTests(unittest.TestCase):
             u.source_path: u.dest_path.relative_to(plan.wav_dir).as_posix()
             for u in plan.unique
         }
-        self.assertEqual(dests[srcs[0]], "Same/Hits/Song.wav")
-        self.assertEqual(dests[srcs[1]], "Same/Hits/Song (2).wav")
-        self.assertEqual(dests[srcs[2]], "Same/Hits/Song (3).wav")
+        self.assertEqual(dests[srcs[0]], "WAV/Same - Song.wav")
+        self.assertEqual(dests[srcs[1]], "WAV/Same - Song (2).wav")
+        self.assertEqual(dests[srcs[2]], "WAV/Same - Song (3).wav")
 
     def test_numbered_dest_stays_stable_when_earlier_source_absent(
         self,
@@ -1020,7 +1020,7 @@ class XmlFixtureTests(unittest.TestCase):
         )
         self.assertEqual(
             data["tracks"][convert_plan.source_key(second)]["wav"]["dest"],
-            "Same/Hits/Song (2).wav",
+            "WAV/Same - Song (2).wav",
         )
 
         only_second = f"""\
@@ -1054,7 +1054,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(len(plan.unique), 1)
         self.assertEqual(
             plan.unique[0].dest_path.relative_to(plan.wav_dir).as_posix(),
-            "Same/Hits/Song (2).wav",
+            "WAV/Same - Song (2).wav",
         )
         data2 = json.loads(
             (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
@@ -1063,11 +1063,11 @@ class XmlFixtureTests(unittest.TestCase):
         )
         self.assertEqual(
             data2["tracks"][convert_plan.source_key(second)]["wav"]["dest"],
-            "Same/Hits/Song (2).wav",
+            "WAV/Same - Song (2).wav",
         )
         self.assertNotEqual(
             plan.unique[0].dest_path.relative_to(plan.wav_dir).as_posix(),
-            "Same/Hits/Song.wav",
+            "WAV/Same - Song.wav",
         )
 
     def test_unrelated_occupant_forces_numbered_dest_on_first_assign(
@@ -1078,7 +1078,7 @@ class XmlFixtureTests(unittest.TestCase):
         file is left intact."""
         src = self.music / "solo" / "track.flac"
         write_flac(src)
-        preferred = self.wav_dir / "Same" / "Hits" / "Song.wav"
+        preferred = self.wav_dir / "WAV" / "Same - Song.wav"
         preferred.parent.mkdir(parents=True)
         preferred.write_bytes(b"UNRELATED-OCCUPANT")
         # Managed library (valid empty manifest) so orphan audio is allowed.
@@ -1129,7 +1129,7 @@ class XmlFixtureTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(rc, 0)
-        numbered = self.wav_dir / "Same" / "Hits" / "Song (2).wav"
+        numbered = self.wav_dir / "WAV" / "Same - Song (2).wav"
         self.assertTrue(numbered.is_file())
         self.assertEqual(preferred.read_bytes(), b"UNRELATED-OCCUPANT")
         data = json.loads(
@@ -1139,7 +1139,7 @@ class XmlFixtureTests(unittest.TestCase):
         )
         self.assertEqual(
             data["tracks"][convert_plan.source_key(src)]["wav"]["dest"],
-            "Same/Hits/Song (2).wav",
+            "WAV/Same - Song (2).wav",
         )
 
     def test_collisions_case_and_nfd(self) -> None:
@@ -1195,14 +1195,14 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(
             {rb.collision_key(d) for d in intro_dests},
             {
-                rb.collision_key("Same/Hits/Intro.wav"),
-                rb.collision_key("Same/Hits/Intro (2).wav"),
+                rb.collision_key("WAV/Same - Intro.wav"),
+                rb.collision_key("WAV/Same - Intro (2).wav"),
             },
         )
         first_intro = next(u for u in plan.unique if u.source_path == intro)
         self.assertEqual(
             first_intro.dest_path.relative_to(plan.wav_dir).as_posix(),
-            "Same/Hits/Intro.wav",
+            "WAV/Same - Intro.wav",
         )
         cafe_dests = sorted(
             u.dest_path.relative_to(plan.wav_dir).as_posix()
@@ -1213,7 +1213,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertTrue(any(" (2).wav" in d for d in cafe_dests))
         self.assertTrue(
             any(
-                rb.collision_key(d) == rb.collision_key("Same/Hits/café.wav")
+                rb.collision_key(d) == rb.collision_key("WAV/Same - café.wav")
                 for d in cafe_dests
             )
         )
@@ -1243,7 +1243,7 @@ class XmlFixtureTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(rc1, 0)
-        sticky = "ABSL/It's just a bad dream/Bestial.wav"
+        sticky = "WAV/ABSL - Bestial.wav"
         sticky_path = self.wav_dir / Path(sticky)
         self.assertTrue(sticky_path.is_file())
         root = rb.load_dj_playlists(self.xml_path)
@@ -1274,7 +1274,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(rc2, 0)
         self.assertTrue(sticky_path.is_file())
         self.assertFalse(
-            (self.wav_dir / "New Artist" / "New Album" / "New Name.wav").exists()
+            (self.wav_dir / "WAV" / "New Artist - New Name.wav").exists()
         )
         data = json.loads(
             (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
@@ -1384,13 +1384,13 @@ class XmlFixtureTests(unittest.TestCase):
         )
         self.assertEqual(
             data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
-            "ABSL/It's just a bad dream/Bestial.wav",
+            "WAV/ABSL - Bestial.wav",
         )
 
     def test_missing_dest_recreates_at_same_sticky_path(self) -> None:
         """Given a reserved sticky dest whose file was deleted: When convert
         reruns: Then the file is recreated at the same path (no Name (2))."""
-        sticky = "ABSL/It's just a bad dream/Bestial.wav"
+        sticky = "WAV/ABSL - Bestial.wav"
         wrote: list[Path] = []
 
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
@@ -1443,7 +1443,7 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertTrue(dest.is_file())
         self.assertIn(dest, wrote)
         self.assertFalse(
-            (self.wav_dir / "ABSL" / "It's just a bad dream" / "Bestial (2).wav").exists()
+            (self.wav_dir / "WAV" / "ABSL - Bestial (2).wav").exists()
         )
         data = json.loads(
             (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
@@ -1459,7 +1459,7 @@ class XmlFixtureTests(unittest.TestCase):
         """Given a reduced dest for a higher-quality source: When the ceiling
         rises so effective depth/rate no longer matches: Then replace in place
         at the sticky path (no Name (2))."""
-        sticky = "ABSL/It's just a bad dream/Bestial.wav"
+        sticky = "WAV/ABSL - Bestial.wav"
         converted: list[Path] = []
 
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **kwargs) -> None:
@@ -1521,7 +1521,7 @@ class XmlFixtureTests(unittest.TestCase):
             convert_plan.is_cdj_safe_wav(dest, bit_depth=24, sample_rate=44100)
         )
         self.assertFalse(
-            (self.wav_dir / "ABSL" / "It's just a bad dream" / "Bestial (2).wav").exists()
+            (self.wav_dir / "WAV" / "ABSL - Bestial (2).wav").exists()
         )
         data = json.loads(
             (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
@@ -1592,11 +1592,11 @@ class XmlFixtureTests(unittest.TestCase):
         entry = data["tracks"][convert_plan.source_key(self.a)]
         self.assertEqual(
             entry["wav"]["dest"],
-            "ABSL/It's just a bad dream/Bestial.wav",
+            "WAV/ABSL - Bestial.wav",
         )
         self.assertEqual(
             entry["aiff"]["dest"],
-            "ABSL/It's just a bad dream/Bestial.aiff",
+            "AIFF/ABSL - Bestial.aiff",
         )
 
     def test_unknown_fields_preserved_and_ids_start_at_1(self) -> None:
@@ -1631,9 +1631,9 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(first.get("Rating"), "51")
         self.assertEqual(first.get("Kind"), "WAV File")
         loc = first.get("Location") or ""
-        self.assertIn("/WAV/ABSL/It%27s%20just%20a%20bad%20dream/", loc)
+        self.assertIn("/WAV/ABSL%20-%20Bestial.wav", loc)
         self.assertTrue(
-            (self.wav_dir / "ABSL" / "It's just a bad dream" / "Bestial.wav").is_file()
+            (self.wav_dir / "WAV" / "ABSL - Bestial.wav").is_file()
         )
         extra = first.find("EXTRA")
         self.assertIsNotNone(extra)
@@ -1782,7 +1782,7 @@ class XmlFixtureTests(unittest.TestCase):
 
         self.assertEqual(len(encoded), 3)
         self.assertEqual(encoded.count("07 - Bestial.flac"), 1)
-        dest = self.wav_dir / "ABSL" / "It's just a bad dream" / "Bestial.wav"
+        dest = self.wav_dir / "WAV" / "ABSL - Bestial.wav"
         self.assertTrue(dest.is_file())
         out = ET.parse(self.output).getroot()
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)

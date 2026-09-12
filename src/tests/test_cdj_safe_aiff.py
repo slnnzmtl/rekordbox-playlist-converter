@@ -165,7 +165,7 @@ class CdjSafeAiffTests(unittest.TestCase):
 class DestNameAndClassifyAiffTests(unittest.TestCase):
     def test_preferred_relative_dest_from_track_metadata(self) -> None:
         """Given Artist/Album/Name on a TRACK: When preferred_relative_dest
-        runs: Then the relative path is Artist/Album/Name.wav|.aiff."""
+        runs: Then the relative path is FORMAT/Artist - Name.ext (Album ignored)."""
         el = ET.Element(
             "TRACK",
             {
@@ -176,27 +176,27 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
         )
         self.assertEqual(
             rb.preferred_relative_dest(el),
-            "ABSL/It's just a bad dream/Bestial.wav",
+            "WAV/ABSL - Bestial.wav",
         )
         self.assertEqual(
             rb.preferred_relative_dest(el, output_format="wav"),
-            "ABSL/It's just a bad dream/Bestial.wav",
+            "WAV/ABSL - Bestial.wav",
         )
         self.assertEqual(
             rb.preferred_relative_dest(el, output_format="aiff"),
-            "ABSL/It's just a bad dream/Bestial.aiff",
+            "AIFF/ABSL - Bestial.aiff",
         )
 
     def test_preferred_relative_dest_fallbacks(self) -> None:
-        """Given empty/whitespace Artist, Album, or Name: When preferred_relative_dest
-        runs: Then Unknown Artist, Unknown Album, or stem_fallback is used."""
+        """Given empty/whitespace Artist or Name: When preferred_relative_dest
+        runs: Then Unknown Artist or stem_fallback is used (Album ignored)."""
         el = ET.Element(
             "TRACK",
             {"Name": "  ", "Artist": "", "Album": "\t"},
         )
         self.assertEqual(
             rb.preferred_relative_dest(el, stem_fallback="07 - Bestial"),
-            "Unknown Artist/Unknown Album/07 - Bestial.wav",
+            "WAV/Unknown Artist - 07 - Bestial.wav",
         )
         el_dot = ET.Element(
             "TRACK",
@@ -204,12 +204,12 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
         )
         self.assertEqual(
             rb.preferred_relative_dest(el_dot),
-            "Unknown Artist/Unknown Album/Track.wav",
+            "WAV/Unknown Artist - Track.wav",
         )
 
     def test_preferred_relative_dest_sanitizes_components(self) -> None:
         """Given path separators and reserved filename chars: When preferred_relative_dest
-        runs: Then each component replaces them with underscore."""
+        runs: Then Artist and Name are sanitized (Album excluded from path)."""
         el = ET.Element(
             "TRACK",
             {
@@ -220,8 +220,19 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
         )
         self.assertEqual(
             rb.preferred_relative_dest(el),
-            "X_Y_Z/Foo____Bar_/A_B_C_.wav",
+            "WAV/X_Y_Z - A_B_C_.wav",
         )
+
+    def test_format_dir_name_and_media_dir(self) -> None:
+        """Given wav/aiff/other: When format_dir_name / format_media_dir run:
+        Then WAV/AIFF dirs or CliError for unsupported formats."""
+        self.assertEqual(rb.format_dir_name("wav"), "WAV")
+        self.assertEqual(rb.format_dir_name("aiff"), "AIFF")
+        with self.assertRaises(rb.CliError):
+            rb.format_dir_name("flac")
+        root = Path("/tmp/out")
+        self.assertEqual(rb.format_media_dir(root, "wav"), root / "WAV")
+        self.assertEqual(rb.format_media_dir(root, "aiff"), root / "AIFF")
 
     def test_classify_aiff_passthrough_and_transcode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -280,8 +291,8 @@ class InPlaceAiffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             wav_dir = root / "out"
-            # Dest is Artist/Album/Name.aiff — put the source at that path.
-            src = wav_dir / "A" / "Unknown Album" / "Expected Title.aiff"
+            # Dest is AIFF/Artist - Name.aiff — put the source at that path.
+            src = wav_dir / "AIFF" / "A - Expected Title.aiff"
             src.parent.mkdir(parents=True)
             write_pcm_aiff(src)
             playlist = "Set"

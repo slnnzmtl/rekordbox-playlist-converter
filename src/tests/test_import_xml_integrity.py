@@ -208,8 +208,8 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
         locations = [t.get("Location", "") for t in tracks]
         for loc in locations:
             self.assertTrue(loc.startswith("file://localhost/"))
-            self.assertIn("%20", loc or " ")  # spaces encoded somewhere in tree paths
-        # Special characters from Artist/Album/Name appear percent-encoded in Location.
+            self.assertIn("%20", loc or " ")  # spaces encoded in flat Artist - Name paths
+        # Special characters from Artist/Name appear percent-encoded in Location.
         joined = "\n".join(locations)
         self.assertTrue(
             any(ch in joined for ch in ("%26", "%27", "%23", "%25", "Caf")),
