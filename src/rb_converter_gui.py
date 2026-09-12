@@ -131,6 +131,13 @@ def total_successful_conversions(stats_list: list[rb.ConvertStats]) -> int:
     return sum(s.converted + s.copied for s in stats_list)
 
 
+def progress_action_status_hint(
+    action: str, current: int, total: int, name: str
+) -> str:
+    """Status line with counter after the verb: Convert (n/m) TrackName…"""
+    return f"{action.capitalize()} ({current}/{total}) {name}…"
+
+
 def fit_window_geometry(
     width: int,
     height: int,
@@ -1428,7 +1435,9 @@ class ConverterApp:
             pct = min(100.0, 100.0 * current / total)
         self._animate_progress_to(pct)
         if action and name:
-            self.status_var.set(f"{action.capitalize()} {name} ({current}/{total})…")
+            self.status_var.set(
+                progress_action_status_hint(action, current, total, name)
+            )
         elif total > 0:
             self.status_var.set(f"Working… {current}/{total} ({int(pct)}%)")
 

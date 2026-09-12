@@ -493,6 +493,53 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             self.assertEqual(codec, "pcm_s16be")
             self.assertEqual((bits, rate), (16, 44100))
 
+    def test_write_aiff_output_skips_renormalize_when_ffmpeg_already_safe(self) -> None:
+        """After run_ffmpeg leaves CDJ-safe PCM, do not normalize again before ID3."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.flac"
+            dest = root / "out.aiff"
+            src.write_bytes(b"flac")
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            normalize_calls: list[tuple[Path, Path]] = []
+            real_norm = convert_plan._normalize_aiff_audio_chunks
+
+            def tracking_norm(source: Path, out: Path) -> None:
+                normalize_calls.append((source, out))
+                real_norm(source, out)
+
+            def fake_ffmpeg(
+                source: Path,
+                out: Path,
+                codec: str,
+                force: bool,
+                **_kwargs: object,
+            ) -> None:
+                write_pcm_aiff(out, bits=16, sample_rate_bytes=RATE_44100)
+
+            with mock.patch.object(
+                convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg
+            ), mock.patch.object(
+                convert_plan, "extract_cover_jpeg", return_value=None
+            ), mock.patch.object(
+                convert_plan, "_normalize_aiff_audio_chunks", side_effect=tracking_norm
+            ):
+                rb.write_aiff_output(
+                    src,
+                    dest,
+                    el,
+                    passthrough=False,
+                    codec="pcm_s16be",
+                    bit_depth=16,
+                    sample_rate=44100,
+                )
+            self.assertEqual(normalize_calls, [])
+            self.assertTrue(
+                rb._is_canonical_aiff_output(
+                    dest, el, None, bit_depth=16, sample_rate=44100
+                )
+            )
+
     def test_ffmpeg_16_44100_flac_stays_16_44100_aiff(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

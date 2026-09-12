@@ -12,6 +12,7 @@ import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -47,6 +48,12 @@ ALAC_EXT = {".m4a", ".caf"}
 AIFF_SUFFIX = " [AIFF]"
 AIFF_EXT = {".aiff", ".aif"}
 
+# Parallel unique-track converts (clamped when used).
+CONVERT_WORKERS = 4
+CONVERT_WORKERS_MIN = 1
+CONVERT_WORKERS_MAX = 5
+
+
 class Progress:
     """Single-line stderr bar. Callback always fires; stderr only when enabled."""
 
@@ -60,33 +67,36 @@ class Progress:
         self.enabled = enabled
         self.on_progress = on_progress
         self._width = 0
+        self._lock = threading.Lock()
 
     def update(self, current: int, action: str, name: str) -> None:
-        if self.on_progress is not None:
-            self.on_progress(current, self.total, action, name)
-        if not self.enabled:
-            return
-        total = self.total
-        frac = 1.0 if total == 0 else min(current / total, 1.0)
-        bar_w = 24
-        filled = int(bar_w * frac) if total else bar_w
-        bar = "#" * filled + "-" * (bar_w - filled)
-        denom = total if total else current
-        label = f"[{bar}] {current}/{denom}  {action}  {name}"
-        cols = shutil.get_terminal_size((80, 24)).columns
-        if cols > 8 and len(label) > cols - 1:
-            label = label[: cols - 2] + "…"
-        pad = max(self._width - len(label), 0)
-        sys.stderr.write("\r" + label + (" " * pad))
-        sys.stderr.flush()
-        self._width = len(label)
+        with self._lock:
+            if self.on_progress is not None:
+                self.on_progress(current, self.total, action, name)
+            if not self.enabled:
+                return
+            total = self.total
+            frac = 1.0 if total == 0 else min(current / total, 1.0)
+            bar_w = 24
+            filled = int(bar_w * frac) if total else bar_w
+            bar = "#" * filled + "-" * (bar_w - filled)
+            denom = total if total else current
+            label = f"[{bar}] {current}/{denom}  {action}  {name}"
+            cols = shutil.get_terminal_size((80, 24)).columns
+            if cols > 8 and len(label) > cols - 1:
+                label = label[: cols - 2] + "…"
+            pad = max(self._width - len(label), 0)
+            sys.stderr.write("\r" + label + (" " * pad))
+            sys.stderr.flush()
+            self._width = len(label)
 
     def close(self) -> None:
-        if not self.enabled:
-            return
-        sys.stderr.write("\n")
-        sys.stderr.flush()
-        self.enabled = False
+        with self._lock:
+            if not self.enabled:
+                return
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+            self.enabled = False
 
 
 @dataclass
@@ -125,11 +135,171 @@ class Plan:
 def cached_cover_jpeg(
     source: Path,
     cache: dict[Path, bytes | None],
+    *,
+    locks: dict[Path, threading.Lock] | None = None,
+    locks_guard: threading.Lock | None = None,
 ) -> bytes | None:
     """Extract cover once per source path for the duration of a convert run."""
-    if source not in cache:
-        cache[source] = extract_cover_jpeg(source)
-    return cache[source]
+    if locks is None:
+        if source not in cache:
+            cache[source] = extract_cover_jpeg(source)
+        return cache[source]
+    assert locks_guard is not None
+    with locks_guard:
+        lock = locks.setdefault(source, threading.Lock())
+    with lock:
+        if source not in cache:
+            cache[source] = extract_cover_jpeg(source)
+        return cache[source]
+
+
+def convert_worker_count(n_items: int) -> int:
+    """Clamp CONVERT_WORKERS to 1..5 and to the number of items."""
+    capped = max(CONVERT_WORKERS_MIN, min(int(CONVERT_WORKERS), CONVERT_WORKERS_MAX))
+    if n_items <= 0:
+        return CONVERT_WORKERS_MIN
+    return max(CONVERT_WORKERS_MIN, min(capped, n_items))
+
+
+def convert_unique(
+    plan: Plan,
+    force: bool,
+    *,
+    progress: bool = False,
+    on_progress: Callable[[int, int, str, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
+) -> ConvertStats:
+    stats = ConvertStats()
+    plan.playlist_dir.mkdir(parents=True, exist_ok=True)
+    items = plan.unique
+    bar = Progress(len(items), progress, on_progress=on_progress)
+    error_slots: list[str | None] = [None] * len(items)
+    completed = 0
+    stats_lock = threading.Lock()
+    cover_locks: dict[Path, threading.Lock] = {}
+    cover_locks_guard = threading.Lock()
+
+    def cover_for(source: Path) -> bytes | None:
+        return cached_cover_jpeg(
+            source,
+            plan.cover_cache,
+            locks=cover_locks,
+            locks_guard=cover_locks_guard,
+        )
+
+    def finish(action: str, name: str) -> None:
+        nonlocal completed
+        with stats_lock:
+            completed += 1
+            bar.update(completed, action, name)
+
+    def process_one(index: int, item: PlannedTrack) -> None:
+        if cancel_event is not None and cancel_event.is_set():
+            return
+        name = item.dest_name
+        is_aiff = item.dest_path.suffix.lower() == ".aiff"
+        if item.noop:
+            with stats_lock:
+                stats.skipped += 1
+            finish("skip", name)
+            return
+        try:
+            if is_aiff:
+                cover = cover_for(item.source_path)
+                if not force and _is_canonical_aiff_output(
+                    item.dest_path,
+                    item.source_el,
+                    cover,
+                    bit_depth=item.bit_depth,
+                    sample_rate=item.sample_rate,
+                ):
+                    with stats_lock:
+                        stats.skipped += 1
+                    finish("skip", name)
+                    return
+                action = "copy" if item.copy_wav else "convert"
+                write_aiff_output(
+                    item.source_path,
+                    item.dest_path,
+                    item.source_el,
+                    passthrough=item.copy_wav,
+                    codec=item.codec,
+                    bit_depth=item.bit_depth,
+                    sample_rate=item.sample_rate,
+                    cover_cache=plan.cover_cache,
+                    cancel_event=cancel_event,
+                    cover_locks=cover_locks,
+                    cover_locks_guard=cover_locks_guard,
+                )
+                with stats_lock:
+                    if item.copy_wav:
+                        stats.copied += 1
+                    else:
+                        stats.converted += 1
+                finish(action, name)
+                return
+            if not force and is_cdj_safe_wav(
+                item.dest_path,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+            ):
+                with stats_lock:
+                    stats.skipped += 1
+                finish("skip", name)
+                return
+            if item.copy_wav:
+                shutil.copy2(item.source_path, item.dest_path)
+                with stats_lock:
+                    stats.copied += 1
+                finish("copy", name)
+                return
+            if not item.codec:
+                raise CliError(f"no codec planned for {item.source_path}")
+            run_ffmpeg(
+                item.source_path,
+                item.dest_path,
+                item.codec,
+                force=True,
+                sample_rate=item.sample_rate,
+                bit_depth=item.bit_depth,
+                cancel_event=cancel_event,
+            )
+            with stats_lock:
+                stats.converted += 1
+            finish("convert", name)
+        except CancelledError:
+            try:
+                item.dest_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+        except Exception as exc:  # noqa: BLE001 — collect all; report after pool
+            with stats_lock:
+                error_slots[index] = str(exc)
+            try:
+                item.dest_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            finish("error", name)
+
+    try:
+        if not items:
+            return stats
+        workers = convert_worker_count(len(items))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [
+                pool.submit(process_one, i, item) for i, item in enumerate(items)
+            ]
+            for fut in as_completed(futures):
+                fut.result()
+    finally:
+        bar.close()
+    if cancel_event is not None and cancel_event.is_set():
+        return stats
+    stats.errors = [msg for msg in error_slots if msg is not None]
+    if stats.errors:
+        raise CliError("\n".join(stats.errors))
+    return stats
 
 
 @dataclass
@@ -138,6 +308,7 @@ class ConvertStats:
     copied: int = 0
     skipped: int = 0
     appended: int = 0
+    errors: list[str] = field(default_factory=list)
 
 
 def abs_path(path: Path) -> Path:
@@ -580,24 +751,25 @@ def run_ffmpeg(
                     f"ffmpeg produced a non-CDJ-safe AIFF for {source}: {dest}"
                 )
     else:
-        fd, tmp_name = tempfile.mkstemp(
-            dir=dest.parent, prefix=".wav-ff-", suffix=".tmp.wav"
-        )
-        os.close(fd)
-        tmp = Path(tmp_name)
-        try:
-            _rewrite_wav_pcm(dest, tmp)
-            os.replace(tmp, dest)
-        except Exception:
-            try:
-                tmp.unlink(missing_ok=True)
-            except OSError:
-                pass
-            raise
         if not is_cdj_safe_wav(dest, bit_depth=depth, sample_rate=rate):
-            raise CliError(
-                f"ffmpeg produced a non-CDJ-safe WAV for {source}: {dest}"
+            fd, tmp_name = tempfile.mkstemp(
+                dir=dest.parent, prefix=".wav-ff-", suffix=".tmp.wav"
             )
+            os.close(fd)
+            tmp = Path(tmp_name)
+            try:
+                _rewrite_wav_pcm(dest, tmp)
+                os.replace(tmp, dest)
+            except Exception:
+                try:
+                    tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
+                raise
+            if not is_cdj_safe_wav(dest, bit_depth=depth, sample_rate=rate):
+                raise CliError(
+                    f"ffmpeg produced a non-CDJ-safe WAV for {source}: {dest}"
+                )
 
 
 def write_aiff_output(
@@ -611,13 +783,20 @@ def write_aiff_output(
     sample_rate: int = 48000,
     cover_cache: dict[Path, bytes | None] | None = None,
     cancel_event: threading.Event | None = None,
+    cover_locks: dict[Path, threading.Lock] | None = None,
+    cover_locks_guard: threading.Lock | None = None,
 ) -> None:
     """Atomically write AIFF: PCM then ID3, validate, os.replace."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     if cover_cache is None:
         cover = extract_cover_jpeg(source)
     else:
-        cover = cached_cover_jpeg(source, cover_cache)
+        cover = cached_cover_jpeg(
+            source,
+            cover_cache,
+            locks=cover_locks,
+            locks_guard=cover_locks_guard,
+        )
     fd, tmp_name = tempfile.mkstemp(
         dir=dest.parent, prefix=".aiff-", suffix=".tmp.aiff"
     )
@@ -640,21 +819,7 @@ def write_aiff_output(
             )
             if not is_cdj_safe_aiff(tmp, bit_depth=bit_depth, sample_rate=sample_rate):
                 raise CliError(f"AIFF audio stage failed for {source}")
-            # Re-normalize in case the muxer added anything unexpected.
-            fd2, tmp2_name = tempfile.mkstemp(
-                dir=dest.parent, prefix=".aiff-norm-", suffix=".tmp.aiff"
-            )
-            os.close(fd2)
-            tmp2 = Path(tmp2_name)
-            try:
-                _normalize_aiff_audio_chunks(tmp, tmp2)
-                os.replace(tmp2, tmp)
-            except Exception:
-                try:
-                    tmp2.unlink(missing_ok=True)
-                except OSError:
-                    pass
-                raise
+            # run_ffmpeg already normalized when needed; skip a second pass.
         write_aiff_id3(tmp, source_el, cover)
         if not _is_canonical_aiff_output(
             tmp, source_el, cover, bit_depth=bit_depth, sample_rate=sample_rate
@@ -669,87 +834,3 @@ def write_aiff_output(
         raise
 
 
-def convert_unique(
-    plan: Plan,
-    force: bool,
-    *,
-    progress: bool = False,
-    on_progress: Callable[[int, int, str, str], None] | None = None,
-    cancel_event: threading.Event | None = None,
-) -> ConvertStats:
-    stats = ConvertStats()
-    plan.playlist_dir.mkdir(parents=True, exist_ok=True)
-    items = plan.unique
-    bar = Progress(len(items), progress, on_progress=on_progress)
-    try:
-        for i, item in enumerate(items, 1):
-            if cancel_event is not None and cancel_event.is_set():
-                break
-            name = item.dest_name
-            is_aiff = item.dest_path.suffix.lower() == ".aiff"
-            if item.noop:
-                bar.update(i, "skip", name)
-                stats.skipped += 1
-                continue
-            try:
-                if is_aiff:
-                    cover = cached_cover_jpeg(item.source_path, plan.cover_cache)
-                    if not force and _is_canonical_aiff_output(
-                        item.dest_path,
-                        item.source_el,
-                        cover,
-                        bit_depth=item.bit_depth,
-                        sample_rate=item.sample_rate,
-                    ):
-                        bar.update(i, "skip", name)
-                        stats.skipped += 1
-                        continue
-                    action = "copy" if item.copy_wav else "convert"
-                    bar.update(i, action, name)
-                    write_aiff_output(
-                        item.source_path,
-                        item.dest_path,
-                        item.source_el,
-                        passthrough=item.copy_wav,
-                        codec=item.codec,
-                        bit_depth=item.bit_depth,
-                        sample_rate=item.sample_rate,
-                        cover_cache=plan.cover_cache,
-                        cancel_event=cancel_event,
-                    )
-                    if item.copy_wav:
-                        stats.copied += 1
-                    else:
-                        stats.converted += 1
-                    continue
-                if not force and is_cdj_safe_wav(
-                    item.dest_path,
-                    bit_depth=item.bit_depth,
-                    sample_rate=item.sample_rate,
-                ):
-                    bar.update(i, "skip", name)
-                    stats.skipped += 1
-                    continue
-                if item.copy_wav:
-                    bar.update(i, "copy", name)
-                    shutil.copy2(item.source_path, item.dest_path)
-                    stats.copied += 1
-                    continue
-                if not item.codec:
-                    raise CliError(f"no codec planned for {item.source_path}")
-                bar.update(i, "convert", name)
-                run_ffmpeg(
-                    item.source_path,
-                    item.dest_path,
-                    item.codec,
-                    force=True,
-                    sample_rate=item.sample_rate,
-                    bit_depth=item.bit_depth,
-                    cancel_event=cancel_event,
-                )
-                stats.converted += 1
-            except CancelledError:
-                break
-    finally:
-        bar.close()
-    return stats
