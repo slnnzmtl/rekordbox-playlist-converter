@@ -119,5 +119,65 @@ class ManifestValidationTests(unittest.TestCase):
         )
 
 
+class LibraryFolderValidationTests(unittest.TestCase):
+    def test_empty_existing_dir_is_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wav_dir = Path(tmp) / "lib"
+            wav_dir.mkdir()
+            self.assertIsNone(cm.validate_library_folder(wav_dir))
+
+    def test_missing_dir_with_writable_parent_is_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wav_dir = Path(tmp) / "new-lib"
+            self.assertIsNone(cm.validate_library_folder(wav_dir))
+
+    def test_legacy_audio_without_manifest_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wav_dir = Path(tmp) / "lib"
+            nested = wav_dir / "Old Playlist"
+            nested.mkdir(parents=True)
+            (nested / "track.wav").write_bytes(b"RIFF")
+            err = cm.validate_library_folder(wav_dir)
+            self.assertIsNotNone(err)
+            self.assertIn("new empty output folder", err.lower())
+
+    def test_legacy_import_xml_without_manifest_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wav_dir = Path(tmp) / "lib"
+            wav_dir.mkdir()
+            (wav_dir / "rekordbox-import.xml").write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
+            err = cm.validate_library_folder(wav_dir)
+            self.assertIsNotNone(err)
+            self.assertIn("new empty output folder", err.lower())
+
+    def test_valid_manifest_allows_existing_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wav_dir = Path(tmp) / "lib"
+            dest = wav_dir / "Artist" / "Album"
+            dest.mkdir(parents=True)
+            (dest / "Name.wav").write_bytes(b"RIFF")
+            (wav_dir / cm.MANIFEST_NAME).write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "tracks": {
+                            "/music/a.flac": {"wav": {"dest": "Artist/Album/Name.wav"}}
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            self.assertIsNone(cm.validate_library_folder(wav_dir))
+
+    def test_invalid_manifest_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            wav_dir = Path(tmp) / "lib"
+            wav_dir.mkdir()
+            (wav_dir / cm.MANIFEST_NAME).write_text("{bad", encoding="utf-8")
+            err = cm.validate_library_folder(wav_dir)
+            self.assertIsNotNone(err)
+            self.assertIn("manifest", err.lower())
+
+
 if __name__ == "__main__":
     unittest.main()

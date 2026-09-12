@@ -208,6 +208,85 @@ def load_manifest(wav_dir: Path) -> ConverterManifest:
     return ConverterManifest(tracks=typed)
 
 
+def _path_is_writable_dir(path: Path) -> bool:
+    try:
+        if not path.is_dir():
+            return False
+        if os.access(path, os.W_OK):
+            return True
+        # access() can lie on some mounts; probe with a temp file.
+        fd, tmp_name = tempfile.mkstemp(dir=path, prefix=".rb-write-probe-")
+        os.close(fd)
+        os.unlink(tmp_name)
+        return True
+    except OSError:
+        return False
+
+
+def _parent_writable_for_create(path: Path) -> bool:
+    """True if path can be created later (parent exists and is writable)."""
+    parent = path
+    while True:
+        parent = parent.parent
+        if parent == parent.parent:
+            return False
+        if parent.exists():
+            return _path_is_writable_dir(parent)
+
+
+def _has_legacy_library_content(wav_dir: Path) -> bool:
+    """True if wav_dir has legacy audio or import XML without a manifest."""
+    import_xml = wav_dir / "rekordbox-import.xml"
+    if import_xml.is_file():
+        return True
+    try:
+        for path in wav_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.suffix.casefold() in {".wav", ".aiff", ".aif"}:
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def validate_library_folder(wav_dir: Path) -> str | None:
+    """Return an error message if *wav_dir* is not usable as a library root.
+
+    Empty/missing folders are OK (created at convert time) when the parent is
+    writable. Existing manifests must validate. Legacy audio or import XML
+    without a manifest is refused.
+    """
+    expanded = wav_dir.expanduser()
+    if expanded.exists() and not expanded.is_dir():
+        return "Output folder path exists and is not a directory."
+    if expanded.is_dir():
+        if not _path_is_writable_dir(expanded):
+            return "Output folder is not writable."
+    else:
+        if not _parent_writable_for_create(expanded):
+            return "Output folder is not accessible or not writable."
+
+    manifest_file = expanded / MANIFEST_NAME if expanded.is_dir() else None
+    if manifest_file is not None and manifest_file.is_file():
+        try:
+            raw = manifest_file.read_text(encoding="utf-8")
+            data = json.loads(raw)
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            return f"Converter manifest is invalid: {exc}"
+        errors = validate_manifest_data(data, expanded)
+        if errors:
+            return f"Converter manifest is invalid: {errors[0]}"
+        return None
+
+    if expanded.is_dir() and _has_legacy_library_content(expanded):
+        return (
+            "This folder looks like an older converter library without a "
+            "manifest. Choose a new empty output folder."
+        )
+    return None
+
+
 def save_manifest(manifest: ConverterManifest, wav_dir: Path) -> None:
     """Atomically write manifest under wav_dir (tempfile + os.replace)."""
     root = _abs_path(wav_dir)

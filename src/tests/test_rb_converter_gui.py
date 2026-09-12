@@ -28,6 +28,17 @@ def _tk_available() -> bool:
     return True
 
 
+def _mark_output_folder_valid(app) -> None:
+    after_id = getattr(app, "_wav_dir_validate_after_id", None)
+    if after_id is not None:
+        app.root.after_cancel(after_id)
+        app._wav_dir_validate_after_id = None
+    app._wav_dir_checking = False
+    app._wav_dir_valid = True
+    app.wav_dir_error_var.set("")
+    app._update_convert_enabled()
+
+
 def _find_listbox(widget):
     import tkinter as tk
 
@@ -323,6 +334,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         return rb.ConvertStats(converted=1)
 
                     convert_unique.side_effect = convert_and_cancel
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update_idletasks()
                     for _ in range(20):
@@ -408,6 +420,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         )
 
                     convert_unique.side_effect = convert_and_cancel
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update_idletasks()
                     for _ in range(20):
@@ -498,6 +511,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     app = ConverterApp(root, documents_accessible=False)
                     app.xml_var.set("/tmp/test.xml")
                     _seed_track_selection(app)
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update_idletasks()
                     for _ in range(20):
@@ -585,6 +599,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     app = ConverterApp(root, documents_accessible=False)
                     app.xml_var.set("/tmp/test.xml")
                     _seed_track_selection(app)
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update_idletasks()
                     for _ in range(20):
@@ -667,6 +682,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         app._cancel_event.set()
 
                     write_xml.side_effect = write_then_cancel
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update_idletasks()
                     for _ in range(20):

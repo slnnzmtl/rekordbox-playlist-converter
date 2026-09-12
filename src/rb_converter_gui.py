@@ -11,6 +11,7 @@ from gui_preferences import (
     IMPORT_XML_NAME,
     default_output_paths,
     find_rekordbox_xml_via_child,
+    import_xml_path,
     load_preferences,
     probe_path_via_child,
     resolve_startup_paths,
@@ -60,13 +61,14 @@ SAMPLE_RATE_48_TOOLTIP = (
     "This is a maximum, not a target. "
     "44.1 kHz tracks are not upconverted to 48 kHz."
 )
-BIT_DEPTH_LABELS = {"16": "16Bit", "24": "24Bit"}
-SAMPLE_RATE_LABELS = {"44100": "44.1KHz", "48000": "48KHz"}
+BIT_DEPTH_LABELS = {"16": "16-bit", "24": "24-bit"}
+SAMPLE_RATE_LABELS = {"44100": "44.1 kHz", "48000": "48 kHz"}
 BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items()}
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
 ACTION_BUTTON_WIDTH = 9
 CANCELLED_STATUS_CLEAR_MS = 3000
 SEARCH_DEBOUNCE_MS = 200
+WAV_DIR_VALIDATE_DEBOUNCE_MS = 300
 # One probe worker; apply this many depths per UI callback so Tk can paint.
 PREVIEW_BIT_DEPTH_BATCH = 24
 PREVIEW_BIT_DEPTH_YIELD_S = 0.02
@@ -226,11 +228,18 @@ def _active_display_bounds() -> tuple[int, int, int, int] | None:
 
 
 def open_in_finder(path: Path) -> None:
-    """Reveal a folder in Finder (macOS) or the platform file browser."""
-    target = path if path.is_dir() else path.parent
-    if not target.exists():
+    """Reveal a folder or select a file in Finder (macOS) / file browser."""
+    if path.is_dir():
+        if not path.exists():
+            return
+        subprocess.run(["open", str(path)], check=False)
         return
-    subprocess.run(["open", str(target)], check=False)
+    if path.exists():
+        subprocess.run(["open", "-R", str(path)], check=False)
+        return
+    parent = path.parent
+    if parent.exists():
+        subprocess.run(["open", str(parent)], check=False)
 
 
 class _SearchPlaceholder:
@@ -285,17 +294,15 @@ class ConverterApp:
 
         self.xml_var = tk.StringVar()
         self.wav_dir_var = tk.StringVar()
-        self.output_var = tk.StringVar()
         # Start with home fallback so the window can appear before Documents TCC.
         saved_prefs = load_preferences()
-        startup_wav, startup_output = resolve_startup_paths(
+        startup_wav, _startup_output = resolve_startup_paths(
             saved_prefs,
             default_wav_dir=FALLBACK_WAV_DIR,
             default_import_xml=FALLBACK_OUTPUT,
             documents_accessible=False,
         )
         self.wav_dir_var.set(str(startup_wav))
-        self.output_var.set(str(startup_output))
         saved_format = saved_prefs.get("output_format", "wav")
         if saved_format not in ("wav", "aiff"):
             saved_format = "wav"
@@ -345,6 +352,11 @@ class ConverterApp:
         self._tracklist_sort_reverse = False
         self._playlist_search_after_id: str | None = None
         self._track_search_after_id: str | None = None
+        self._wav_dir_validate_after_id: str | None = None
+        self._wav_dir_validate_gen = 0
+        self._wav_dir_valid = False
+        self._wav_dir_checking = False
+        self.wav_dir_error_var = tk.StringVar(value="")
 
         self._build()
         self.search_var.trace_add(
@@ -359,10 +371,15 @@ class ConverterApp:
                 "_track_search_after_id", self._refresh_tracklist_preview
             ),
         )
+        self.wav_dir_var.trace_add(
+            "write",
+            lambda *_: self._schedule_wav_dir_validation(),
+        )
         if not self.search_var.get():
             self._playlist_search.show()
         if not self.track_search_var.get():
             self._track_search.show()
+        self._schedule_wav_dir_validation()
         # Prefs key, not xml_var: skip first-launch search even if Documents
         # restore has not filled the field yet.
         self._has_saved_source_xml = bool(saved_prefs.get("source_xml", "").strip())
@@ -504,14 +521,14 @@ class ConverterApp:
         if accessible:
             saved = load_preferences()
             docs_wav, docs_xml = default_output_paths(documents_accessible=True)
-            startup_wav, startup_output = resolve_startup_paths(
+            startup_wav, _startup_output = resolve_startup_paths(
                 saved,
                 default_wav_dir=docs_wav,
                 default_import_xml=docs_xml,
                 documents_accessible=True,
             )
             self.wav_dir_var.set(str(startup_wav))
-            self.output_var.set(str(startup_output))
+            self._schedule_wav_dir_validation()
             if not self.xml_var.get().strip():
                 self._restore_saved_source_xml(saved)
 
@@ -650,21 +667,20 @@ class ConverterApp:
             width=ACTION_BUTTON_WIDTH,
             command=self._browse_wav_dir,
         ).grid(row=2, column=2, sticky="e", **pad)
-
-        ttk.Label(frm, text="Import XML").grid(row=3, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.output_var).grid(
-            row=3, column=1, sticky="ew", **pad
-        )
-        ttk.Button(
+        ttk.Label(
             frm,
-            text="Browse…",
-            width=ACTION_BUTTON_WIDTH,
-            command=self._browse_output,
-        ).grid(row=3, column=2, sticky="e", **pad)
+            textvariable=self.wav_dir_error_var,
+            foreground="#a40000",
+            wraplength=720,
+        ).grid(row=3, column=1, columnspan=2, sticky="w", padx=10)
 
-        ttk.Label(frm, text="Format").grid(row=4, column=0, sticky="w", **pad)
+        ttk.Label(frm, text=f"Import XML: {IMPORT_XML_NAME}").grid(
+            row=4, column=0, columnspan=2, sticky="w", **pad
+        )
+
+        ttk.Label(frm, text="Format").grid(row=5, column=0, sticky="w", **pad)
         format_opts = ttk.Frame(frm)
-        format_opts.grid(row=4, column=1, sticky="w", **pad)
+        format_opts.grid(row=5, column=1, sticky="w", **pad)
         ttk.Radiobutton(
             format_opts,
             text="WAV",
@@ -681,8 +697,8 @@ class ConverterApp:
         ).pack(side=tk.LEFT, padx=(8, 0))
 
         quality = ttk.Frame(frm)
-        quality.grid(row=5, column=0, columnspan=2, sticky="w", **pad)
-        ttk.Label(quality, text="Sampling format").pack(side=tk.LEFT)
+        quality.grid(row=6, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Label(quality, text="Maximum output quality").pack(side=tk.LEFT)
         self.bit_depth_combo = ttk.Combobox(
             quality,
             values=list(BIT_DEPTH_LABELS.values()),
@@ -690,7 +706,7 @@ class ConverterApp:
             width=8,
         )
         self.bit_depth_combo.set(
-            BIT_DEPTH_LABELS.get(self.bit_depth_var.get(), "24Bit")
+            BIT_DEPTH_LABELS.get(self.bit_depth_var.get(), "24-bit")
         )
         self.bit_depth_combo.pack(side=tk.LEFT, padx=(8, 0))
         self.bit_depth_combo.bind(
@@ -704,7 +720,7 @@ class ConverterApp:
             width=9,
         )
         self.sample_rate_combo.set(
-            SAMPLE_RATE_LABELS.get(self.sample_rate_var.get(), "48KHz")
+            SAMPLE_RATE_LABELS.get(self.sample_rate_var.get(), "48 kHz")
         )
         self.sample_rate_combo.pack(side=tk.LEFT, padx=(8, 0))
         self.sample_rate_combo.bind(
@@ -713,7 +729,7 @@ class ConverterApp:
         _HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
 
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=6, column=0, columnspan=2, sticky="ew", **pad)
+        self.progress.grid(row=7, column=0, columnspan=2, sticky="ew", **pad)
         self.progress["value"] = 0
         self.convert_btn = ttk.Button(
             frm,
@@ -721,7 +737,7 @@ class ConverterApp:
             width=ACTION_BUTTON_WIDTH,
             command=self._start_convert,
         )
-        self.convert_btn.grid(row=6, column=2, sticky="e", **pad)
+        self.convert_btn.grid(row=7, column=2, sticky="e", **pad)
         self.cancel_btn = ttk.Button(
             frm,
             text="Cancel",
@@ -729,11 +745,11 @@ class ConverterApp:
             command=self._request_cancel,
             state=tk.DISABLED,
         )
-        self.cancel_btn.grid(row=6, column=2, sticky="e", **pad)
+        self.cancel_btn.grid(row=7, column=2, sticky="e", **pad)
         self.cancel_btn.grid_remove()
 
         status_row = ttk.Frame(frm)
-        status_row.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        status_row.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
         ttk.Label(status_row, textvariable=self.status_var, wraplength=1000).pack(
             side=tk.LEFT
         )
@@ -854,16 +870,15 @@ class ConverterApp:
         self._persist_output_preferences()
 
     def _resolved_output_paths(self) -> tuple[Path, Path]:
-        wav_dir = Path(self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)).expanduser()
-        output = Path(self.output_var.get().strip() or str(DEFAULT_OUTPUT)).expanduser()
+        wav_dir = Path(
+            self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)
+        ).expanduser()
         if not wav_dir.is_absolute():
             wav_dir = Path.home() / wav_dir
-        if not output.is_absolute():
-            output = Path.home() / output
-        return wav_dir, output
+        return wav_dir, import_xml_path(wav_dir)
 
     def _persist_output_preferences(self, *, include_source_xml: bool = False) -> None:
-        wav_dir, output = self._resolved_output_paths()
+        wav_dir, _output = self._resolved_output_paths()
         source_xml = None
         if include_source_xml:
             source_s = self.xml_var.get().strip()
@@ -880,7 +895,6 @@ class ConverterApp:
         try:
             save_preferences(
                 wav_dir,
-                output,
                 source_xml=source_xml,
                 output_format=fmt,
                 bit_depth=depth,
@@ -935,23 +949,7 @@ class ConverterApp:
         if path:
             self.wav_dir_var.set(path)
             self._persist_output_preferences()
-
-    def _browse_output(self) -> None:
-        current = self.output_var.get().strip()
-        if current:
-            preferred = Path(current).expanduser().parent
-        else:
-            preferred = FALLBACK_WAV_DIR
-        path = filedialog.asksaveasfilename(
-            title="Import XML",
-            initialfile=Path(current).name if current else IMPORT_XML_NAME,
-            initialdir=self._browse_initial_dir(preferred),
-            defaultextension=".xml",
-            filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
-        )
-        if path:
-            self.output_var.set(path)
-            self._persist_output_preferences()
+            self._schedule_wav_dir_validation()
 
     def _debounce(self, attr: str, callback) -> None:
         prev = getattr(self, attr)
@@ -1401,9 +1399,59 @@ class ConverterApp:
         else:
             self.cancel_btn.grid_remove()
             self.cancel_btn.configure(state=tk.DISABLED)
-            self.convert_btn.configure(state=tk.NORMAL)
             self.convert_btn.grid()
+            self._update_convert_enabled()
             self._sync_scan_indicator()
+
+    def _update_convert_enabled(self) -> None:
+        if self._busy:
+            return
+        enabled = self._wav_dir_valid and not self._wav_dir_checking
+        self.convert_btn.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+
+    def _schedule_wav_dir_validation(self) -> None:
+        prev = self._wav_dir_validate_after_id
+        if prev is not None:
+            self.root.after_cancel(prev)
+        self._wav_dir_checking = True
+        self._wav_dir_valid = False
+        self._update_convert_enabled()
+
+        def fire() -> None:
+            self._wav_dir_validate_after_id = None
+            self._start_wav_dir_validation()
+
+        self._wav_dir_validate_after_id = self.root.after(
+            WAV_DIR_VALIDATE_DEBOUNCE_MS, fire
+        )
+
+    def _start_wav_dir_validation(self) -> None:
+        wav_dir, _output = self._resolved_output_paths()
+        self._wav_dir_validate_gen += 1
+        gen = self._wav_dir_validate_gen
+        self._wav_dir_checking = True
+        self._wav_dir_valid = False
+        self.wav_dir_error_var.set("Checking output folder…")
+        self._update_convert_enabled()
+
+        def worker() -> None:
+            error = converter_manifest.validate_library_folder(wav_dir)
+
+            def on_ui() -> None:
+                if gen != self._wav_dir_validate_gen:
+                    return
+                self._wav_dir_checking = False
+                if error:
+                    self._wav_dir_valid = False
+                    self.wav_dir_error_var.set(error)
+                else:
+                    self._wav_dir_valid = True
+                    self.wav_dir_error_var.set("")
+                self._update_convert_enabled()
+
+            self._ui(on_ui)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _request_cancel(self) -> None:
         if not self._busy:
@@ -1491,10 +1539,15 @@ class ConverterApp:
             self.status_var.set(f"Working… {current}/{total} ({int(pct)}%)")
 
     def _ui(self, fn) -> None:
-        self.root.after(0, fn)
+        try:
+            self.root.after(0, fn)
+        except tk.TclError:
+            pass
 
     def _start_convert(self) -> None:
         if self._busy:
+            return
+        if not self._wav_dir_valid or self._wav_dir_checking:
             return
         xml_s = self.xml_var.get().strip()
         if not xml_s:
@@ -1582,7 +1635,6 @@ class ConverterApp:
             summaries: list[str] = []
             skipped: list[str] = []
             all_stats: list[rb.ConvertStats] = []
-            playlist_dirs: list[Path] = []
             plans: list[rb.Plan] = []
             # Reuse UI-loaded tree when it matches this convert's XML; else parse once.
             loaded_xml = Path(self.xml_var.get().strip()).expanduser()
@@ -1644,7 +1696,6 @@ class ConverterApp:
                 assert plan is not None
                 plans.append(plan)
                 skipped.extend(plan.warnings)
-                playlist_dirs.append(plan.playlist_dir)
 
             rb.share_output_root(plans)
             items = rb.collect_batch_unique(plans)
@@ -1734,7 +1785,7 @@ class ConverterApp:
             if encode_errors:
                 self._ui(lambda e=encode_errors: self._finish_error(e))
                 return
-            open_dir = playlist_dirs[0] if len(playlist_dirs) == 1 else wav_dir
+            open_dir = wav_dir
             out = str(output)
             if total_successful_conversions(all_stats) == 0:
                 self._ui(
@@ -1742,8 +1793,8 @@ class ConverterApp:
                 )
             else:
                 self._ui(
-                    lambda s=summaries, o=out, w=skipped, d=open_dir: self._finish_ok(
-                        s, o, w, d
+                    lambda s=summaries, o=out, w=skipped, d=open_dir, x=output: self._finish_ok(
+                        s, o, w, d, x
                     )
                 )
         except rb.CliError as exc:
@@ -1800,6 +1851,7 @@ class ConverterApp:
         output: str,
         warnings: list[str] | None = None,
         open_dir: Path | None = None,
+        import_xml: Path | None = None,
     ) -> None:
         self._set_busy(False)
         self._animate_progress_to(100, snap=True)
@@ -1824,7 +1876,7 @@ class ConverterApp:
             "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
             f"   (or drag the {suffix} playlist into Playlists)"
         )
-        self._show_done_dialog(message, open_dir)
+        self._show_done_dialog(message, open_dir, import_xml)
 
     def _show_list_dialog(
         self,
@@ -1890,7 +1942,12 @@ class ConverterApp:
         if wait:
             dlg.wait_window()
 
-    def _show_done_dialog(self, message: str, open_dir: Path | None) -> None:
+    def _show_done_dialog(
+        self,
+        message: str,
+        open_dir: Path | None,
+        import_xml: Path | None = None,
+    ) -> None:
         dlg = tk.Toplevel(self.root)
         dlg.title("Done")
         dlg.transient(self.root)
@@ -1908,9 +1965,14 @@ class ConverterApp:
         def close() -> None:
             dlg.destroy()
 
-        def open_folder() -> None:
+        def reveal_library() -> None:
             if open_dir is not None:
                 open_in_finder(open_dir)
+            close()
+
+        def reveal_import_xml() -> None:
+            if import_xml is not None:
+                open_in_finder(import_xml)
             close()
 
         def open_guide() -> None:
@@ -1918,9 +1980,13 @@ class ConverterApp:
             self._show_usage_guide()
 
         if open_dir is not None:
-            ttk.Button(btns, text="Open folder", command=open_folder).pack(
+            ttk.Button(btns, text="Reveal library", command=reveal_library).pack(
                 side=tk.LEFT, padx=(0, 8)
             )
+        if import_xml is not None:
+            ttk.Button(
+                btns, text="Reveal import XML", command=reveal_import_xml
+            ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btns, text="Open usage guide", command=open_guide).pack(
             side=tk.LEFT, padx=(0, 8)
         )

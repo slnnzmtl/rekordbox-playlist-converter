@@ -19,6 +19,17 @@ from test_preview_bit_depth import _flac_with_bit_depth
 from update_check import UpdateCheckResult
 
 
+def _mark_output_folder_valid(app) -> None:
+    after_id = getattr(app, "_wav_dir_validate_after_id", None)
+    if after_id is not None:
+        app.root.after_cancel(after_id)
+        app._wav_dir_validate_after_id = None
+    app._wav_dir_checking = False
+    app._wav_dir_valid = True
+    app.wav_dir_error_var.set("")
+    app._update_convert_enabled()
+
+
 def _flush_debounced(app, attr: str, callback) -> None:
     """Cancel a pending search after() and apply immediately."""
     after_id = getattr(app, attr)
@@ -353,6 +364,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ), patch(
                     "rb_converter_gui.threading.Thread", side_effect=run_inline
                 ), patch("rb_converter_gui.messagebox.showerror") as showerror:
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()
 
@@ -404,6 +416,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ) as prepare, patch(
                     "rb_converter_gui.threading.Thread", side_effect=run_inline
                 ), patch("rb_converter_gui.messagebox.showerror") as showerror:
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()
 
@@ -628,6 +641,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ), patch(
                     "rb_converter_gui.threading.Thread", side_effect=run_inline
                 ), patch("rb_converter_gui.messagebox.showerror"):
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()
 
@@ -692,6 +706,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ), patch(
                     "rb_converter_gui.threading.Thread", side_effect=run_inline
                 ), patch("rb_converter_gui.messagebox.showerror"):
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()  # _finish_error while showerror is patched
 
@@ -708,6 +723,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ) as prepare, patch(
                     "rb_converter_gui.messagebox.showerror"
                 ) as showerror:
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     prepare.assert_not_called()
                     showerror.assert_called()
@@ -1012,6 +1028,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ), patch(
                     "rb_converter_gui.threading.Thread", side_effect=run_inline
                 ), patch("rb_converter_gui.messagebox.showerror"):
+                    _mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()
 

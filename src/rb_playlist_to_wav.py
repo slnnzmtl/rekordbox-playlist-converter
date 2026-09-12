@@ -40,6 +40,7 @@ from cdj_wav import (
     parse_wav_info,
 )
 from cli_error import CancelledError, CliError
+from gui_preferences import import_xml_path
 from rekordbox_xml import (
     XML_CANDIDATE_RELATIVE,
     collection_indexes,
@@ -153,8 +154,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT,
-        help="Output Rekordbox XML (default: ./output/rekordbox-import.xml)",
+        default=None,
+        help=(
+            "Advanced override for the import XML path "
+            "(default: <wav-dir>/rekordbox-import.xml)"
+        ),
     )
     parser.add_argument(
         "--format",
@@ -260,11 +264,21 @@ def prompt_playlists(
         return [(folder, name) for folder, name, _n in chosen]
 
 
-def prompt_paths(wav_dir: Path, output: Path) -> tuple[Path, Path]:
+def resolve_cli_output(wav_dir: Path, output: Path | None) -> Path:
+    """Return explicit --output, or <wav_dir>/rekordbox-import.xml when omitted."""
+    if output is not None:
+        return output
+    return import_xml_path(wav_dir)
+
+
+def prompt_paths(wav_dir: Path, output: Path | None) -> tuple[Path, Path]:
     print()
-    wav_s = prompt_line("WAV directory", str(wav_dir))
-    out_s = prompt_line("Output XML", str(output))
-    return Path(wav_s).expanduser(), Path(out_s).expanduser()
+    wav_s = prompt_line("Audio directory", str(wav_dir))
+    chosen_wav = Path(wav_s).expanduser()
+    if output is not None:
+        out_s = prompt_line("Output XML", str(output))
+        return chosen_wav, Path(out_s).expanduser()
+    return chosen_wav, resolve_cli_output(chosen_wav, None)
 
 
 def print_import_hints(output: Path, *, output_format: str = "wav") -> None:
@@ -613,7 +627,7 @@ def main(argv: list[str] | None = None) -> int:
         xml_path = args.xml
         playlist_refs = [(None, args.playlist)]
         wav_dir = args.wav_dir
-        output = args.output
+        output = resolve_cli_output(wav_dir, args.output)
 
     try:
         shared_root = load_dj_playlists(xml_path)

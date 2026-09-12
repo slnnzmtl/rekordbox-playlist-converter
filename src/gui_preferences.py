@@ -85,6 +85,11 @@ def iter_rekordbox_xml_files(root: Path) -> list[Path]:
     return found
 
 
+def import_xml_path(wav_dir: Path) -> Path:
+    """Canonical import XML path for a self-contained library folder."""
+    return wav_dir.expanduser() / IMPORT_XML_NAME
+
+
 def default_output_paths(
     *,
     documents_accessible: bool,
@@ -96,7 +101,7 @@ def default_output_paths(
         wav_dir = base / "Documents" / OUTPUT_DIR_NAME
     else:
         wav_dir = base / OUTPUT_DIR_NAME
-    return wav_dir, wav_dir / IMPORT_XML_NAME
+    return wav_dir, import_xml_path(wav_dir)
 
 
 def probe_folder_access(
@@ -256,10 +261,11 @@ def load_preferences(config_path: Path | None = None) -> dict[str, str]:
     if raw.get("version") != PREFERENCES_VERSION:
         return {}
     result: dict[str, str] = {}
-    for key in ("wav_dir", "import_xml", "source_xml"):
+    for key in ("wav_dir", "source_xml"):
         value = raw.get(key)
         if isinstance(value, str) and value.strip():
             result[key] = value.strip()
+    # Legacy import_xml is tolerated in the file but never returned.
     fmt = raw.get("output_format")
     if isinstance(fmt, str) and fmt.strip().lower() in ("wav", "aiff"):
         result["output_format"] = fmt.strip().lower()
@@ -276,7 +282,6 @@ def load_preferences(config_path: Path | None = None) -> dict[str, str]:
 
 def save_preferences(
     wav_dir: Path,
-    import_xml: Path,
     *,
     source_xml: Path | None = None,
     output_format: str | None = None,
@@ -286,11 +291,9 @@ def save_preferences(
 ) -> None:
     path = config_path or default_config_path()
     wav_s = str(wav_dir.expanduser().resolve())
-    xml_s = str(import_xml.expanduser().resolve())
     payload: dict[str, Any] = {
         "version": PREFERENCES_VERSION,
         "wav_dir": wav_s,
-        "import_xml": xml_s,
     }
     if source_xml is not None:
         payload["source_xml"] = str(source_xml.expanduser().resolve())
@@ -333,11 +336,6 @@ def _wav_dir_is_valid(path: Path) -> bool:
     return parent.exists() and parent.is_dir()
 
 
-def _import_xml_is_valid(path: Path) -> bool:
-    parent = path.expanduser().parent
-    return parent.exists() and parent.is_dir()
-
-
 def resolve_startup_paths(
     saved: dict[str, str],
     *,
@@ -346,6 +344,10 @@ def resolve_startup_paths(
     documents_accessible: bool = True,
     home: Path | None = None,
 ) -> tuple[Path, Path]:
+    """Restore wav_dir from prefs; always derive import XML from wav_dir.
+
+    Legacy ``import_xml`` preference keys are ignored.
+    """
     saved_wav = saved.get("wav_dir")
     if not saved_wav:
         return default_wav_dir, default_import_xml
@@ -359,14 +361,4 @@ def resolve_startup_paths(
         return default_wav_dir, default_import_xml
 
     wav_dir = candidate_wav.resolve()
-
-    saved_xml = saved.get("import_xml")
-    if saved_xml:
-        candidate_xml = Path(saved_xml).expanduser()
-        if not documents_accessible and path_is_under_documents(
-            candidate_xml, home=home
-        ):
-            return wav_dir, wav_dir / IMPORT_XML_NAME
-        if _import_xml_is_valid(candidate_xml):
-            return wav_dir, candidate_xml.resolve()
-    return wav_dir, wav_dir / IMPORT_XML_NAME
+    return wav_dir, import_xml_path(wav_dir)

@@ -2317,7 +2317,34 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertFalse(
             (self.root / "WAV" / "rekordbox-converter-manifest.json").exists()
         )
-        self.assertIn("Untitled Intelligent List [WAV]", buf.getvalue())
+
+    def test_main_omitted_output_writes_import_xml_under_wav_dir(self) -> None:
+        """Given no --output: When main converts: Then import XML is
+        <wav_dir>/rekordbox-import.xml."""
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ), patch("sys.stdout", io.StringIO()):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        derived = self.wav_dir / "rekordbox-import.xml"
+        self.assertTrue(derived.is_file())
+        self.assertFalse(self.output.exists())
 
     def test_unsupported_lossy_format_errors_flac_without_depth_ok(self) -> None:
         mp3 = self.music / "x.mp3"
@@ -2410,6 +2437,61 @@ class XmlFixtureTests(unittest.TestCase):
             rb.parse_args(
                 ["--xml", "in.xml", "--playlist", "P", "--sample-rate", "96000"]
             )
+
+    def test_parse_args_omitted_output_defaults_to_none(self) -> None:
+        """Given no --output: When parse_args runs: Then output is None."""
+        args = rb.parse_args(
+            ["--xml", "in.xml", "--playlist", "P", "--wav-dir", "/tmp/lib"]
+        )
+        self.assertIsNone(args.output)
+
+    def test_parse_args_explicit_output_is_kept(self) -> None:
+        """Given explicit --output: When parse_args runs: Then that path is kept."""
+        args = rb.parse_args(
+            [
+                "--xml",
+                "in.xml",
+                "--playlist",
+                "P",
+                "--wav-dir",
+                "/tmp/lib",
+                "--output",
+                "/tmp/custom-import.xml",
+            ]
+        )
+        self.assertEqual(args.output, Path("/tmp/custom-import.xml"))
+
+    def test_resolve_cli_output_derives_from_wav_dir_when_omitted(self) -> None:
+        """Given output=None: When resolve_cli_output runs: Then
+        <wav_dir>/rekordbox-import.xml."""
+        wav_dir = Path("/tmp/my-lib")
+        self.assertEqual(
+            rb.resolve_cli_output(wav_dir, None),
+            wav_dir / "rekordbox-import.xml",
+        )
+
+    def test_resolve_cli_output_keeps_explicit_override(self) -> None:
+        wav_dir = Path("/tmp/my-lib")
+        explicit = Path("/tmp/elsewhere/import.xml")
+        self.assertEqual(rb.resolve_cli_output(wav_dir, explicit), explicit)
+
+    def test_prompt_paths_skips_xml_when_output_not_overridden(self) -> None:
+        """Given no explicit --output: When prompt_paths runs: Then only the
+        audio directory is prompted and XML is derived."""
+        answers = iter(["/tmp/chosen-wav"])
+        with patch("builtins.input", side_effect=lambda _p: next(answers)):
+            wav, out = rb.prompt_paths(Path("/tmp/default-wav"), None)
+        self.assertEqual(wav, Path("/tmp/chosen-wav"))
+        self.assertEqual(out, Path("/tmp/chosen-wav") / "rekordbox-import.xml")
+
+    def test_prompt_paths_asks_xml_when_output_overridden(self) -> None:
+        answers = iter(["/tmp/chosen-wav", "/tmp/custom.xml"])
+        with patch("builtins.input", side_effect=lambda _p: next(answers)):
+            wav, out = rb.prompt_paths(
+                Path("/tmp/default-wav"), Path("/tmp/override.xml")
+            )
+        self.assertEqual(wav, Path("/tmp/chosen-wav"))
+        self.assertEqual(out, Path("/tmp/custom.xml"))
 
 
 class TargetFromStreamTests(unittest.TestCase):
