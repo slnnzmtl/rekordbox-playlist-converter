@@ -13,7 +13,7 @@ import unicodedata
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
 import ffmpeg_tools
@@ -306,6 +306,56 @@ def dest_name_for(source: Path, *, output_format: str = "wav") -> str:
     return unicodedata.normalize("NFC", source.stem) + ext
 
 
+_RESERVED_FILENAME_CHARS = '<>:"|?*'
+
+
+def _clean_path_component(value: str) -> str:
+    """NFC-normalize and replace unsafe characters; empty if unusable."""
+    if not value or value.isspace():
+        return ""
+    name = unicodedata.normalize("NFC", value)
+    out: list[str] = []
+    for ch in name:
+        if ch in "/\\\0" or ch in _RESERVED_FILENAME_CHARS or ord(ch) < 32:
+            out.append("_")
+        else:
+            out.append(ch)
+    name = "".join(out).rstrip(" .")
+    if not name or name in {".", ".."}:
+        return ""
+    return name
+
+
+def sanitize_path_component(value: str, *, fallback: str) -> str:
+    """NFC-normalize and make a single path component filesystem-safe."""
+    return (
+        _clean_path_component(value)
+        or _clean_path_component(fallback)
+        or "Unknown"
+    )
+
+
+def preferred_relative_dest(
+    track_el: ET.Element,
+    *,
+    output_format: str = "wav",
+    stem_fallback: str = "",
+) -> str:
+    """Relative Artist/Album/Name.ext path under wav_dir for first assignment."""
+    ext = ".aiff" if output_format == "aiff" else ".wav"
+    artist = sanitize_path_component(
+        track_el.get("Artist") or "", fallback="Unknown Artist"
+    )
+    album = sanitize_path_component(
+        track_el.get("Album") or "", fallback="Unknown Album"
+    )
+    name = sanitize_path_component(
+        track_el.get("Name") or "",
+        fallback=stem_fallback or "Unknown Track",
+    )
+    return f"{artist}/{album}/{name}{ext}"
+
+
 def playlist_dir_name(playlist_name: str) -> str:
     """Filesystem-safe single directory component from the playlist name."""
     name = unicodedata.normalize("NFC", playlist_name)
@@ -474,11 +524,8 @@ def build_plan(
     errors.extend(resolve_errors)
 
     wav_dir_abs = abs_path(wav_dir)
-    try:
-        playlist_dir = wav_dir_abs / playlist_dir_name(playlist_name)
-    except CliError as exc:
-        errors.append(str(exc))
-        playlist_dir = wav_dir_abs / "_"
+    # Library root (field name kept for hand-built Plan compatibility).
+    playlist_dir = wav_dir_abs
 
     planned: list[PlannedTrack] = []
     warnings: list[str] = []
@@ -493,8 +540,13 @@ def build_plan(
             warnings.append(f"missing source file: {source_path}")
             continue
         source_path = resolved
-        dest_name = dest_name_for(source_path, output_format=output_format)
-        dest_path = playlist_dir / dest_name
+        rel = preferred_relative_dest(
+            el,
+            output_format=output_format,
+            stem_fallback=source_path.stem,
+        )
+        dest_path = playlist_dir.joinpath(*PurePosixPath(rel).parts)
+        dest_name = dest_path.name
         dest_location = encode_location(dest_path)
         planned.append(
             PlannedTrack(
@@ -512,7 +564,9 @@ def build_plan(
     unique: list[PlannedTrack] = []
     unique_dest: dict[str, PlannedTrack] = {}
     for item in planned:
-        dest_key = collision_key(item.dest_name)
+        dest_key = collision_key(
+            item.dest_path.relative_to(playlist_dir).as_posix()
+        )
         if dest_key in unique_dest:
             kept = unique_dest[dest_key]
             if item.source_path != kept.source_path:

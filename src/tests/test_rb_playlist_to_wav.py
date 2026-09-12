@@ -859,15 +859,21 @@ class XmlFixtureTests(unittest.TestCase):
         cafe_nfd = self.music / "n2" / (unicodedata.normalize("NFD", "café") + ".flac")
         for p in (intro, intro2, cafe_nfc, cafe_nfd):
             write_flac(p)
+        cafe_name_nfc = unicodedata.normalize("NFC", "café")
+        cafe_name_nfd = unicodedata.normalize("NFD", "café")
         extra = f"""\
 <?xml version="1.0" encoding="UTF-8"?>
 <DJ_PLAYLISTS Version="1.0.0">
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="4">
-    <TRACK TrackID="1" Name="a" Location="{rb.encode_location(intro)}" Kind="FLAC File"/>
-    <TRACK TrackID="2" Name="b" Location="{rb.encode_location(intro2)}" Kind="FLAC File"/>
-    <TRACK TrackID="3" Name="c" Location="{rb.encode_location(cafe_nfc)}" Kind="FLAC File"/>
-    <TRACK TrackID="4" Name="d" Location="{rb.encode_location(cafe_nfd)}" Kind="FLAC File"/>
+    <TRACK TrackID="1" Name="Intro" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(intro)}" Kind="FLAC File"/>
+    <TRACK TrackID="2" Name="intro" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(intro2)}" Kind="FLAC File"/>
+    <TRACK TrackID="3" Name="{cafe_name_nfc}" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(cafe_nfc)}" Kind="FLAC File"/>
+    <TRACK TrackID="4" Name="{cafe_name_nfd}" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(cafe_nfd)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -917,9 +923,12 @@ class XmlFixtureTests(unittest.TestCase):
 <DJ_PLAYLISTS Version="1.0.0">
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="3">
-    <TRACK TrackID="1" Name="a" Location="{rb.encode_location(intro)}" Kind="FLAC File"/>
-    <TRACK TrackID="2" Name="b" Location="{rb.encode_location(intro2)}" Kind="FLAC File"/>
-    <TRACK TrackID="3" Name="c" Location="{rb.encode_location(clean)}" Kind="FLAC File"/>
+    <TRACK TrackID="1" Name="Intro" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(intro)}" Kind="FLAC File"/>
+    <TRACK TrackID="2" Name="intro" Artist="Same" Album="Hits"
+           Location="{rb.encode_location(intro2)}" Kind="FLAC File"/>
+    <TRACK TrackID="3" Name="Clean Track" Artist="Other" Album="Solo"
+           Location="{rb.encode_location(clean)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -992,8 +1001,10 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(first.get("Rating"), "51")
         self.assertEqual(first.get("Kind"), "WAV File")
         loc = first.get("Location") or ""
-        self.assertIn("/WAV/Untitled%20Intelligent%20List/", loc)
-        self.assertTrue((self.wav_dir / "Untitled Intelligent List" / "07 - Bestial.wav").is_file())
+        self.assertIn("/WAV/ABSL/It%27s%20just%20a%20bad%20dream/", loc)
+        self.assertTrue(
+            (self.wav_dir / "ABSL" / "It's just a bad dream" / "Bestial.wav").is_file()
+        )
         extra = first.find("EXTRA")
         self.assertIsNotNone(extra)
         assert extra is not None
@@ -1069,7 +1080,8 @@ class XmlFixtureTests(unittest.TestCase):
         root_node = out.find("PLAYLISTS/NODE")
         assert root_node is not None
         self.assertEqual(root_node.get("Count"), "2")
-        self.assertEqual(len(out.findall("COLLECTION/TRACK")), 4)
+        # Same Artist/Album/Name dest for Bestial in both playlists → one collection row.
+        self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
         morning_pl = rb.find_playlists_by_name(out, "Morning [WAV]")[0]
         self.assertEqual(len(morning_pl.findall("TRACK")), 1)
 

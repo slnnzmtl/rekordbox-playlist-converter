@@ -163,11 +163,65 @@ class CdjSafeAiffTests(unittest.TestCase):
 
 
 class DestNameAndClassifyAiffTests(unittest.TestCase):
-    def test_dest_name_for_aiff_and_default_wav(self) -> None:
-        src = Path("/music/Track One.flac")
-        self.assertEqual(rb.dest_name_for(src), "Track One.wav")
-        self.assertEqual(rb.dest_name_for(src, output_format="wav"), "Track One.wav")
-        self.assertEqual(rb.dest_name_for(src, output_format="aiff"), "Track One.aiff")
+    def test_preferred_relative_dest_from_track_metadata(self) -> None:
+        """Given Artist/Album/Name on a TRACK: When preferred_relative_dest
+        runs: Then the relative path is Artist/Album/Name.wav|.aiff."""
+        el = ET.Element(
+            "TRACK",
+            {
+                "Name": "Bestial",
+                "Artist": "ABSL",
+                "Album": "It's just a bad dream",
+            },
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el),
+            "ABSL/It's just a bad dream/Bestial.wav",
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el, output_format="wav"),
+            "ABSL/It's just a bad dream/Bestial.wav",
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el, output_format="aiff"),
+            "ABSL/It's just a bad dream/Bestial.aiff",
+        )
+
+    def test_preferred_relative_dest_fallbacks(self) -> None:
+        """Given empty/whitespace Artist, Album, or Name: When preferred_relative_dest
+        runs: Then Unknown Artist, Unknown Album, or stem_fallback is used."""
+        el = ET.Element(
+            "TRACK",
+            {"Name": "  ", "Artist": "", "Album": "\t"},
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el, stem_fallback="07 - Bestial"),
+            "Unknown Artist/Unknown Album/07 - Bestial.wav",
+        )
+        el_dot = ET.Element(
+            "TRACK",
+            {"Name": "Track", "Artist": ".", "Album": ".."},
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el_dot),
+            "Unknown Artist/Unknown Album/Track.wav",
+        )
+
+    def test_preferred_relative_dest_sanitizes_components(self) -> None:
+        """Given path separators and reserved filename chars: When preferred_relative_dest
+        runs: Then each component replaces them with underscore."""
+        el = ET.Element(
+            "TRACK",
+            {
+                "Name": "A:B*C?",
+                "Artist": "X/Y\\Z",
+                "Album": 'Foo<>|"Bar"',
+            },
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el),
+            "X_Y_Z/Foo____Bar_/A_B_C_.wav",
+        )
 
     def test_classify_aiff_passthrough_and_transcode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -226,11 +280,11 @@ class InPlaceAiffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             wav_dir = root / "out"
-            playlist = "Set"
-            playlist_dir = wav_dir / playlist
-            playlist_dir.mkdir(parents=True)
-            src = playlist_dir / "track.aiff"
+            # Dest is Artist/Album/Name.aiff — put the source at that path.
+            src = wav_dir / "A" / "Unknown Album" / "Expected Title.aiff"
+            src.parent.mkdir(parents=True)
             write_pcm_aiff(src)
+            playlist = "Set"
             xml_path = root / "c.xml"
             xml_path.write_text(
                 f"""\
