@@ -35,7 +35,7 @@ Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 k
 
 Download **Simple Rekordbox Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon). Defaults write to `~/Documents/rekordbox-converter` (a different folder than the CLI’s `./output`); the app remembers your last Rekordbox XML and output folder between launches. Import XML is always `<output folder>/rekordbox-import.xml`. On launch it searches only your home folder (top-level files) and `~/Documents` for `*rekordbox*.xml` (skipping Desktop, Downloads, and iCloud) and auto-loads a single match, or asks you to choose if several are found. First launch: right-click → **Open** if Gatekeeper blocks it (ad-hoc signed). macOS may ask for Documents access on first open; if you decline, the app still opens and defaults to `~/rekordbox-converter` — Browse… can prompt again when you navigate into Documents.
 
-Import into Rekordbox the same way as the CLI — point **Imported Library** at `<output folder>/rekordbox-import.xml`. In the app, **Help → How to Use…** covers the full Rekordbox click-path. Same steps are also in **[USAGE.md](USAGE.md)**.
+Import into Rekordbox the same way as the CLI — point **Imported Library** at `<output folder>/rekordbox-import.xml`. In the app, **Convert** opens a conversion preview first (**Back** writes nothing); after a successful run, **Reveal audio folder** opens the selected format directory (`WAV/` or `AIFF/`). **Help → How to Use…** covers the full Rekordbox click-path. Same steps are also in **[USAGE.md](USAGE.md)**.
 
 ### Build the .app
 
@@ -78,10 +78,10 @@ cd rekordbox-playlist-converter
 ./rb-converter.py
 ```
 
-3. Pick the XML export, pick one or more playlists (`1`, `1,4,7`, or `all`), and confirm the output folder (default `./output`). Audio lands under `output/<artist>/<album>/`; the import file is `output/rekordbox-import.xml`.
+3. Pick the XML export, pick one or more playlists (`1`, `1,4,7`, or `all`), and confirm the output folder (default `./output`). Audio lands under `output/WAV/` or `output/AIFF/` as `<artist> - <track>`; the import file is `output/rekordbox-import.xml`.
 4. Follow the import steps printed at the end — or open **[USAGE.md](USAGE.md)** and do section 3.
 
-The new playlist in the import file is named `{original} [WAV]` or `{original} [AIFF]`. Running again **adds** tracks and refreshes metadata for existing dest paths; it does not wipe the playlist. A sticky `rekordbox-converter-manifest.json` in the output folder remembers each source’s path so reruns stay stable. Older playlist-folder libraries without a manifest are refused — use a new empty output folder.
+The new playlist in the import file is named `{original} [WAV]` or `{original} [AIFF]`. Running again **adds** tracks and refreshes metadata for existing dest paths; it does not wipe the playlist. A hidden sticky `.rekordbox-converter-manifest.json` in the output folder remembers each source’s path per format so reruns stay stable. Deleting that manifest leaves the audio unmanaged and the folder is refused — use a new empty output folder.
 
 ## Options (optional)
 
@@ -101,13 +101,13 @@ Most people can ignore this and use the prompts.
 | `--format`   | `wav`                               | `wav` or `aiff`                                                 |
 | `--bit-depth` | `24`                               | Max bit depth `16` or `24` (never upconvert 16-bit to 24-bit)   |
 | `--sample-rate` | `48000`                         | Max rate `44100` or `48000` (never upconvert 44.1 to 48 kHz; other rates snap to 44100 when allowed) |
-| `--wav-dir`  | `./output`                          | Shared library folder (`output/<artist>/<album>/`)              |
+| `--wav-dir`  | `./output`                          | Shared library folder (`WAV/` or `AIFF/` + `<artist> - <track>`) |
 | `--output`   | `<wav-dir>/rekordbox-import.xml` | Optional override; default is derived from `--wav-dir`          |
 | `--force`    | off                                 | Rebuild even if dest already matches the profile                |
-| `--dry-run`  | off                                 | Check only; write nothing                                       |
+| `--dry-run`  | off                                 | Print the conversion plan; write nothing                        |
 
 
-If two different sources would share Artist/Album/Name, the second gets `Name (2)`, then `Name (3)`, and so on — sticky via the manifest. Keep the output folder where it is after import — moving files later breaks the paths Rekordbox stored.
+Layout is `WAV|AIFF/<artist> - <track>` (no Album or quality directories). Assignments are sticky per source and format; `(2)` / `(3)` suffixes apply only when different sources would share a name. If you delete a generated audio file, the next run recreates it at the same assignment. `--dry-run` prints the same plan the GUI Convert preview shows. Keep the output folder where it is after import — moving files later breaks the paths Rekordbox stored.
 
 ## Tests
 

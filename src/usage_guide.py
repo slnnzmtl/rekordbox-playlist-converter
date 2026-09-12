@@ -52,33 +52,40 @@ export.
    request; Browse… can prompt again when you open Documents. Import XML is
    always <output folder>/rekordbox-import.xml in a read-only field (click to
    copy the full path). The app remembers your last-used output folder between
-   launches. Older playlist-folder libraries without a
-   rekordbox-converter-manifest.json are refused — choose a new empty folder.
+   launches. Deleting the hidden .rekordbox-converter-manifest.json leaves
+   audio unmanaged and the folder is refused — choose a new empty folder.
 4. Choose Format: WAV or AIFF.
 5. Choose Maximum output quality (bit depth 16-bit/24-bit and rate
    44.1 kHz/48 kHz). These are maxima, not targets: 16-bit tracks stay
    16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are 24-bit / 48 kHz.
-6. Click Convert (beside the progress bar). While converting, Cancel replaces
-   Convert in that spot. Cancel stops in-flight encodes (up to 4 at once);
-   files already written are kept (re-run Convert to finish). Import XML is
-   not updated for the interrupted playlist. If some tracks fail, convertible
-   tracks still finish and all errors are reported together.
+6. Click Convert (beside the progress bar). A Conversion preview lists unique
+   outputs, actions, quality, and size. Back (or Escape) writes nothing and
+   returns to the main window. Confirm Convert to start encoding. While
+   converting, Cancel replaces Convert in that spot. Cancel stops in-flight
+   encodes (up to 4 at once); files already written are kept (re-run Convert
+   to finish). Import XML is not updated for the interrupted playlist. If some
+   tracks fail, convertible tracks still finish and all errors are reported
+   together. After success, Reveal audio folder opens the selected format
+   directory (WAV/ or AIFF/).
 
 What you get:
-• Audio files in <output folder>/<artist>/<album>/ (shared across playlists)
+• Audio files in <output folder>/WAV/ or …/AIFF/ as <artist> - <track>
+  (no Album or quality directories; shared across playlists)
   — WAV: stereo WAVE_FORMAT_PCM, fmt + data only, at the effective depth/rate
   — AIFF: stereo PCM at the effective depth/rate, plus ID3v2.3 (COMM + SSND + ID3)
-• Sticky rekordbox-converter-manifest.json in the output folder
+• Sticky hidden .rekordbox-converter-manifest.json in the output folder
 • Import file <output folder>/rekordbox-import.xml
 • Playlist inside that file named {your playlist} [WAV] or [AIFF]
 
 Your original files stay where they are. Re-running with the same output folder
 adds new tracks and refreshes metadata for existing dest paths; it does not
 replace the playlist. Each unique source converts once per batch even if it
-appears in several playlists. If two different sources would share
-Artist/Album/Name, the second gets Name (2), then Name (3), and so on.
-Dest files that already match the chosen profile are skipped unless you force
-a rebuild (CLI: --force).
+appears in several playlists. Assignments are sticky per source and format.
+If two different sources would share <artist> - <track>, the second gets (2),
+then (3), and so on. Deleting a generated audio file recreates it at the same
+assignment on the next run. Dest files that already match the chosen profile
+are skipped unless you force a rebuild (CLI: --force). CLI --dry-run prints
+the same plan as this preview and writes nothing.
 
 ────────────────────────────────────────
 3. Bring it into Rekordbox

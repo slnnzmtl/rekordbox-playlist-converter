@@ -55,10 +55,10 @@ You will be asked to:
 
 **What you get**
 
-- Audio files in `output/<artist>/<album>/` (shared library across playlists)
+- Audio files in `output/WAV/` or `output/AIFF/` as `<artist> - <track>` (no Album or quality directories; shared across playlists)
   - WAV: stereo `WAVE_FORMAT_PCM` (`fmt ` + `data` only) at the effective depth/rate
   - AIFF: stereo PCM at the effective depth/rate, plus ID3v2.3 from the XML and optional cover art
-- Sticky `output/rekordbox-converter-manifest.json` (destinations per source and format)
+- Sticky hidden `output/.rekordbox-converter-manifest.json` (destinations per source and format)
 - Import file `output/rekordbox-import.xml`
 - Playlist named `{your playlist} [WAV]` or `{your playlist} [AIFF]`
 
@@ -66,7 +66,9 @@ These quality settings are maxima, not targets. Defaults stay WAV / 24-bit / 48 
 
 Your original files stay where they are. Re-running with the same output folder **adds** new tracks and refreshes metadata for existing dest paths. Each unique source converts once per batch even if it appears in several playlists.
 
-If two different sources would share Artist/Album/Name, the second gets `Name (2)`, then `Name (3)`, and so on. Older playlist-folder libraries without a manifest are refused — choose a new empty output folder.
+Assignments are sticky per source and format. If two different sources would share `<artist> - <track>`, the second gets `(2)`, then `(3)`, and so on. Deleting a generated audio file recreates it at the same assignment on the next run. Deleting the hidden manifest leaves the audio unmanaged and the folder is refused — choose a new empty output folder.
+
+CLI `--dry-run` prints the same conversion plan the GUI Convert preview shows (and writes nothing). In the app, Convert opens that preview first; **Back** discards it and writes nothing. After a successful run, **Reveal audio folder** opens the selected format directory (`WAV/` or `AIFF/`).
 
 ### Same thing with options (optional)
 
@@ -88,10 +90,10 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 | `--format` | `wav` | `wav` or `aiff` |
 | `--bit-depth` | `24` | Max `16` or `24` (no upconvert) |
 | `--sample-rate` | `48000` | Max `44100` or `48000` (no upconvert) |
-| `--wav-dir` | `./output` | Shared library (`<this>/<artist>/<album>/`) |
+| `--wav-dir` | `./output` | Shared library (`WAV|AIFF/<artist> - <track>`) |
 | `--output` | `<wav-dir>/rekordbox-import.xml` | Optional override; default derived from `--wav-dir` |
 | `--force` | off | Rebuild files that already match the profile |
-| `--dry-run` | off | Check only; write nothing |
+| `--dry-run` | off | Print the conversion plan; write nothing |
 
 ---
 
