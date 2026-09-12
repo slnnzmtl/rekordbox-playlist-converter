@@ -345,6 +345,9 @@ def run_convert_one(
         print(str(exc), file=sys.stderr)
         return 1
     print_summary(plan, stats, dry_run=False)
+    if stats.errors:
+        print_errors(stats.errors)
+        return 1
     return 0
 
 

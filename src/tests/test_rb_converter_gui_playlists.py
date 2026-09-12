@@ -18,6 +18,24 @@ from test_preview_bit_depth import _flac_with_bit_depth
 
 from update_check import UpdateCheckResult
 
+
+def _flush_debounced(app, attr: str, callback) -> None:
+    """Cancel a pending search after() and apply immediately."""
+    after_id = getattr(app, attr)
+    if after_id is not None:
+        app.root.after_cancel(after_id)
+        setattr(app, attr, None)
+    callback()
+
+
+def _flush_playlist_search_debounce(app) -> None:
+    _flush_debounced(app, "_playlist_search_after_id", app._apply_playlist_filter)
+
+
+def _flush_track_search_debounce(app) -> None:
+    _flush_debounced(app, "_track_search_after_id", app._refresh_tracklist_preview)
+
+
 NESTED_XML = """\
 <?xml version="1.0" encoding="UTF-8"?>
 <DJ_PLAYLISTS Version="1.0.0">
@@ -410,6 +428,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 source = _write_xml(Path(tmp), NESTED_XML)
                 root, app = self._make_app(source)
                 app.search_var.set("nested")
+                _flush_playlist_search_debounce(app)
                 tree = app.playlist_tree
                 top = tree.get_children("")
                 self.assertEqual(len(top), 1)
@@ -649,6 +668,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
                 preview = app.tracklist_tree
                 app.track_search_var.set("revelation")
+                _flush_track_search_debounce(app)
                 groups = preview.get_children("")
                 self.assertEqual(len(groups), 1)
                 leaves = preview.get_children(groups[0])
@@ -662,6 +682,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 )
 
                 app.track_search_var.set("")
+                _flush_track_search_debounce(app)
                 groups = preview.get_children("")
                 self.assertEqual(len(groups), 2)
                 all_leaves = list(preview.get_children(groups[0])) + list(
@@ -833,78 +854,6 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                         [preview.item(r, "values") for r in leaves],
                         [("FLAC", "—", "44100")],
                     )
-        except tk.TclError:
-            self.skipTest("tk.TclError: display not available")
-        finally:
-            if root is not None:
-                root.destroy()
-
-    def test_tracklist_probe_joins_previous_worker_before_starting(self) -> None:
-        if not _tk_available():
-            self.skipTest("_tkinter not available")
-
-        import tkinter as tk
-        import rb_playlist_to_wav as rb
-        from unittest.mock import patch
-
-        root = None
-        try:
-            with tempfile.TemporaryDirectory() as tmp:
-                base = Path(tmp)
-                flac = base / "Bestial.flac"
-                flac.write_bytes(_flac_with_bit_depth(24))
-                xml = f"""\
-<?xml version="1.0" encoding="UTF-8"?>
-<DJ_PLAYLISTS Version="1.0.0">
-  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
-  <COLLECTION Entries="1">
-    <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
-           Location="{rb.encode_location(flac)}"
-           Kind="FLAC File" SampleRate="44100"/>
-  </COLLECTION>
-  <PLAYLISTS>
-    <NODE Type="0" Name="ROOT" Count="1">
-      <NODE Name="Crate" Type="1" KeyType="0" Entries="1">
-        <TRACK Key="1"/>
-      </NODE>
-    </NODE>
-  </PLAYLISTS>
-</DJ_PLAYLISTS>
-"""
-                source = _write_xml(base, xml)
-                root, app = self._make_app(source)
-                joins: list[float | None] = []
-                starts = {"n": 0}
-
-                class StickyThread:
-                    def __init__(self, target=None, **_kwargs):
-                        self._target = target
-                        self._alive = True
-
-                    def start(self):
-                        starts["n"] += 1
-                        # Do not run target; stay "alive" until join.
-                        app._preview_probe_thread = self
-
-                    def is_alive(self):
-                        return self._alive
-
-                    def join(self, timeout=None):
-                        joins.append(timeout)
-                        self._alive = False
-
-                tree = app.playlist_tree
-                crate = tree.get_children("")[0]
-                with patch(
-                    "rb_converter_gui.threading.Thread", side_effect=StickyThread
-                ):
-                    tree.selection_set(crate)
-                    tree.event_generate("<<TreeviewSelect>>")
-                    self.assertEqual(starts["n"], 1)
-                    tree.selection_set(crate)
-                    tree.event_generate("<<TreeviewSelect>>")
-                    self.assertEqual(starts["n"], 2)
-                    self.assertEqual(len(joins), 1)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -1099,6 +1048,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 )
 
                 app.track_search_var.set("alpha")
+                _flush_track_search_debounce(app)
                 groups = preview.get_children("")
                 self.assertEqual(len(groups), 1)
                 leaves = list(preview.get_children(groups[0]))
@@ -1108,6 +1058,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 )
 
                 app.track_search_var.set("")
+                _flush_track_search_debounce(app)
                 groups = preview.get_children("")
                 crate_leaves = list(preview.get_children(groups[0]))
                 self.assertEqual(

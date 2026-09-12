@@ -48,6 +48,7 @@ SEARCH_PLACEHOLDER = "Search playlists…"
 TRACK_SEARCH_PLACEHOLDER = "Search tracks…"
 SCANNING_BIT_DEPTH = "Scanning bit depth…"
 APP_LOGO_NAME = "rpc-logo-white.png"
+XML_SEARCH_TIMEOUT_SECONDS = 30.0
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
 BIT_DEPTH_24_TOOLTIP = (
     "This is a maximum, not a target. "
@@ -63,6 +64,7 @@ BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items(
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
 ACTION_BUTTON_WIDTH = 9
 CANCELLED_STATUS_CLEAR_MS = 3000
+SEARCH_DEBOUNCE_MS = 200
 # One probe worker; apply this many depths per UI callback so Tk can paint.
 PREVIEW_BIT_DEPTH_BATCH = 24
 PREVIEW_BIT_DEPTH_YIELD_S = 0.02
@@ -321,6 +323,7 @@ class ConverterApp:
         self._cancelled_clear_id: str | None = None
         self._documents_accessible = False
         self._source_root = None
+        self._collection_indexes_cache: tuple[dict, dict] | None = None
         # (kind, folder, name, track_count, node) for every node in the XML walk
         self._playlist_entries: list[tuple[str, str, str, int, object]] = []
         # iid -> (kind, folder, name) for rows currently in the tree
@@ -337,11 +340,21 @@ class ConverterApp:
         self._browser_sash_set = False
         self._tracklist_sort_column: str | None = None
         self._tracklist_sort_reverse = False
+        self._playlist_search_after_id: str | None = None
+        self._track_search_after_id: str | None = None
 
         self._build()
-        self.search_var.trace_add("write", lambda *_: self._apply_playlist_filter())
+        self.search_var.trace_add(
+            "write",
+            lambda *_: self._debounce(
+                "_playlist_search_after_id", self._apply_playlist_filter
+            ),
+        )
         self.track_search_var.trace_add(
-            "write", lambda *_: self._refresh_tracklist_preview()
+            "write",
+            lambda *_: self._debounce(
+                "_track_search_after_id", self._refresh_tracklist_preview
+            ),
         )
         if not self.search_var.get():
             self._playlist_search.show()
@@ -746,12 +759,23 @@ class ConverterApp:
     def _search_rekordbox_xml(self) -> None:
         if self._busy:
             return
-        hits = find_rekordbox_xml_via_child(Path.home())
-        if len(hits) == 1:
-            self._adopt_source_xml(hits[0])
-            self._persist_output_preferences(include_source_xml=True)
-        elif len(hits) >= 2:
-            self._show_xml_choice_modal(hits)
+
+        def worker() -> None:
+            hits = find_rekordbox_xml_via_child(
+                Path.home(),
+                timeout_seconds=XML_SEARCH_TIMEOUT_SECONDS,
+            )
+
+            def apply() -> None:
+                if len(hits) == 1:
+                    self._adopt_source_xml(hits[0])
+                    self._persist_output_preferences(include_source_xml=True)
+                elif len(hits) >= 2:
+                    self._show_xml_choice_modal(hits)
+
+            self._ui(apply)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _show_usage_guide(self) -> None:
         if self._usage_window is not None and self._usage_window.winfo_exists():
@@ -916,11 +940,23 @@ class ConverterApp:
             self.output_var.set(path)
             self._persist_output_preferences()
 
+    def _debounce(self, attr: str, callback) -> None:
+        prev = getattr(self, attr)
+        if prev is not None:
+            self.root.after_cancel(prev)
+
+        def fire() -> None:
+            setattr(self, attr, None)
+            callback()
+
+        setattr(self, attr, self.root.after(SEARCH_DEBOUNCE_MS, fire))
+
     def _load_playlists(self) -> None:
         self.playlist_tree.delete(*self.playlist_tree.get_children())
         self._playlist_entries = []
         self._playlist_iids = {}
         self._source_root = None
+        self._collection_indexes_cache = None
         # Clear under the same lock used by peek/fill so a probe worker cannot
         # race a load that resets the cache.
         with self._preview_bit_depth_lock:
@@ -941,6 +977,7 @@ class ConverterApp:
             self.status_var.set(str(exc))
             return
         self._source_root = root
+        self._collection_indexes_cache = rb.collection_indexes(root)
         nodes = rb.iter_playlist_nodes(root)
         for kind, folder, name, node in nodes:
             count = rb.playlist_track_count(node) if kind == "playlist" else 0
@@ -1115,7 +1152,9 @@ class ConverterApp:
             self._set_idle_status()
             return
         query = self._track_search.query().casefold()
-        by_id, by_location = rb.collection_indexes(self._source_root)
+        if self._collection_indexes_cache is None:
+            self._collection_indexes_cache = rb.collection_indexes(self._source_root)
+        by_id, by_location = self._collection_indexes_cache
         leaf_iids: list[str] = []
         painted = 0
         paths: list[Path] = []
@@ -1185,10 +1224,7 @@ class ConverterApp:
         if self._tracklist_sort_column is not None:
             self._apply_tracklist_sort()
         if paths:
-            prev = self._preview_probe_thread
-            if prev is not None and prev.is_alive():
-                # Generation already bumped; old worker exits between files.
-                prev.join(timeout=1.0)
+            # Generation already bumped; old worker exits between files.
             self._set_preview_scan_active(True)
             worker = threading.Thread(
                 target=lambda: self._fill_preview_bit_depths(gen, paths),
@@ -1571,8 +1607,7 @@ class ConverterApp:
                     self._ui(self._finish_cancelled)
                     return
                 if errors:
-                    msg = "\n".join(errors)
-                    self._ui(lambda m=msg: self._finish_error(m))
+                    self._ui(lambda e=errors: self._finish_error(e))
                     return
                 assert plan is not None
                 plans.append(plan)
@@ -1597,9 +1632,13 @@ class ConverterApp:
                     )
                 )
 
+            def _finish_cancel_with_errors() -> None:
+                encode_errors = [err for s in all_stats for err in s.errors]
+                self._ui(lambda e=encode_errors: self._finish_cancelled(e or None))
+
             for plan in plans:
                 if self._cancel_event.is_set():
-                    self._ui(self._finish_cancelled)
+                    _finish_cancel_with_errors()
                     return
                 base = done_base
 
@@ -1622,7 +1661,7 @@ class ConverterApp:
                 all_stats.append(stats)
                 done_base += len(plan.unique)
                 if self._cancel_event.is_set():
-                    self._ui(self._finish_cancelled)
+                    _finish_cancel_with_errors()
                     return
                 stats.appended = rb.apply_xml(plan)
                 rb.atomic_write_xml(plan.output_root, plan.output)
@@ -1644,6 +1683,10 @@ class ConverterApp:
                 self._ui(lambda: self._set_progress(0, 0))
             else:
                 self._ui(lambda t=total: self._set_progress(t, t))
+            encode_errors = [err for s in all_stats for err in s.errors]
+            if encode_errors:
+                self._ui(lambda e=encode_errors: self._finish_error(e))
+                return
             open_dir = playlist_dirs[0] if len(playlist_dirs) == 1 else wav_dir
             out = str(output)
             if total_successful_conversions(all_stats) == 0:
@@ -1661,19 +1704,30 @@ class ConverterApp:
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
             self._ui(lambda e=str(exc): self._finish_error(e))
 
-    def _finish_cancelled(self) -> None:
+    def _show_conversion_errors(self, message: str | list[str]) -> None:
+        lines = message if isinstance(message, list) else message.splitlines()
+        self._show_list_dialog(
+            "Conversion failed",
+            "These errors occurred during conversion:",
+            lines,
+            wait=False,
+        )
+
+    def _finish_cancelled(self, errors: str | list[str] | None = None) -> None:
         self._set_busy(False)
         self.status_var.set("Cancelled.")
         self._cancel_cancelled_clear()
         self._cancelled_clear_id = self.root.after(
             CANCELLED_STATUS_CLEAR_MS, self._clear_cancelled_status
         )
+        if errors:
+            self._show_conversion_errors(errors)
 
-    def _finish_error(self, message: str) -> None:
+    def _finish_error(self, message: str | list[str]) -> None:
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Failed.")
-        messagebox.showerror("Conversion failed", message)
+        self._show_conversion_errors(message)
 
     def _finish_no_conversions(
         self,
@@ -1684,7 +1738,7 @@ class ConverterApp:
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Finished with no audio files converted or copied.")
         if warnings:
-            self._show_missing_files_dialog(
+            self._show_list_dialog(
                 "No conversions",
                 "These files were missing and were skipped:",
                 warnings,
@@ -1707,7 +1761,7 @@ class ConverterApp:
             f"Done. Point Rekordbox Imported Library at:\n{output}"
         )
         if warnings:
-            self._show_missing_files_dialog(
+            self._show_list_dialog(
                 "Skipped missing tracks",
                 "These files were missing and were skipped:",
                 warnings,
@@ -1725,13 +1779,14 @@ class ConverterApp:
         )
         self._show_done_dialog(message, open_dir)
 
-    def _show_missing_files_dialog(
+    def _show_list_dialog(
         self,
         title: str,
         intro: str,
-        warnings: list[str],
+        lines: list[str],
         *,
         summary: str | None = None,
+        wait: bool = True,
     ) -> None:
         dlg = tk.Toplevel(self.root)
         dlg.title(title)
@@ -1763,7 +1818,7 @@ class ConverterApp:
         list_frame.columnconfigure(0, weight=1)
         list_frame.rowconfigure(0, weight=1)
         listbox = tk.Listbox(
-            list_frame, height=min(12, max(4, len(warnings))), width=72
+            list_frame, height=min(12, max(4, len(lines))), width=72
         )
         scroll = ttk.Scrollbar(
             list_frame, orient=tk.VERTICAL, command=listbox.yview
@@ -1771,7 +1826,7 @@ class ConverterApp:
         listbox.configure(yscrollcommand=scroll.set)
         listbox.grid(row=0, column=0, sticky="nsew")
         scroll.grid(row=0, column=1, sticky="ns")
-        for line in warnings:
+        for line in lines:
             listbox.insert(tk.END, line)
 
         btns = ttk.Frame(frm)
@@ -1785,7 +1840,8 @@ class ConverterApp:
         dlg.bind("<Escape>", lambda _e: close())
         dlg.protocol("WM_DELETE_WINDOW", close)
         self._place_dialog_over_app(dlg)
-        dlg.wait_window()
+        if wait:
+            dlg.wait_window()
 
     def _show_done_dialog(self, message: str, open_dir: Path | None) -> None:
         dlg = tk.Toplevel(self.root)

@@ -943,6 +943,21 @@ class GuiXmlRefreshTests(unittest.TestCase):
 
 
 class GuiFileMenuXmlSearchTests(unittest.TestCase):
+    @staticmethod
+    def _run_inline_thread(target=None, daemon=None, **_kwargs):
+        class _T:
+            def start(self_inner):
+                if target is not None:
+                    target()
+
+            def is_alive(self_inner):
+                return False
+
+            def join(self_inner, timeout=None):
+                return None
+
+        return _T()
+
     def test_file_menu_search_shows_choice_modal_when_xml_already_loaded(self) -> None:
         if not _tk_available():
             self.skipTest("_tkinter not available")
@@ -963,6 +978,9 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
             ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
                 "rb_converter_gui.find_rekordbox_xml_via_child",
                 return_value=hits,
+            ), patch(
+                "rb_converter_gui.threading.Thread",
+                side_effect=self._run_inline_thread,
             ), patch.object(ConverterApp, "_load_playlists"), patch.object(
                 tk.Toplevel, "wait_window"
             ):
@@ -973,6 +991,7 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
                 self.assertTrue(
                     self._invoke_menu(root, "File", "Search for Rekordbox XML…")
                 )
+                root.update()
                 dlg = None
                 for child in root.winfo_children():
                     if isinstance(child, tk.Toplevel):
@@ -1007,6 +1026,9 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
             ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
                 "rb_converter_gui.find_rekordbox_xml_via_child",
                 return_value=[found],
+            ) as find_xml, patch(
+                "rb_converter_gui.threading.Thread",
+                side_effect=self._run_inline_thread,
             ), patch.object(ConverterApp, "_load_playlists"), patch(
                 "rb_converter_gui.save_preferences"
             ) as save_prefs:
@@ -1017,7 +1039,11 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
                 self.assertTrue(
                     self._invoke_menu(root, "File", "Search for Rekordbox XML…")
                 )
+                root.update()
                 self.assertEqual(Path(app.xml_var.get()), found)
+                self.assertGreater(
+                    find_xml.call_args.kwargs.get("timeout_seconds") or 0, 0
+                )
                 self.assertEqual(
                     save_prefs.call_args.kwargs.get("source_xml"), found
                 )

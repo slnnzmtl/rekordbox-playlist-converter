@@ -154,6 +154,8 @@ def apply_xml(plan: Plan) -> int:
     dest_to_id: dict[str, str] = {}
 
     for item in plan.unique:
+        if not item.dest_path.exists():
+            continue
         existing = by_location.get(item.dest_location)
         if existing is not None:
             refresh_track(
@@ -174,6 +176,8 @@ def apply_xml(plan: Plan) -> int:
         present = set(playlist_keys(wav_node))
         seen_this_run: set[str] = set()
         for item in plan.tracks:
+            if item.dest_location not in dest_to_id:
+                continue
             tid = dest_to_id[item.dest_location]
             if tid in present or tid in seen_this_run:
                 continue
@@ -183,6 +187,8 @@ def apply_xml(plan: Plan) -> int:
             appended += 1
     else:
         for item in plan.tracks:
+            if item.dest_location not in dest_to_id:
+                continue
             tid = dest_to_id[item.dest_location]
             ET.SubElement(wav_node, "TRACK", {"Key": tid})
             appended += 1
