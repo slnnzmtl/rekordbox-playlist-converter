@@ -2,6 +2,9 @@
 
 ## 2.0.0
 
+- Unique-track conversion runs up to **4 encodes in parallel** (capped at 5). Progress counts completed tracks; Cancel stops in-flight encodes (completed files kept; interrupted playlist is not written to Import XML).
+- Track failures no longer abort the rest of the run: convertible tracks finish, then all errors are reported together.
+- Skip the post-ffmpeg WAV rewrite when output is already CDJ-safe (e.g. 16-bit PCM); skip the redundant AIFF re-normalize after a successful ffmpeg stage.
 - While tracklist bit depth headers are read, `Scanning bit depth…` appears beside the idle unique-tracks status line.
 - Tracklist lists only convertible lossless formats (by file extension); missing collection rows stay visible. Column headers are left-aligned and clickable to sort by Track, Format, Bit depth, or Sample rate within each playlist group. Playlist / tracklist panes default to a 30% / 70% split.
 - App display name is **Simple Rekordbox Converter** (window title, macOS .app bundle, docs).
@@ -10,7 +13,7 @@
 - Success and other app dialogs open centered over the main window.
 - Playlist search and track search sit over each pane (follow the splitter). Track search filters the currently listed preview by artist/title/filename; Convert still uses the selected visible tracks.
 - Convert uses the tracklist preview selection: listed tracks start selected; hold ⌃ to refine a subset across playlists. Import XML and audio output include only those tracks.
-- Convert sits beside the progress bar; Cancel replaces it while a run is in progress. Cancel stops after the current track (completed files kept; interrupted playlist is not written to Import XML). “Cancelled.” clears after 3 seconds and resets the progress bar.
+- Convert sits beside the progress bar; Cancel replaces it while a run is in progress. Cancel stops in-flight encodes (up to 4; completed files kept; interrupted playlist is not written to Import XML). “Cancelled.” clears after 3 seconds and resets the progress bar.
 - GUI shows a tracklist table beside the playlist tree (Track, Format, Bit depth, Sample rate). Format and rate come from the Rekordbox XML; bit depth is read from FLAC, ALAC-in-M4A, WAV, or AIFF headers when the file is present, otherwise —. The unique-track selection summary appears on the bottom status line when idle.
 - Main window opens centered on the display under the pointer instead of straddling dual-monitor layouts.
 - Missing skipped tracks open in a scrollable list dialog instead of a flat warning alert.

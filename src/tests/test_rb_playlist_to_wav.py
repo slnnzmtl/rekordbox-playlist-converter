@@ -301,6 +301,242 @@ class XmlFixtureTests(unittest.TestCase):
         for item in plan.unique:
             self.assertFalse(item.dest_path.exists())
 
+    def test_convert_unique_progress_is_completed_count(self) -> None:
+        """Progress current is completed items and never exceeds total."""
+        import threading
+        import time
+
+        progress_calls: list[tuple[int, int, str, str]] = []
+        lock = threading.Lock()
+
+        def on_progress(current: int, total: int, action: str, name: str) -> None:
+            with lock:
+                progress_calls.append((current, total, action, name))
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            time.sleep(0.02)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+            self.assertEqual(errors, [])
+            assert plan is not None
+            total = len(plan.unique)
+            stats = rb.convert_unique(
+                plan, force=False, progress=False, on_progress=on_progress
+            )
+
+        self.assertEqual(stats.converted, total)
+        self.assertEqual(len(progress_calls), total)
+        currents = [c[0] for c in progress_calls]
+        self.assertEqual(sorted(currents), list(range(1, total + 1)))
+        self.assertTrue(all(c[1] == total for c in progress_calls))
+        self.assertLessEqual(max(currents), total)
+
+    def test_convert_unique_cancel_keeps_completed_and_does_not_raise(self) -> None:
+        """Cancel mid-run returns stats without raising; completed dest kept."""
+        import threading
+
+        cancel = threading.Event()
+        first_done = threading.Event()
+        n = {"i": 0}
+        lock = threading.Lock()
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            with lock:
+                n["i"] += 1
+                idx = n["i"]
+            if idx == 1:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(b"RIFF")
+                first_done.set()
+                return
+            if cancel.wait(timeout=5):
+                raise rb.CancelledError(f"conversion cancelled for {source}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert_plan, "CONVERT_WORKERS", 1):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+            self.assertEqual(errors, [])
+            assert plan is not None
+
+            def run() -> convert_plan.ConvertStats:
+                return rb.convert_unique(
+                    plan, force=False, progress=False, cancel_event=cancel
+                )
+
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                fut = pool.submit(run)
+                self.assertTrue(first_done.wait(timeout=5))
+                cancel.set()
+                stats = fut.result(timeout=10)
+
+        self.assertEqual(stats.converted, 1)
+        self.assertTrue(plan.unique[0].dest_path.exists())
+        self.assertFalse(plan.unique[-1].dest_path.exists())
+
+    def test_convert_unique_overlaps_at_least_two_encodes(self) -> None:
+        """At least two run_ffmpeg calls must be in flight at once."""
+        import threading
+
+        started = threading.Barrier(2, timeout=5)
+        in_flight = 0
+        peak = 0
+        lock = threading.Lock()
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            nonlocal in_flight, peak
+            with lock:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            try:
+                started.wait()
+            except threading.BrokenBarrierError:
+                pass
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+            with lock:
+                in_flight -= 1
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+            self.assertEqual(errors, [])
+            assert plan is not None
+            self.assertGreaterEqual(len(plan.unique), 2)
+            stats = rb.convert_unique(plan, force=False, progress=False)
+
+        self.assertGreaterEqual(peak, 2)
+        self.assertEqual(stats.converted, len(plan.unique))
+
+    def test_convert_unique_never_exceeds_worker_cap(self) -> None:
+        """In-flight encodes stay at or under CONVERT_WORKERS."""
+        import threading
+        import time
+
+        in_flight = 0
+        peak = 0
+        lock = threading.Lock()
+        workers = 2
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            nonlocal in_flight, peak
+            with lock:
+                in_flight += 1
+                peak = max(peak, in_flight)
+            time.sleep(0.05)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+            with lock:
+                in_flight -= 1
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert_plan, "CONVERT_WORKERS", workers):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+            self.assertEqual(errors, [])
+            assert plan is not None
+            stats = rb.convert_unique(plan, force=False, progress=False)
+
+        self.assertLessEqual(peak, workers)
+        self.assertEqual(stats.converted, len(plan.unique))
+
+    def test_convert_unique_continues_after_encode_error_and_raises_all(self) -> None:
+        """One encode failure: other tracks still convert; CliError lists errors."""
+        call_n = {"n": 0}
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            call_n["n"] += 1
+            if call_n["n"] == 2:
+                raise rb.CliError(f"boom for {source.name}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+            self.assertEqual(errors, [])
+            assert plan is not None
+            self.assertEqual(len(plan.unique), 3)
+            with self.assertRaises(rb.CliError) as ctx:
+                rb.convert_unique(plan, force=False, progress=False)
+
+        self.assertEqual(plan.unique[0].dest_path.exists(), True)
+        self.assertEqual(plan.unique[1].dest_path.exists(), False)
+        self.assertEqual(plan.unique[2].dest_path.exists(), True)
+        self.assertIn("boom for", str(ctx.exception))
+        self.assertIn(plan.unique[1].source_path.name, str(ctx.exception))
+
+    def test_convert_unique_collects_oserror_from_copy_path(self) -> None:
+        """Non-CliError failures (e.g. copy OSError) are collected too."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "safe.wav"
+            src.write_bytes(b"RIFF")
+            dest = root / "out.wav"
+            el = ET.Element("TRACK", {"Name": "Song"})
+            item = rb.PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=rb.encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                copy_wav=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+            )
+            plan = rb.Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                wav_dir=root,
+                playlist_dir=root,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+            )
+            with patch.object(
+                convert_plan.shutil, "copy2", side_effect=OSError("disk full")
+            ), patch.object(convert_plan, "is_cdj_safe_wav", return_value=False):
+                with self.assertRaises(rb.CliError) as ctx:
+                    rb.convert_unique(plan, force=False, progress=False)
+            self.assertIn("disk full", str(ctx.exception))
+            self.assertFalse(dest.exists())
+
     def test_run_ffmpeg_kills_process_when_cancel_event_set(self) -> None:
         import threading
 

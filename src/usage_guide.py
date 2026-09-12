@@ -58,9 +58,10 @@ export.
    These are maxima, not targets: 16-bit tracks stay 16-bit; 44.1 kHz tracks
    stay 44.1 kHz. Defaults are 24Bit / 48KHz.
 6. Click Convert (beside the progress bar). While converting, Cancel replaces
-   Convert in that spot. Cancel stops after the current track; files already
-   written are kept (re-run Convert to finish). Import XML is not updated for
-   the interrupted playlist.
+   Convert in that spot. Cancel stops in-flight encodes (up to 4 at once);
+   files already written are kept (re-run Convert to finish). Import XML is
+   not updated for the interrupted playlist. If some tracks fail, convertible
+   tracks still finish and all errors are reported together.
 
 What you get:
 • Audio files in <output folder>/<playlist name>/
