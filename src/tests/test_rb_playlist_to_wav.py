@@ -319,6 +319,60 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertTrue(plan.unique[0].dest_path.exists())
         self.assertFalse(plan.unique[-1].dest_path.exists())
 
+    def test_convert_unique_preserves_errors_when_cancelled_after_failure(
+        self,
+    ) -> None:
+        """Given one encode failure then cancel: When convert_unique returns:
+        Then stats.errors still lists the boom (not dropped by early cancel return)."""
+        import concurrent.futures
+        import threading
+
+        cancel = threading.Event()
+        first_failed = threading.Event()
+        n = {"i": 0}
+        lock = threading.Lock()
+        boom = "boom for first track"
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            with lock:
+                n["i"] += 1
+                idx = n["i"]
+            if idx == 1:
+                first_failed.set()
+                raise rb.CliError(boom)
+            if cancel.wait(timeout=5):
+                raise rb.CancelledError(f"conversion cancelled for {source}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert_plan, "CONVERT_WORKERS", 1):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+            self.assertEqual(errors, [])
+            assert plan is not None
+
+            def run() -> convert_plan.ConvertStats:
+                return rb.convert_unique(
+                    plan, force=False, progress=False, cancel_event=cancel
+                )
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                fut = pool.submit(run)
+                self.assertTrue(first_failed.wait(timeout=5))
+                cancel.set()
+                stats = fut.result(timeout=10)
+
+        self.assertTrue(stats.errors)
+        joined = "\n".join(stats.errors)
+        self.assertIn("boom", joined)
+
     def test_convert_unique_progress_is_completed_count(self) -> None:
         """Progress current is completed items (1..total), not loop index."""
         import threading
@@ -354,13 +408,15 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(stats.converted, total)
         self.assertEqual(sorted(c for c, _t in progress_calls), list(range(1, total + 1)))
 
-    def test_convert_unique_continues_after_encode_error_and_raises_all(self) -> None:
-        """One encode failure: other tracks still convert; CliError lists errors."""
-        call_n = {"n": 0}
+    def test_convert_unique_continues_after_encode_error_and_returns_errors(
+        self,
+    ) -> None:
+        """Given one encode failure: When convert_unique runs: Then successes
+        convert, failed dest is absent, and stats.errors lists the boom (no raise)."""
+        fail_name = "Revelation.flac"
 
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
-            call_n["n"] += 1
-            if call_n["n"] == 2:
+            if source.name == fail_name:
                 raise rb.CliError(f"boom for {source.name}")
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
@@ -376,14 +432,62 @@ class XmlFixtureTests(unittest.TestCase):
             self.assertEqual(errors, [])
             assert plan is not None
             self.assertEqual(len(plan.unique), 3)
-            with self.assertRaises(rb.CliError) as ctx:
-                rb.convert_unique(plan, force=False, progress=False)
+            stats = rb.convert_unique(plan, force=False, progress=False)
 
-        self.assertEqual(plan.unique[0].dest_path.exists(), True)
-        self.assertEqual(plan.unique[1].dest_path.exists(), False)
-        self.assertEqual(plan.unique[2].dest_path.exists(), True)
-        self.assertIn("boom for", str(ctx.exception))
-        self.assertIn(plan.unique[1].source_path.name, str(ctx.exception))
+        self.assertEqual(stats.converted, 2)
+        self.assertTrue(plan.unique[0].dest_path.exists())
+        self.assertFalse(plan.unique[1].dest_path.exists())
+        self.assertTrue(plan.unique[2].dest_path.exists())
+        self.assertTrue(stats.errors)
+        joined = "\n".join(stats.errors)
+        self.assertIn("boom for", joined)
+        self.assertIn(plan.unique[1].source_path.name, joined)
+
+    def test_partial_encode_main_writes_success_xml_and_exits_nonzero(
+        self,
+    ) -> None:
+        """Given one encode failure among three: When main converts: Then exit
+        is nonzero and import XML includes only tracks whose dest files exist."""
+        fail_name = "Revelation.flac"
+        failed_dest: list[Path] = []
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            if source.name == fail_name:
+                failed_dest.append(dest)
+                raise rb.CliError(f"boom for {source.name}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+
+        self.assertNotEqual(rc, 0)
+        self.assertTrue(self.output.is_file())
+        self.assertTrue(failed_dest)
+        self.assertFalse(failed_dest[0].exists())
+        out = ET.parse(self.output).getroot()
+        tracks = out.findall("COLLECTION/TRACK")
+        self.assertEqual(len(tracks), 2)
+        locations = [t.get("Location", "") for t in tracks]
+        self.assertNotIn(rb.encode_location(failed_dest[0]), locations)
+        pl = rb.find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
+        self.assertEqual(len(pl), 1)
+        self.assertEqual(len(pl[0].findall("TRACK")), 2)
 
     def test_run_ffmpeg_kills_process_when_cancel_event_set(self) -> None:
         import threading
@@ -391,6 +495,7 @@ class XmlFixtureTests(unittest.TestCase):
         cancel = threading.Event()
         cancel.set()
         killed: list[bool] = []
+        communicated: list[bool] = []
 
         class FakeProc:
             def __init__(self, *_a: object, **_k: object) -> None:
@@ -407,6 +512,7 @@ class XmlFixtureTests(unittest.TestCase):
                 return self.returncode if self.returncode is not None else -9
 
             def communicate(self) -> tuple[str, str]:
+                communicated.append(True)
                 return "", ""
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -426,7 +532,43 @@ class XmlFixtureTests(unittest.TestCase):
                         src, dest, "pcm_s16le", force=True, cancel_event=cancel
                     )
             self.assertTrue(killed)
+            self.assertTrue(communicated)
             self.assertFalse(dest.exists())
+
+    def test_run_ffmpeg_command_suppresses_progress_stats(self) -> None:
+        captured: list[list[str]] = []
+
+        class FakeProc:
+            def __init__(self, cmd: list[str], *_a: object, **_k: object) -> None:
+                captured.append(list(cmd))
+                self.returncode = 0
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def communicate(self) -> tuple[str, str]:
+                return "", ""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "src.flac"
+            dest = Path(tmp) / "out.wav"
+            src.write_bytes(b"flac")
+            with patch.object(
+                ffmpeg_tools, "tool_path", return_value="/bin/ffmpeg"
+            ), patch.object(
+                ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
+            ), patch.object(
+                convert_plan.subprocess, "Popen", FakeProc
+            ), patch.object(convert_plan, "is_cdj_safe_wav", return_value=True):
+                convert_plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
+
+        self.assertEqual(len(captured), 1)
+        cmd = captured[0]
+        dest_idx = cmd.index(str(dest))
+        before_out = cmd[:dest_idx]
+        self.assertIn("-nostats", before_out)
+        self.assertIn("-loglevel", before_out)
+        self.assertEqual(before_out[before_out.index("-loglevel") + 1], "error")
 
     def test_prepare_stops_probing_when_cancel_event_set(self) -> None:
         import threading
@@ -441,7 +583,7 @@ class XmlFixtureTests(unittest.TestCase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe_and_cancel
-        ):
+        ), patch.object(convert_plan, "CONVERT_WORKERS", 1):
             plan, errors = rb.prepare(
                 self.xml_path,
                 "Untitled Intelligent List",
@@ -452,6 +594,99 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(len(probed), 1)
         self.assertIsNone(plan)
         self.assertEqual(errors, [])
+
+    def test_prepare_probes_unique_tracks_concurrently(self) -> None:
+        """Given CONVERT_WORKERS>1: When prepare probes unique tracks:
+        Then at least two run_ffprobe calls overlap (barrier of 2 completes)."""
+        import threading
+
+        barrier = threading.Barrier(2)
+        lock = threading.Lock()
+        barrier_slots = 0
+        overlapped = threading.Event()
+
+        def probe_with_overlap(path: Path) -> dict:
+            nonlocal barrier_slots
+            join = False
+            with lock:
+                if barrier_slots < 2:
+                    barrier_slots += 1
+                    join = True
+            if join:
+                try:
+                    barrier.wait(timeout=1.0)
+                    overlapped.set()
+                except threading.BrokenBarrierError:
+                    pass
+            return self._probe(path)
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=probe_with_overlap
+        ), patch.object(convert_plan, "CONVERT_WORKERS", 2):
+            plan, errors = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(len(plan.unique), 3)
+        self.assertTrue(
+            overlapped.is_set(),
+            "expected at least two run_ffprobe calls to overlap under CONVERT_WORKERS>1",
+        )
+
+    def test_prepare_preserves_unique_order_after_parallel_probe(self) -> None:
+        """Given distinct probe results per source: When prepare runs with
+        CONVERT_WORKERS>1: Then plan.unique bit_depth/sample_rate/codec stay in
+        playlist order (not completion order)."""
+
+        def probe_by_source(path: Path) -> dict:
+            if path.name == "07 - Bestial.flac":
+                return flac_probe(16)
+            if path.name == "Revelation.flac":
+                return flac_probe(24)
+            if path.name == "Movement.flac":
+                return {
+                    "format": {"format_name": "flac"},
+                    "streams": [
+                        {
+                            "codec_name": "flac",
+                            "sample_fmt": "s32",
+                            "sample_rate": "96000",
+                            "channels": 2,
+                            "bits_per_raw_sample": "24",
+                        }
+                    ],
+                }
+            return self._probe(path)
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=probe_by_source
+        ), patch.object(convert_plan, "CONVERT_WORKERS", 3):
+            plan, errors = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+                max_bit_depth=24,
+                max_sample_rate=48000,
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(
+            [t.source_path.name for t in plan.unique],
+            ["07 - Bestial.flac", "Revelation.flac", "Movement.flac"],
+        )
+        self.assertEqual(
+            [(t.bit_depth, t.sample_rate, t.codec) for t in plan.unique],
+            [
+                (16, 44100, "pcm_s16le"),
+                (24, 44100, "pcm_s24le"),
+                (24, 48000, "pcm_s24le"),
+            ],
+        )
 
     def test_prepare_reports_progress_while_probing(self) -> None:
         progress_calls: list[tuple[int, int, str, str]] = []
@@ -533,6 +768,9 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertTrue(any("invalid Rekordbox file URL" in e for e in errors))
 
     def test_collisions_case_and_nfd(self) -> None:
+        """Given case and NFD dest twins with different sources: When prepare
+        runs: Then collisions are warnings (not errors), unique keeps first
+        row per collision_key, and later sources are skipped."""
         intro = self.music / "one" / "Intro.flac"
         intro2 = self.music / "two" / "intro.flac"
         cafe_nfc = self.music / "n1" / (unicodedata.normalize("NFC", "café") + ".flac")
@@ -563,11 +801,82 @@ class XmlFixtureTests(unittest.TestCase):
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
-            _, errors = rb.prepare(path, "Clash", self.wav_dir, self.output)
-        joined = "\n".join(errors)
-        self.assertIn("Filename collision", joined)
-        self.assertIn("Intro.wav", joined)
-        self.assertTrue("café.wav" in joined or "cafe" in joined.casefold())
+            plan, errors = rb.prepare(path, "Clash", self.wav_dir, self.output)
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertEqual(len(plan.unique), 2)
+        warn_text = "\n".join(plan.warnings)
+        self.assertTrue(
+            any("collision" in w.casefold() for w in plan.warnings),
+            f"expected collision warning(s), got: {plan.warnings!r}",
+        )
+        self.assertIn(str(intro2), warn_text)
+        self.assertTrue(
+            any("n2" in w for w in plan.warnings),
+            f"expected skipped café twin under n2, got: {plan.warnings!r}",
+        )
+        kept_intro = next(
+            u for u in plan.unique if "intro" in u.dest_name.casefold()
+        )
+        self.assertEqual(kept_intro.source_path, intro)
+
+    def test_convert_succeeds_when_filename_collision_skipped_with_warning(
+        self,
+    ) -> None:
+        """Given a collision pair plus one clean track: When main converts:
+        Then exit is 0 and warnings mention the skipped collision path."""
+        intro = self.music / "one" / "Intro.flac"
+        intro2 = self.music / "two" / "intro.flac"
+        clean = self.music / "clean" / "Clean Track.flac"
+        for p in (intro, intro2, clean):
+            write_flac(p)
+        xml = f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="3">
+    <TRACK TrackID="1" Name="a" Location="{rb.encode_location(intro)}" Kind="FLAC File"/>
+    <TRACK TrackID="2" Name="b" Location="{rb.encode_location(intro2)}" Kind="FLAC File"/>
+    <TRACK TrackID="3" Name="c" Location="{rb.encode_location(clean)}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="ClashConvert" Type="1" KeyType="0" Entries="3">
+        <TRACK Key="1"/><TRACK Key="2"/><TRACK Key="3"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        path = self.root / "clash-convert.xml"
+        path.write_text(xml, encoding="utf-8")
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        stderr = io.StringIO()
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(sys, "stderr", stderr):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(path),
+                    "--playlist",
+                    "ClashConvert",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        err = stderr.getvalue()
+        self.assertIn("collision", err.casefold())
+        self.assertIn(str(intro2), err)
 
     def test_unknown_fields_preserved_and_ids_start_at_1(self) -> None:
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
@@ -1063,6 +1372,8 @@ class SubprocessTimeoutTests(unittest.TestCase):
         self.assertIn(str(path), str(ctx.exception))
 
     def test_run_ffmpeg_maps_timeout_to_cli_error(self) -> None:
+        communicated: list[bool] = []
+
         class FakeProc:
             def __init__(self, *_a: object, **_k: object) -> None:
                 self.returncode: int | None = None
@@ -1077,6 +1388,7 @@ class SubprocessTimeoutTests(unittest.TestCase):
                 return -9
 
             def communicate(self) -> tuple[str, str]:
+                communicated.append(True)
                 return "", ""
 
         src = Path("/tmp/src.flac")
@@ -1094,6 +1406,7 @@ class SubprocessTimeoutTests(unittest.TestCase):
                 convert_plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
         self.assertIn("timed out", str(ctx.exception).lower())
         self.assertIn(str(src), str(ctx.exception))
+        self.assertTrue(communicated)
 
     def test_extract_cover_jpeg_returns_none_on_timeout(self) -> None:
         import subprocess

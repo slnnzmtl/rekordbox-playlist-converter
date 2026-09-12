@@ -3,7 +3,11 @@
 ## 2.0.0
 
 - Unique-track conversion runs up to **4 encodes in parallel** (capped at 5). Progress counts completed tracks; Cancel stops in-flight encodes (completed files kept; interrupted playlist is not written to Import XML).
-- Track failures no longer abort the rest of the run: convertible tracks finish, then all errors are reported together.
+- Track failures no longer abort the rest of the run: convertible tracks finish, Import XML is written for successes, remaining playlists continue, then all errors are reported together. Cancel after a failure still surfaces those encode errors.
+- Filename collisions (same dest name from different sources) no longer abort: the first playlist entry is converted; later duplicates are skipped with a warning.
+- Conversion failure and cancel-with-errors dialogs use the same scrollable list view as skipped missing tracks (not a flat alert).
+- Prepare (ffprobe) runs in parallel with the same worker cap; File → Search for Rekordbox XML runs off the UI thread with a timeout; tracklist search is debounced and collection indexes are cached for the loaded XML.
+- ffmpeg encodes use `-nostats -loglevel error` and drain pipes on cancel/timeout so long parallel encodes cannot wedge on a full stderr pipe.
 - Skip the post-ffmpeg WAV rewrite when output is already CDJ-safe (e.g. 16-bit PCM); skip the redundant AIFF re-normalize after a successful ffmpeg stage.
 - While tracklist bit depth headers are read, `Scanning bit depth…` appears beside the idle unique-tracks status line.
 - Tracklist lists only convertible lossless formats (by file extension); missing collection rows stay visible. Column headers are left-aligned and clickable to sort by Track, Format, Bit depth, or Sample rate within each playlist group. Playlist / tracklist panes default to a 30% / 70% split.

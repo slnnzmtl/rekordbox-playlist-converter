@@ -11,7 +11,6 @@ import threading
 import time
 import unicodedata
 import xml.etree.ElementTree as ET
-from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -136,17 +135,13 @@ def cached_cover_jpeg(
     source: Path,
     cache: dict[Path, bytes | None],
     *,
-    locks: dict[Path, threading.Lock] | None = None,
-    locks_guard: threading.Lock | None = None,
+    lock: threading.Lock | None = None,
 ) -> bytes | None:
     """Extract cover once per source path for the duration of a convert run."""
-    if locks is None:
+    if lock is None:
         if source not in cache:
             cache[source] = extract_cover_jpeg(source)
         return cache[source]
-    assert locks_guard is not None
-    with locks_guard:
-        lock = locks.setdefault(source, threading.Lock())
     with lock:
         if source not in cache:
             cache[source] = extract_cover_jpeg(source)
@@ -173,19 +168,9 @@ def convert_unique(
     plan.playlist_dir.mkdir(parents=True, exist_ok=True)
     items = plan.unique
     bar = Progress(len(items), progress, on_progress=on_progress)
-    error_slots: list[str | None] = [None] * len(items)
     completed = 0
     stats_lock = threading.Lock()
-    cover_locks: dict[Path, threading.Lock] = {}
-    cover_locks_guard = threading.Lock()
-
-    def cover_for(source: Path) -> bytes | None:
-        return cached_cover_jpeg(
-            source,
-            plan.cover_cache,
-            locks=cover_locks,
-            locks_guard=cover_locks_guard,
-        )
+    cover_lock = threading.Lock()
 
     def finish(action: str, name: str) -> None:
         nonlocal completed
@@ -193,7 +178,7 @@ def convert_unique(
             completed += 1
             bar.update(completed, action, name)
 
-    def process_one(index: int, item: PlannedTrack) -> None:
+    def process_one(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
             return
         name = item.dest_name
@@ -205,7 +190,9 @@ def convert_unique(
             return
         try:
             if is_aiff:
-                cover = cover_for(item.source_path)
+                cover = cached_cover_jpeg(
+                    item.source_path, plan.cover_cache, lock=cover_lock
+                )
                 if not force and _is_canonical_aiff_output(
                     item.dest_path,
                     item.source_el,
@@ -228,8 +215,7 @@ def convert_unique(
                     sample_rate=item.sample_rate,
                     cover_cache=plan.cover_cache,
                     cancel_event=cancel_event,
-                    cover_locks=cover_locks,
-                    cover_locks_guard=cover_locks_guard,
+                    cover_lock=cover_lock,
                 )
                 with stats_lock:
                     if item.copy_wav:
@@ -275,7 +261,7 @@ def convert_unique(
             return
         except Exception as exc:  # noqa: BLE001 — collect all; report after pool
             with stats_lock:
-                error_slots[index] = str(exc)
+                stats.errors.append(str(exc))
             try:
                 item.dest_path.unlink(missing_ok=True)
             except OSError:
@@ -287,18 +273,11 @@ def convert_unique(
             return stats
         workers = convert_worker_count(len(items))
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [
-                pool.submit(process_one, i, item) for i, item in enumerate(items)
-            ]
+            futures = [pool.submit(process_one, item) for item in items]
             for fut in as_completed(futures):
                 fut.result()
     finally:
         bar.close()
-    if cancel_event is not None and cancel_event.is_set():
-        return stats
-    stats.errors = [msg for msg in error_slots if msg is not None]
-    if stats.errors:
-        raise CliError("\n".join(stats.errors))
     return stats
 
 
@@ -525,46 +504,56 @@ def build_plan(
             )
         )
 
-    groups: dict[str, list[PlannedTrack]] = defaultdict(list)
-    for item in planned:
-        key = collision_key(item.dest_name)
-        groups[key].append(item)
-
-    for key, items in groups.items():
-        unique_sources: dict[str, Path] = {}
-        for item in items:
-            unique_sources[str(item.source_path)] = item.source_path
-        if len(unique_sources) > 1:
-            lines = [f"Filename collision: {items[0].dest_name}"]
-            for path in unique_sources.values():
-                lines.append(f"  {path}")
-            errors.append("\n".join(lines))
-
     unique: list[PlannedTrack] = []
     unique_dest: dict[str, PlannedTrack] = {}
     for item in planned:
-        dest_key = str(item.dest_path)
+        dest_key = collision_key(item.dest_name)
         if dest_key in unique_dest:
+            kept = unique_dest[dest_key]
+            if item.source_path != kept.source_path:
+                warnings.append(
+                    f"skipped filename collision: {item.source_path} → {kept.dest_name}"
+                )
             continue
         unique_dest[dest_key] = item
         unique.append(item)
 
     total = len(unique)
     cover_cache: dict[Path, bytes | None] = {}
-    for i, item in enumerate(unique, 1):
+    cover_lock = threading.Lock()
+    state_lock = threading.Lock()
+    completed = 0
+
+    def _record_error(message: str) -> None:
+        with state_lock:
+            errors.append(message)
+
+    def _finish_progress(item: PlannedTrack) -> None:
+        nonlocal completed
+        if on_progress is None:
+            return
+        with state_lock:
+            completed += 1
+            on_progress(completed, total, "prepare", item.dest_name)
+
+    def probe_one(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
-            return None, []
-        if on_progress is not None:
-            on_progress(i, total, "prepare", item.dest_name)
+            return
         try:
             probe = ffmpeg_tools.run_ffprobe(item.source_path)
         except CliError as exc:
-            errors.append(str(exc))
-            continue
+            _record_error(str(exc))
+            _finish_progress(item)
+            return
+        if cancel_event is not None and cancel_event.is_set():
+            return
         stream = ffmpeg_tools.first_stream(probe)
         if stream is None:
-            errors.append(f"unsupported format: {item.source_path} (no audio stream)")
-            continue
+            _record_error(
+                f"unsupported format: {item.source_path} (no audio stream)"
+            )
+            _finish_progress(item)
+            return
         try:
             codec, is_copy, bits, rate = classify_source(
                 item.source_path,
@@ -574,8 +563,9 @@ def build_plan(
                 max_sample_rate=max_sample_rate,
             )
         except CliError as exc:
-            errors.append(str(exc))
-            continue
+            _record_error(str(exc))
+            _finish_progress(item)
+            return
         item.copy_wav = is_copy
         item.codec = None if is_copy else codec
         item.bit_depth = bits
@@ -583,7 +573,9 @@ def build_plan(
         in_place = same_file(item.source_path, item.dest_path)
         if output_format == "aiff":
             if in_place:
-                cover = cached_cover_jpeg(item.source_path, cover_cache)
+                cover = cached_cover_jpeg(
+                    item.source_path, cover_cache, lock=cover_lock
+                )
                 if _is_canonical_aiff_output(
                     item.dest_path,
                     item.source_el,
@@ -593,19 +585,32 @@ def build_plan(
                 ):
                     item.noop = True
                 else:
-                    errors.append(
+                    _record_error(
                         "refusing to convert in place "
-                        f"(source is not a canonical AIFF output): {item.source_path}"
+                        f"(source is not a canonical AIFF output): "
+                        f"{item.source_path}"
                     )
             else:
                 item.noop = False
         else:
             item.noop = is_copy and in_place
             if (not is_copy) and in_place:
-                errors.append(
+                _record_error(
                     "refusing to convert in place "
                     f"(source is not CDJ-safe WAV): {item.source_path}"
                 )
+        _finish_progress(item)
+
+    if unique:
+        workers = convert_worker_count(len(unique))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(probe_one, item) for item in unique]
+            for fut in as_completed(futures):
+                fut.result()
+                if cancel_event is not None and cancel_event.is_set():
+                    break
+        if cancel_event is not None and cancel_event.is_set():
+            return None, []
 
     suffix = AIFF_SUFFIX if output_format == "aiff" else WAV_SUFFIX
     wav_playlist_name = f"{playlist_name}{suffix}"
@@ -629,6 +634,14 @@ def build_plan(
     if errors:
         return plan, errors
     return plan, []
+
+
+def _kill_ffmpeg_drain(proc: subprocess.Popen) -> None:
+    try:
+        proc.kill()
+        proc.wait()
+    finally:
+        proc.communicate()
 
 
 def run_ffmpeg(
@@ -690,6 +703,9 @@ def run_ffmpeg(
             str(CDJ_SAFE_CHANNELS),
             "-c:a",
             audio_codec,
+            "-nostats",
+            "-loglevel",
+            "error",
             str(dest),
         ]
     )
@@ -707,16 +723,14 @@ def run_ffmpeg(
     deadline = time.monotonic() + ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S
     while proc.poll() is None:
         if cancel_event is not None and cancel_event.is_set():
-            proc.kill()
-            proc.wait()
+            _kill_ffmpeg_drain(proc)
             try:
                 dest.unlink(missing_ok=True)
             except OSError:
                 pass
             raise CancelledError(f"conversion cancelled for {source}")
         if time.monotonic() >= deadline:
-            proc.kill()
-            proc.wait()
+            _kill_ffmpeg_drain(proc)
             try:
                 dest.unlink(missing_ok=True)
             except OSError:
@@ -783,20 +797,14 @@ def write_aiff_output(
     sample_rate: int = 48000,
     cover_cache: dict[Path, bytes | None] | None = None,
     cancel_event: threading.Event | None = None,
-    cover_locks: dict[Path, threading.Lock] | None = None,
-    cover_locks_guard: threading.Lock | None = None,
+    cover_lock: threading.Lock | None = None,
 ) -> None:
     """Atomically write AIFF: PCM then ID3, validate, os.replace."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     if cover_cache is None:
         cover = extract_cover_jpeg(source)
     else:
-        cover = cached_cover_jpeg(
-            source,
-            cover_cache,
-            locks=cover_locks,
-            locks_guard=cover_locks_guard,
-        )
+        cover = cached_cover_jpeg(source, cover_cache, lock=cover_lock)
     fd, tmp_name = tempfile.mkstemp(
         dir=dest.parent, prefix=".aiff-", suffix=".tmp.aiff"
     )

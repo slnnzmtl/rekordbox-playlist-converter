@@ -85,6 +85,15 @@ class CenterOverWindowGeometryTests(unittest.TestCase):
         self.assertEqual(geom, "+710+500")
 
 
+def _list_dialog_text(show_list) -> str:
+    """Join the list-of-lines argument from _show_list_dialog mock calls."""
+    lines: list[str] = []
+    for call in show_list.call_args_list:
+        if len(call.args) >= 3 and isinstance(call.args[2], list):
+            lines.extend(call.args[2])
+    return "\n".join(lines)
+
+
 class MissingFilesDialogTests(unittest.TestCase):
     def test_finish_no_conversions_lists_missing_paths_in_scrollbox(self) -> None:
         if not _tk_available():
@@ -308,6 +317,209 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     atomic_write.assert_not_called()
                     showerror.assert_not_called()
                     self.assertEqual(app.status_var.get(), "Cancelled.")
+                    self.assertFalse(app._busy)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_cancel_after_encode_errors_surfaces_errors_without_apply_xml(
+        self,
+    ) -> None:
+        """Given convert_unique returns errors and cancel is set: When the GUI
+        convert worker finishes cancelled: Then apply_xml is skipped and the
+        user still sees the boom encode error (not only Cancelled.)."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from types import SimpleNamespace
+        from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
+
+        plan = SimpleNamespace(
+            warnings=[],
+            playlist_dir=Path("/tmp"),
+            unique=[object(), object()],
+            wav_playlist_name="Test [WAV]",
+            output_root=object(),
+            output=Path("/tmp/out.xml"),
+        )
+        error_text = "boom for x.flac"
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch(
+                "rb_converter_gui.load_preferences",
+                return_value={},
+            ), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch(
+                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
+            ), patch(
+                "rb_converter_gui.save_preferences"
+            ), patch.object(
+                ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
+            ), patch(
+                "rb_converter_gui.rb.prepare", return_value=(plan, [])
+            ), patch(
+                "rb_converter_gui.rb.share_output_root"
+            ), patch(
+                "rb_converter_gui.rb.convert_unique"
+            ) as convert_unique, patch(
+                "rb_converter_gui.rb.apply_xml"
+            ) as apply_xml, patch(
+                "rb_converter_gui.rb.atomic_write_xml"
+            ) as atomic_write, patch(
+                "rb_converter_gui.messagebox.showerror"
+            ) as showerror, patch.object(
+                ConverterApp, "_show_list_dialog", create=True
+            ) as show_list:
+
+                def run_inline(target=None, **_kwargs):
+                    class _T:
+                        def start(self_inner):
+                            target()
+
+                    return _T()
+
+                with patch("rb_converter_gui.threading.Thread", side_effect=run_inline):
+                    root = tk.Tk()
+                    root.withdraw()
+                    app = ConverterApp(root, documents_accessible=False)
+                    app.xml_var.set("/tmp/test.xml")
+                    _seed_track_selection(app)
+
+                    def convert_and_cancel(*_args, **_kwargs):
+                        app._cancel_event.set()
+                        return rb.ConvertStats(
+                            converted=1, errors=[error_text]
+                        )
+
+                    convert_unique.side_effect = convert_and_cancel
+                    app._start_convert()
+                    root.update_idletasks()
+                    for _ in range(20):
+                        root.update()
+
+                    apply_xml.assert_not_called()
+                    atomic_write.assert_not_called()
+                    showerror.assert_not_called()
+                    show_list.assert_called()
+                    joined = _list_dialog_text(show_list)
+                    self.assertIn(
+                        "boom",
+                        joined,
+                        "cancel with known encode errors must surface them in "
+                        f"the scrollable list dialog; got lines={joined!r}",
+                    )
+                    self.assertFalse(app._busy)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_convert_worker_surfaces_encode_errors_after_writing_xml(
+        self,
+    ) -> None:
+        """Given convert_unique returns ConvertStats with errors (not cancelled):
+        When the GUI convert worker finishes that playlist: Then it still
+        apply_xml + atomic_write_xml, and the user sees the encode error text
+        (not a silent clean Done)."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from types import SimpleNamespace
+        from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
+
+        plan = SimpleNamespace(
+            warnings=[],
+            playlist_dir=Path("/tmp"),
+            unique=[object()],
+            wav_playlist_name="Test [WAV]",
+            output_root=object(),
+            output=Path("/tmp/out.xml"),
+        )
+        error_text = "boom for x.flac"
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch(
+                "rb_converter_gui.load_preferences",
+                return_value={},
+            ), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch(
+                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
+            ), patch(
+                "rb_converter_gui.save_preferences"
+            ), patch.object(
+                ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
+            ), patch(
+                "rb_converter_gui.rb.prepare", return_value=(plan, [])
+            ), patch(
+                "rb_converter_gui.rb.share_output_root"
+            ), patch(
+                "rb_converter_gui.rb.convert_unique",
+                return_value=rb.ConvertStats(
+                    converted=1, errors=[error_text]
+                ),
+            ), patch(
+                "rb_converter_gui.rb.apply_xml", return_value=1
+            ) as apply_xml, patch(
+                "rb_converter_gui.rb.atomic_write_xml"
+            ) as atomic_write, patch(
+                "rb_converter_gui.messagebox.showerror"
+            ) as showerror, patch.object(
+                ConverterApp, "_show_list_dialog", create=True
+            ) as show_list, patch.object(
+                ConverterApp, "_show_done_dialog"
+            ) as show_done:
+
+                def run_inline(target=None, **_kwargs):
+                    class _T:
+                        def start(self_inner):
+                            target()
+
+                    return _T()
+
+                with patch("rb_converter_gui.threading.Thread", side_effect=run_inline):
+                    root = tk.Tk()
+                    root.withdraw()
+                    app = ConverterApp(root, documents_accessible=False)
+                    app.xml_var.set("/tmp/test.xml")
+                    _seed_track_selection(app)
+                    app._start_convert()
+                    root.update_idletasks()
+                    for _ in range(20):
+                        root.update()
+
+                    apply_xml.assert_called()
+                    atomic_write.assert_called()
+
+                    showerror.assert_not_called()
+                    show_list.assert_called()
+                    joined = _list_dialog_text(show_list)
+                    self.assertIn(
+                        "boom",
+                        joined,
+                        "encode errors must appear in the scrollable list "
+                        f"dialog; got lines={joined!r}",
+                    )
+                    self.assertFalse(
+                        show_done.called,
+                        "must not finish as a clean Done when encode errors exist",
+                    )
                     self.assertFalse(app._busy)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
