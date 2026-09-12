@@ -20,6 +20,7 @@ import rb_playlist_to_wav as rb
 import convert_plan
 import converter_manifest
 import ffmpeg_tools
+import xml_output
 
 
 def write_pcm_wav(
@@ -471,6 +472,67 @@ class XmlFixtureTests(unittest.TestCase):
         joined = "\n".join(stats.errors)
         self.assertIn("boom for", joined)
         self.assertIn(plan.unique[1].source_path.name, joined)
+
+    def test_convert_unique_success_set_excludes_encode_failures(self) -> None:
+        """Given one encode failure: When convert_unique returns: Then
+        stats.succeeded has (source_key, format) for converted tracks only."""
+        fail_name = "Revelation.flac"
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            if source.name == fail_name:
+                raise rb.CliError(f"boom for {source.name}")
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+            self.assertEqual(errors, [])
+            assert plan is not None
+            stats = rb.convert_unique(plan, force=False, progress=False)
+
+        failed = next(i for i in plan.unique if i.source_path.name == fail_name)
+        ok = [i for i in plan.unique if i.source_path.name != fail_name]
+        expected = {(rb.source_key(i.source_path), "wav") for i in ok}
+        self.assertEqual(stats.succeeded, expected)
+        self.assertNotIn((rb.source_key(failed.source_path), "wav"), stats.succeeded)
+
+    def test_apply_xml_excludes_exists_but_failed_using_success_set(self) -> None:
+        """Given a leftover dest on disk for a failed encode: When apply_xml
+        uses the success set: Then that track is omitted from the collection."""
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(rb, "is_cdj_safe_wav", return_value=False):
+            plan, errors = rb.prepare(
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        self.assertGreaterEqual(len(plan.unique), 2)
+        ok, failed = plan.unique[0], plan.unique[1]
+        ok.dest_path.parent.mkdir(parents=True, exist_ok=True)
+        ok.dest_path.write_bytes(b"RIFF")
+        failed.dest_path.parent.mkdir(parents=True, exist_ok=True)
+        failed.dest_path.write_bytes(b"RIFF")  # leftover on disk
+        success = {(rb.source_key(ok.source_path), "wav")}
+        with patch.object(
+            xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
+        ):
+            rb.apply_xml(plan, success)
+        locations = [
+            t.get("Location") for t in plan.output_root.findall("COLLECTION/TRACK")
+        ]
+        self.assertIn(ok.dest_location, locations)
+        self.assertNotIn(
+            failed.dest_location,
+            locations,
+            "failed encode with leftover file must stay out of import XML",
+        )
 
     def test_partial_encode_main_writes_success_xml_and_exits_nonzero(
         self,
@@ -1971,10 +2033,10 @@ class XmlFixtureTests(unittest.TestCase):
             self.assertIs(plan_a.output_root, plan_b.output_root)
             items = rb.collect_batch_unique(plans)
             self.assertEqual(len(items), 3)
-            rb.convert_unique(plan_a, force=False, progress=False, items=items)
+            stats = rb.convert_unique(plan_a, force=False, progress=False, items=items)
             for plan in plans:
-                rb.apply_xml(plan)
-                rb.atomic_write_xml(plan.output_root, plan.output)
+                rb.apply_xml(plan, stats.succeeded)
+            rb.write_import_xml(plan_a.output_root, plan_a.output)
 
         self.assertEqual(len(encoded), 3)
         self.assertEqual(encoded.count("07 - Bestial.flac"), 1)
@@ -2051,6 +2113,57 @@ class XmlFixtureTests(unittest.TestCase):
             pl = rb.find_playlists_by_name(out, pl_name)[0]
             keys = [t.get("Key") for t in pl.findall("TRACK")]
             self.assertIn(tid, keys)
+
+    def test_batch_convert_writes_import_xml_once(self) -> None:
+        """Given two playlists in one CLI run: When conversion finishes: Then
+        atomic_write_xml runs exactly once with both playlists present."""
+        src = rb.load_dj_playlists(self.xml_path)
+        playlists_root = src.find("PLAYLISTS/NODE")
+        assert playlists_root is not None
+        morning = ET.SubElement(
+            playlists_root,
+            "NODE",
+            {"Name": "Morning", "Type": "1", "KeyType": "0", "Entries": "1"},
+        )
+        ET.SubElement(morning, "TRACK", {"Key": "219211420"})
+        playlists_root.set("Count", "2")
+        ET.ElementTree(src).write(self.xml_path, encoding="UTF-8", xml_declaration=True)
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        write_calls: list[Path] = []
+        real_write = xml_output.atomic_write_xml
+
+        def spy_write(root: ET.Element, path: Path) -> None:
+            write_calls.append(path)
+            real_write(root, path)
+
+        wizard = (
+            self.xml_path,
+            [(None, "Untitled Intelligent List"), (None, "Morning")],
+            self.wav_dir,
+            self.output,
+            "wav",
+            24,
+            48000,
+        )
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            convert_plan, "is_cdj_safe_wav", return_value=False
+        ), patch.object(rb.sys.stdin, "isatty", return_value=True), patch.object(
+            rb, "prompt_wizard", return_value=wizard
+        ), patch.object(xml_output, "atomic_write_xml", side_effect=spy_write):
+            self.assertEqual(rb.main([]), 0)
+
+        self.assertEqual(len(write_calls), 1, "batch must write import XML once")
+        out = ET.parse(self.output).getroot()
+        names = sorted(name for _folder, name, _node in rb.iter_playlists(out))
+        self.assertEqual(names, ["Morning [WAV]", "Untitled Intelligent List [WAV]"])
 
     def test_location_reuse_and_rerun_extends_playlist(self) -> None:
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:

@@ -35,8 +35,7 @@ def load_dj_playlists(path: Path) -> ET.Element:
 
 
 def skeleton_from(source_root: ET.Element) -> ET.Element:
-    version = source_root.get("Version", "1.0.0")
-    root = ET.Element("DJ_PLAYLISTS", {"Version": version})
+    root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
     product = source_root.find("PRODUCT")
     if product is not None:
         root.append(copy.deepcopy(product))

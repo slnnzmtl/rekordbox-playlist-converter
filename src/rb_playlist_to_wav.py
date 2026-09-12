@@ -120,6 +120,9 @@ refresh_track = xml_output.refresh_track
 playlist_keys = xml_output.playlist_keys
 apply_xml = xml_output.apply_xml
 atomic_write_xml = xml_output.atomic_write_xml
+validate_import_xml = xml_output.validate_import_xml
+write_import_xml = xml_output.write_import_xml
+assignment_key = xml_output.assignment_key
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -400,10 +403,11 @@ def run_convert_batch(
                 copied=stats.copied if i == 0 else 0,
                 skipped=stats.skipped if i == 0 else 0,
                 errors=list(stats.errors) if i == len(plans) - 1 else [],
+                succeeded=set(stats.succeeded),
             )
-            plan_stats.appended = xml_output.apply_xml(plan)
-            xml_output.atomic_write_xml(plan.output_root, plan.output)
+            plan_stats.appended = xml_output.apply_xml(plan, stats.succeeded)
             print_summary(plan, plan_stats, dry_run=False)
+        xml_output.write_import_xml(host.output_root, host.output)
     except CliError as exc:
         print(str(exc), file=sys.stderr)
         return 1

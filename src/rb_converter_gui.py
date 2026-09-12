@@ -1688,18 +1688,16 @@ class ConverterApp:
                 items=items,
             )
             all_stats.append(batch_stats)
-            if self._cancel_event.is_set():
-                _finish_cancel_with_errors()
-                return
+            completed_plans: list[rb.Plan] = []
+            cancelled = self._cancel_event.is_set()
             for plan in plans:
+                if cancelled or self._cancel_event.is_set():
+                    cancelled = True
+                    break
+                appended = rb.apply_xml(plan, batch_stats.succeeded)
+                completed_plans.append(plan)
                 if self._cancel_event.is_set():
-                    _finish_cancel_with_errors()
-                    return
-                appended = rb.apply_xml(plan)
-                rb.atomic_write_xml(plan.output_root, plan.output)
-                if self._cancel_event.is_set():
-                    _finish_cancel_with_errors()
-                    return
+                    cancelled = True
                 parts = []
                 if batch_stats.converted and plan is plans[0]:
                     parts.append(f"{batch_stats.converted} converted")
@@ -1714,6 +1712,20 @@ class ConverterApp:
                 detail = ", ".join(parts) if parts else "done"
                 summaries.append(f"{plan.wav_playlist_name}: {detail}")
 
+            if completed_plans:
+                try:
+                    rb.write_import_xml(
+                        completed_plans[0].output_root, completed_plans[0].output
+                    )
+                except rb.CliError as exc:
+                    self._ui(lambda e=[str(exc)]: self._finish_error(e))
+                    return
+                if self._cancel_event.is_set():
+                    cancelled = True
+
+            if cancelled:
+                _finish_cancel_with_errors()
+                return
             if total == 0:
                 self._ui(lambda: self._set_progress(0, 0))
             else:

@@ -299,8 +299,8 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             ) as convert_unique, patch(
                 "rb_converter_gui.rb.apply_xml"
             ) as apply_xml, patch(
-                "rb_converter_gui.rb.atomic_write_xml"
-            ) as atomic_write, patch(
+                "rb_converter_gui.rb.write_import_xml"
+            ) as write_xml, patch(
                 "rb_converter_gui.messagebox.showerror"
             ) as showerror:
 
@@ -329,7 +329,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         root.update()
 
                     apply_xml.assert_not_called()
-                    atomic_write.assert_not_called()
+                    write_xml.assert_not_called()
                     showerror.assert_not_called()
                     self.assertEqual(app.status_var.get(), "Cancelled.")
                     self.assertFalse(app._busy)
@@ -343,8 +343,8 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
         self,
     ) -> None:
         """Given convert_unique returns errors and cancel is set: When the GUI
-        convert worker finishes cancelled: Then apply_xml is skipped and the
-        user still sees the boom encode error (not only Cancelled.)."""
+        convert worker finishes cancelled: Then no completed playlist is written
+        and the user still sees the boom encode error (not only Cancelled.)."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
@@ -380,8 +380,8 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             ) as convert_unique, patch(
                 "rb_converter_gui.rb.apply_xml"
             ) as apply_xml, patch(
-                "rb_converter_gui.rb.atomic_write_xml"
-            ) as atomic_write, patch(
+                "rb_converter_gui.rb.write_import_xml"
+            ) as write_xml, patch(
                 "rb_converter_gui.messagebox.showerror"
             ) as showerror, patch.object(
                 ConverterApp, "_show_list_dialog", create=True
@@ -414,7 +414,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         root.update()
 
                     apply_xml.assert_not_called()
-                    atomic_write.assert_not_called()
+                    write_xml.assert_not_called()
                     showerror.assert_not_called()
                     show_list.assert_called()
                     joined = _list_dialog_text(show_list)
@@ -436,7 +436,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
     ) -> None:
         """Given convert_unique returns ConvertStats with errors (not cancelled):
         When the GUI convert worker finishes that playlist: Then it still
-        apply_xml + atomic_write_xml, and the user sees the encode error text
+        apply_xml + write_import_xml, and the user sees the encode error text
         (not a silent clean Done)."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
@@ -476,8 +476,8 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             ), patch(
                 "rb_converter_gui.rb.apply_xml", return_value=1
             ) as apply_xml, patch(
-                "rb_converter_gui.rb.atomic_write_xml"
-            ) as atomic_write, patch(
+                "rb_converter_gui.rb.write_import_xml"
+            ) as write_xml, patch(
                 "rb_converter_gui.messagebox.showerror"
             ) as showerror, patch.object(
                 ConverterApp, "_show_list_dialog", create=True
@@ -504,7 +504,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         root.update()
 
                     apply_xml.assert_called()
-                    atomic_write.assert_called()
+                    write_xml.assert_called()
 
                     showerror.assert_not_called()
                     show_list.assert_called()
@@ -604,7 +604,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
     def test_late_cancel_after_atomic_write_finishes_cancelled_not_done(
         self,
     ) -> None:
-        """Given convert_unique + apply_xml + atomic_write_xml succeed: When
+        """Given convert_unique + apply_xml + write_import_xml succeed: When
         cancel_event is set before finish scheduling: Then the GUI takes the
         _finish_cancelled path (status Cancelled.), not _finish_ok / Done."""
         if not _tk_available():
@@ -642,8 +642,8 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             ), patch(
                 "rb_converter_gui.rb.apply_xml", return_value=1
             ) as apply_xml, patch(
-                "rb_converter_gui.rb.atomic_write_xml"
-            ) as atomic_write, patch(
+                "rb_converter_gui.rb.write_import_xml"
+            ) as write_xml, patch(
                 "rb_converter_gui.messagebox.showerror"
             ) as showerror, patch.object(
                 ConverterApp, "_show_done_dialog"
@@ -663,17 +663,17 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     app.xml_var.set("/tmp/test.xml")
                     _seed_track_selection(app)
 
-                    def atomic_then_cancel(*_a, **_k):
+                    def write_then_cancel(*_a, **_k):
                         app._cancel_event.set()
 
-                    atomic_write.side_effect = atomic_then_cancel
+                    write_xml.side_effect = write_then_cancel
                     app._start_convert()
                     root.update_idletasks()
                     for _ in range(20):
                         root.update()
 
                     apply_xml.assert_called()
-                    atomic_write.assert_called()
+                    write_xml.assert_called()
                     showerror.assert_not_called()
                     self.assertEqual(
                         app.status_var.get(),

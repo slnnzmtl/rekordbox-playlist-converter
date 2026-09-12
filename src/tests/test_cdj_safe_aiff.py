@@ -740,7 +740,8 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                 output_existed=True,
             )
             with mock.patch.object(xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")):
-                rb.apply_xml(plan)
+                success = {(rb.source_key(item.source_path), "aiff")}
+                rb.apply_xml(plan, success)
             tracks = output_root.findall("COLLECTION/TRACK")
             self.assertEqual(len(tracks), 1)
             self.assertEqual(tracks[0].get("TrackID"), "42")

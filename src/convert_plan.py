@@ -220,6 +220,11 @@ def convert_unique(
             done = completed
         bar.update(done, action, name)
 
+    def mark_succeeded(item: PlannedTrack) -> None:
+        fmt = "aiff" if item.dest_path.suffix.lower() == ".aiff" else "wav"
+        with stats_lock:
+            stats.succeeded.add((source_key(item.source_path), fmt))
+
     def process_one(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
             return
@@ -228,6 +233,7 @@ def convert_unique(
         if item.noop:
             with stats_lock:
                 stats.skipped += 1
+            mark_succeeded(item)
             finish("skip", name)
             return
         try:
@@ -247,6 +253,7 @@ def convert_unique(
                 ):
                     with stats_lock:
                         stats.skipped += 1
+                    mark_succeeded(item)
                     finish("skip", name)
                     return
                 action = "copy" if item.copy_wav else "convert"
@@ -267,6 +274,7 @@ def convert_unique(
                         stats.copied += 1
                     else:
                         stats.converted += 1
+                mark_succeeded(item)
                 finish(action, name)
                 return
             if not force and is_cdj_safe_wav(
@@ -276,6 +284,7 @@ def convert_unique(
             ):
                 with stats_lock:
                     stats.skipped += 1
+                mark_succeeded(item)
                 finish("skip", name)
                 return
             if item.copy_wav:
@@ -284,6 +293,7 @@ def convert_unique(
                 )
                 with stats_lock:
                     stats.copied += 1
+                mark_succeeded(item)
                 finish("copy", name)
                 return
             if not item.codec:
@@ -299,6 +309,7 @@ def convert_unique(
             )
             with stats_lock:
                 stats.converted += 1
+            mark_succeeded(item)
             finish("convert", name)
         except CancelledError:
             return
@@ -327,6 +338,8 @@ class ConvertStats:
     skipped: int = 0
     appended: int = 0
     errors: list[str] = field(default_factory=list)
+    # (source_key, format) that skipped, copied, or converted successfully.
+    succeeded: set[tuple[str, str]] = field(default_factory=set)
 
 
 def abs_path(path: Path) -> Path:
