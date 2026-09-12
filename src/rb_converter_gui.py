@@ -46,6 +46,7 @@ DEFAULT_WAV_DIR, DEFAULT_OUTPUT = default_output_paths(documents_accessible=True
 FALLBACK_WAV_DIR, FALLBACK_OUTPUT = default_output_paths(documents_accessible=False)
 SEARCH_PLACEHOLDER = "Search playlists…"
 TRACK_SEARCH_PLACEHOLDER = "Search tracks…"
+SCANNING_BIT_DEPTH = "Scanning bit depth…"
 APP_LOGO_NAME = "rpc-logo-white.png"
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
 BIT_DEPTH_24_TOOLTIP = (
@@ -303,6 +304,7 @@ class ConverterApp:
             self.track_search_var, TRACK_SEARCH_PLACEHOLDER
         )
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
+        self.scan_status_var = tk.StringVar(value="")
         self._busy = False
         self._cancel_event = threading.Event()
         self._usage_window: tk.Toplevel | None = None
@@ -324,6 +326,7 @@ class ConverterApp:
         self._preview_bit_depth_cache: dict = {}
         self._preview_bit_depth_lock = threading.Lock()
         self._preview_probe_thread: threading.Thread | None = None
+        self._preview_scan_active = False
         self._browser_sash_set = False
         self._tracklist_sort_column: str | None = None
         self._tracklist_sort_reverse = False
@@ -698,8 +701,13 @@ class ConverterApp:
         self.cancel_btn.grid(row=6, column=2, sticky="e", **pad)
         self.cancel_btn.grid_remove()
 
-        ttk.Label(frm, textvariable=self.status_var, wraplength=1000).grid(
-            row=7, column=0, columnspan=3, sticky="ew", **pad
+        status_row = ttk.Frame(frm)
+        status_row.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        ttk.Label(status_row, textvariable=self.status_var, wraplength=1000).pack(
+            side=tk.LEFT
+        )
+        ttk.Label(status_row, textvariable=self.scan_status_var).pack(
+            side=tk.LEFT, padx=(12, 0)
         )
 
     def _build_menubar(self) -> None:
@@ -1074,6 +1082,16 @@ class ConverterApp:
         rate = (track.get("SampleRate") or "").strip() or empty
         return label, fmt, empty, rate
 
+    def _sync_scan_indicator(self) -> None:
+        if self._busy or not self._preview_scan_active:
+            self.scan_status_var.set("")
+            return
+        self.scan_status_var.set(SCANNING_BIT_DEPTH)
+
+    def _set_preview_scan_active(self, active: bool) -> None:
+        self._preview_scan_active = active
+        self._sync_scan_indicator()
+
     def _refresh_tracklist_preview(self) -> None:
         self._tracklist_tech_gen += 1
         gen = self._tracklist_tech_gen
@@ -1081,10 +1099,12 @@ class ConverterApp:
         self._tracklist_iids = {}
         self._tracklist_paths = {}
         if self._source_root is None:
+            self._set_preview_scan_active(False)
             self._set_idle_status()
             return
         selected = self._selected_playlists(unique_names=False)
         if not selected:
+            self._set_preview_scan_active(False)
             self._set_idle_status()
             return
         query = self._track_search.query().casefold()
@@ -1145,6 +1165,7 @@ class ConverterApp:
                     self._tracklist_paths[leaf_iid] = path
                 leaf_iids.append(leaf_iid)
         if not painted:
+            self._set_preview_scan_active(False)
             self._set_idle_status()
             return
         self._tracklist_selecting = True
@@ -1161,12 +1182,15 @@ class ConverterApp:
             if prev is not None and prev.is_alive():
                 # Generation already bumped; old worker exits between files.
                 prev.join(timeout=1.0)
+            self._set_preview_scan_active(True)
             worker = threading.Thread(
                 target=lambda: self._fill_preview_bit_depths(gen, paths),
                 daemon=True,
             )
             self._preview_probe_thread = worker
             worker.start()
+        else:
+            self._set_preview_scan_active(False)
 
     def _on_tracklist_sort(self, column: str) -> None:
         if self._tracklist_sort_column == column:
@@ -1248,6 +1272,13 @@ class ConverterApp:
                 flush()
                 time.sleep(PREVIEW_BIT_DEPTH_YIELD_S)
         flush()
+        if gen == self._tracklist_tech_gen:
+            self._ui(lambda g=gen: self._finish_preview_bit_depth_scan(g))
+
+    def _finish_preview_bit_depth_scan(self, gen: int) -> None:
+        if gen != self._tracklist_tech_gen:
+            return
+        self._set_preview_scan_active(False)
 
     def _apply_preview_bit_depths(self, gen: int, depths: dict[Path, str]) -> None:
         if gen != self._tracklist_tech_gen or not depths:
@@ -1310,11 +1341,13 @@ class ConverterApp:
             self.convert_btn.grid_remove()
             self.cancel_btn.configure(state=tk.NORMAL)
             self.cancel_btn.grid()
+            self._sync_scan_indicator()
         else:
             self.cancel_btn.grid_remove()
             self.cancel_btn.configure(state=tk.DISABLED)
             self.convert_btn.configure(state=tk.NORMAL)
             self.convert_btn.grid()
+            self._sync_scan_indicator()
 
     def _request_cancel(self) -> None:
         if not self._busy:

@@ -1,9 +1,8 @@
 # Changelog
 
-## Unreleased
+## 2.0.0
 
-Intended for **1.3.0** (app version remains 1.2.0 until release).
-
+- While tracklist bit depth headers are read, `Scanning bit depth…` appears beside the idle unique-tracks status line.
 - Tracklist lists only convertible lossless formats (by file extension); missing collection rows stay visible. Column headers are left-aligned and clickable to sort by Track, Format, Bit depth, or Sample rate within each playlist group. Playlist / tracklist panes default to a 30% / 70% split.
 - App display name is **Simple Rekordbox Converter** (window title, macOS .app bundle, docs).
 - Tracklist bit depth is remembered for the session so reselecting a playlist does not re-read file headers; Refresh or a new XML path clears the cache.

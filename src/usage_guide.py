@@ -42,7 +42,8 @@ export.
    rows: Track, Format, Bit depth, and Sample rate. Click a column header to
    sort within each playlist group. Format and rate come from the
    export; bit depth is read from FLAC, ALAC (M4A), WAV, or AIFF file headers
-   when the file is on disk, otherwise —. Track rows start selected; hold ⌃ to
+   when the file is on disk, otherwise — (Scanning bit depth… appears beside the
+   unique-tracks status line while that runs). Track rows start selected; hold ⌃ to
    refine which tracks to convert (across playlists). Playlist search filters
    the left tree; track search filters the current tracklist (artist / title /
    filename).

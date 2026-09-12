@@ -739,11 +739,27 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                         [preview.item(r, "values") for r in leaves],
                         [("FLAC", "—", "44100")],
                     )
+                    self.assertEqual(
+                        app.status_var.get(),
+                        "1 unique tracks from 1 playlist",
+                    )
+                    self.assertEqual(
+                        app.scan_status_var.get(),
+                        "Scanning bit depth…",
+                    )
                     root.update()
                     leaves = preview.get_children(preview.get_children("")[0])
                     self.assertEqual(
                         [preview.item(r, "values") for r in leaves],
                         [("FLAC", "24", "44100")],
+                    )
+                    self.assertEqual(app.scan_status_var.get(), "")
+                    tree.selection_set(crate)
+                    tree.event_generate("<<TreeviewSelect>>")
+                    self.assertEqual(app.scan_status_var.get(), "")
+                    self.assertEqual(
+                        app.status_var.get(),
+                        "1 unique tracks from 1 playlist",
                     )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
