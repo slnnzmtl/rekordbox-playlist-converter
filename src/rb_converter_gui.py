@@ -724,9 +724,12 @@ class ConverterApp:
         )
         # Row 3 is used only while validation has a message (grid_remove otherwise).
 
-        ttk.Label(frm, text="Import XML").grid(row=4, column=0, sticky="w", **pad)
+        import_xml_label = ttk.Label(frm, text="Import XML")
+        import_xml_label.grid(row=4, column=0, sticky="w", **pad)
+        import_xml_label.configure(cursor="hand2")
+        import_xml_label.bind("<Button-1>", self._copy_import_xml_path, add="+")
         self.import_xml_entry = ttk.Entry(
-            frm, textvariable=self.output_var, state="readonly", cursor="hand2"
+            frm, textvariable=self.output_var, state="disabled", cursor="hand2"
         )
         self.import_xml_entry.grid(row=4, column=1, sticky="ew", **pad)
         self.import_xml_entry.bind(
@@ -1089,8 +1092,18 @@ class ConverterApp:
         self._source_root = root
         self._collection_indexes_cache = rb.collection_indexes(root)
         nodes = rb.iter_playlist_nodes(root)
+        by_id, by_location = self._collection_indexes_cache
         for kind, folder, name, node in nodes:
-            count = rb.playlist_track_count(node) if kind == "playlist" else 0
+            count = (
+                rb.playlist_preview_track_count(
+                    node,
+                    by_id,
+                    by_location,
+                    supported_ext=rb.SUPPORTED_LOSSLESS_EXT,
+                )
+                if kind == "playlist"
+                else 0
+            )
             self._playlist_entries.append((kind, folder, name, count, node))
         self._playlist_search.show()
         self._track_search.show()
@@ -1370,9 +1383,8 @@ class ConverterApp:
                     continue
                 loc = (track.get("Location") or "") if track is not None else ""
                 path = rb.decode_location(loc) if loc else None
-                if (
-                    path is not None
-                    and path.suffix.lower() not in rb.SUPPORTED_LOSSLESS_EXT
+                if not rb.track_included_in_playlist_preview(
+                    track, supported_ext=rb.SUPPORTED_LOSSLESS_EXT
                 ):
                     continue
                 if path is not None:
@@ -1949,7 +1961,8 @@ class ConverterApp:
         self._preview_dialog = dlg
         dlg.title("Conversion preview")
         dlg.transient(self.root)
-        dlg.minsize(640, 360)
+        dlg.geometry("960x540")
+        dlg.minsize(960, 540)
         dlg.resizable(True, True)
 
         frm = ttk.Frame(dlg, padding=16)
@@ -1966,7 +1979,7 @@ class ConverterApp:
             f"{preview.duplicates} duplicate(s) · "
             f"{preview.missing} missing"
         )
-        ttk.Label(frm, text=summary, wraplength=620).grid(
+        ttk.Label(frm, text=summary, wraplength=930).grid(
             row=0, column=0, sticky="w", pady=(0, 8)
         )
 
@@ -1981,16 +1994,16 @@ class ConverterApp:
             columns=columns,
             show="tree headings",
             selectmode="browse",
-            height=12,
+            height=18,
         )
         table.heading("#0", text="Input file", anchor="w")
         table.heading("action", text="Action", anchor="w")
         table.heading("quality", text="Quality", anchor="w")
         table.heading("size", text="Size", anchor="e")
-        table.column("#0", width=280, stretch=True, minwidth=120)
-        table.column("action", width=120, stretch=False, anchor="w")
-        table.column("quality", width=140, stretch=False, anchor="w")
-        table.column("size", width=110, stretch=False, anchor="e")
+        table.column("#0", width=400, stretch=True, minwidth=160)
+        table.column("action", width=110, stretch=False, anchor="w")
+        table.column("quality", width=150, stretch=False, anchor="w")
+        table.column("size", width=130, stretch=False, minwidth=120, anchor="e")
         yscroll = ttk.Scrollbar(
             table_frame, orient=tk.VERTICAL, command=table.yview
         )

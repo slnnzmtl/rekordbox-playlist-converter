@@ -50,7 +50,7 @@ export.
 3. Confirm the output folder. Defaults are ~/Documents/rekordbox-converter when
    Documents access is allowed, or ~/rekordbox-converter if you decline that
    request; Browse… can prompt again when you open Documents. Import XML is
-   always <output folder>/rekordbox-import.xml in a read-only field (click to
+   always <output folder>/rekordbox-import.xml in a disabled field (click to
    copy the full path). The app remembers your last-used output folder between
    launches. Deleting the hidden .rekordbox-converter-manifest.json leaves
    audio unmanaged and the folder is refused — choose a new empty folder.

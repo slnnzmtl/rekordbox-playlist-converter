@@ -636,7 +636,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 root.destroy()
 
     def test_gui_has_readonly_import_xml_field_that_copies_path(self) -> None:
-        """Given ConverterApp: When built: Then Import XML is a read-only entry
+        """Given ConverterApp: When built: Then Import XML is a disabled entry
         (no Browse), follows wav_dir, and a click copies the full path."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
@@ -659,7 +659,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
             self.assertFalse(hasattr(app, "_browse_output"))
-            self.assertEqual(str(app.import_xml_entry.cget("state")), "readonly")
+            self.assertEqual(str(app.import_xml_entry.cget("state")), "disabled")
             self.assertEqual(str(app.import_xml_entry.cget("cursor")), "hand2")
             app.wav_dir_var.set("/tmp/lib-a")
             expected = str(Path("/tmp/lib-a") / "rekordbox-import.xml")

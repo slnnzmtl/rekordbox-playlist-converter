@@ -148,6 +148,43 @@ class PlaylistXmlHelperTests(unittest.TestCase):
         )
         self.assertNotIn("ROOT", [name for _k, _f, name, _n in nodes])
 
+    def test_playlist_preview_track_count_supported_and_missing_only(self) -> None:
+        """Given FLAC, MP3, AAC, and a missing key: When preview-counting:
+        Then only supported lossless + missing are counted."""
+        xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="3">
+    <TRACK TrackID="1" Name="Ok" Artist="A"
+           Location="file://localhost/Users/me/music/Ok.flac" Kind="FLAC File"/>
+    <TRACK TrackID="2" Name="Lossy" Artist="B"
+           Location="file://localhost/Users/me/music/Lossy.mp3" Kind="MP3 File"/>
+    <TRACK TrackID="3" Name="Aac" Artist="C"
+           Location="file://localhost/Users/me/music/Aac.aac" Kind="AAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="Mixed" Type="1" KeyType="0" Entries="4">
+        <TRACK Key="1"/><TRACK Key="2"/><TRACK Key="3"/><TRACK Key="999"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        root = ET.fromstring(xml)
+        node = rb.iter_playlists(root)[0][2]
+        by_id, by_location = rb.collection_indexes(root)
+        self.assertEqual(
+            rb.playlist_preview_track_count(
+                node,
+                by_id,
+                by_location,
+                supported_ext=rb.SUPPORTED_LOSSLESS_EXT,
+            ),
+            2,
+        )
+
     def test_iter_playlist_nodes_includes_empty_folders(self) -> None:
         xml = """\
 <?xml version="1.0" encoding="UTF-8"?>
