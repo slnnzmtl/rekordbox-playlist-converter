@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
+import converter_manifest
 import ffmpeg_tools
 from cdj_aiff import (
     _is_canonical_aiff_output,
@@ -30,6 +31,7 @@ from cdj_wav import (
     is_cdj_safe_wav,
 )
 from cli_error import CancelledError, CliError
+from converter_manifest import ConverterManifest
 from rekordbox_xml import (
     decode_location,
     encode_location,
@@ -229,6 +231,9 @@ def convert_unique(
             finish("skip", name)
             return
         try:
+            converter_manifest.ensure_dest_path_under_wav_dir(
+                plan.wav_dir, item.dest_path
+            )
             if is_aiff:
                 cover = cached_cover_jpeg(
                     item.source_path, plan.cover_cache, lock=cover_lock
@@ -543,6 +548,7 @@ def build_plan(
     max_sample_rate: int = 48000,
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    manifest: ConverterManifest | None = None,
 ) -> tuple[Plan | None, list[str]]:
     if output_format not in ("wav", "aiff"):
         output_format = "wav"
@@ -557,6 +563,8 @@ def build_plan(
     wav_dir_abs = abs_path(wav_dir)
     # Library root (field name kept for hand-built Plan compatibility).
     playlist_dir = wav_dir_abs
+    if manifest is None:
+        manifest = converter_manifest.empty_manifest()
 
     planned: list[PlannedTrack] = []
     warnings: list[str] = []
@@ -571,10 +579,18 @@ def build_plan(
             warnings.append(f"missing source file: {source_path}")
             continue
         source_path = resolved
-        rel = preferred_relative_dest(
+        preferred = preferred_relative_dest(
             el,
             output_format=output_format,
             stem_fallback=source_path.stem,
+        )
+        rel = converter_manifest.reserve_relative_dest(
+            manifest,
+            source_key=source_key(source_path),
+            output_format=output_format,
+            preferred=preferred,
+            wav_dir=wav_dir_abs,
+            source_path=source_path,
         )
         dest_path = playlist_dir.joinpath(*PurePosixPath(rel).parts)
         dest_name = dest_path.name
@@ -593,19 +609,12 @@ def build_plan(
         )
 
     unique: list[PlannedTrack] = []
-    unique_dest: dict[str, PlannedTrack] = {}
+    unique_sources: dict[str, PlannedTrack] = {}
     for item in planned:
-        dest_key = collision_key(
-            item.dest_path.relative_to(playlist_dir).as_posix()
-        )
-        if dest_key in unique_dest:
-            kept = unique_dest[dest_key]
-            if item.source_path != kept.source_path:
-                warnings.append(
-                    f"skipped filename collision: {item.source_path} → {kept.dest_name}"
-                )
+        sk = source_key(item.source_path)
+        if sk in unique_sources:
             continue
-        unique_dest[dest_key] = item
+        unique_sources[sk] = item
         unique.append(item)
 
     total = len(unique)

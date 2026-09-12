@@ -393,7 +393,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             with mock.patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
                 stats = rb.convert_unique(plan, force=True)
             self.assertEqual(stats.converted, 2)
-            self.assertEqual(converted, [safe_dest, unsafe_dest])
+            self.assertCountEqual(converted, [safe_dest, unsafe_dest])
 
     def test_sixteen_44100_dest_does_not_skip_when_effective_is_24_48(self) -> None:
         """Raising the ceiling must rebuild a previously reduced dest."""

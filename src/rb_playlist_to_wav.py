@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Collection
 
 import convert_plan
+import converter_manifest
 import ffmpeg_tools
 import xml_output
 from cdj_aiff import (
@@ -332,6 +333,12 @@ def run_convert_batch(
             print(str(exc), file=sys.stderr)
             return 1
 
+    try:
+        manifest = converter_manifest.load_manifest(wav_dir)
+    except CliError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
     plans: list[Plan] = []
     for folder, name in playlist_refs:
         plan, errors = prepare(
@@ -344,6 +351,7 @@ def run_convert_batch(
             max_bit_depth=max_bit_depth,
             max_sample_rate=max_sample_rate,
             source_root=source_root,
+            manifest=manifest,
         )
         if errors:
             print_errors(errors)
@@ -364,6 +372,12 @@ def run_convert_batch(
                 print(f"=== {label} ({i + 1}/{len(plans)}) ===")
             print_summary(plan, None, dry_run=True)
         return 0
+
+    try:
+        converter_manifest.save_manifest(manifest, wav_dir)
+    except OSError as exc:
+        print(f"cannot write converter manifest: {exc}", file=sys.stderr)
+        return 1
 
     items = convert_plan.collect_batch_unique(plans)
     host = plans[0]
@@ -496,6 +510,7 @@ def prepare(
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
     source_root: ET.Element | None = None,
+    manifest: converter_manifest.ConverterManifest | None = None,
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(ffmpeg_tools.require_tools())
@@ -537,6 +552,13 @@ def prepare(
     else:
         output_root = skeleton_from(source_root)
 
+    if manifest is None:
+        try:
+            manifest = converter_manifest.load_manifest(wav_dir)
+        except CliError as exc:
+            errors.append(str(exc))
+            return None, errors
+
     plan, plan_errors = convert_plan.build_plan(
         source_root,
         playlist_el,
@@ -550,6 +572,7 @@ def prepare(
         max_sample_rate=max_sample_rate,
         on_progress=on_progress,
         cancel_event=cancel_event,
+        manifest=manifest,
     )
     errors.extend(plan_errors)
     return plan, errors

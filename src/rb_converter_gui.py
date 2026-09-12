@@ -35,6 +35,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import rb_playlist_to_wav as rb
+import converter_manifest
 from preview_bit_depth import (
     cached_preview_bit_depth,
     peek_cached_preview_bit_depth,
@@ -1595,6 +1596,11 @@ class ConverterApp:
                     return
             else:
                 source_root = None
+            try:
+                manifest = converter_manifest.load_manifest(wav_dir)
+            except rb.CliError as exc:
+                self._ui(lambda e=[str(exc)]: self._finish_error(e))
+                return
             for i, (folder, name) in enumerate(selected):
                 if self._cancel_event.is_set():
                     self._ui(self._finish_cancelled)
@@ -1627,6 +1633,7 @@ class ConverterApp:
                     on_progress=prepare_tick,
                     cancel_event=self._cancel_event,
                     source_root=source_root,
+                    manifest=manifest,
                 )
                 if self._cancel_event.is_set():
                     self._ui(self._finish_cancelled)
@@ -1662,6 +1669,15 @@ class ConverterApp:
 
             if self._cancel_event.is_set():
                 _finish_cancel_with_errors()
+                return
+            try:
+                converter_manifest.save_manifest(manifest, wav_dir)
+            except OSError as exc:
+                self._ui(
+                    lambda e=[f"cannot write converter manifest: {exc}"]: self._finish_error(
+                        e
+                    )
+                )
                 return
             batch_stats = rb.convert_unique(
                 plans[0],

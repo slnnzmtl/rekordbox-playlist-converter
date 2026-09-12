@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 import tempfile
 import unicodedata
@@ -16,6 +17,7 @@ if str(_SRC) not in sys.path:
 
 import rb_playlist_to_wav as rb
 import convert_plan
+import converter_manifest
 import ffmpeg_tools
 
 FIXTURE = """\
@@ -851,8 +853,8 @@ class XmlFixtureTests(unittest.TestCase):
 
     def test_collisions_case_and_nfd(self) -> None:
         """Given case and NFD dest twins with different sources: When prepare
-        runs: Then collisions are warnings (not errors), unique keeps first
-        row per collision_key, and later sources are skipped."""
+        runs: Then each source gets a sticky numbered dest (Name, Name (2), …)
+        and unique keeps every source."""
         intro = self.music / "one" / "Intro.flac"
         intro2 = self.music / "two" / "intro.flac"
         cafe_nfc = self.music / "n1" / (unicodedata.normalize("NFC", "café") + ".flac")
@@ -892,27 +894,43 @@ class XmlFixtureTests(unittest.TestCase):
             plan, errors = rb.prepare(path, "Clash", self.wav_dir, self.output)
         self.assertEqual(errors, [])
         assert plan is not None
-        self.assertEqual(len(plan.unique), 2)
-        warn_text = "\n".join(plan.warnings)
+        self.assertEqual(len(plan.unique), 4)
+        intro_dests = sorted(
+            u.dest_path.relative_to(plan.wav_dir).as_posix()
+            for u in plan.unique
+            if "intro" in u.dest_name.casefold()
+        )
+        self.assertEqual(len(intro_dests), 2)
+        self.assertEqual(
+            {rb.collision_key(d) for d in intro_dests},
+            {
+                rb.collision_key("Same/Hits/Intro.wav"),
+                rb.collision_key("Same/Hits/Intro (2).wav"),
+            },
+        )
+        first_intro = next(u for u in plan.unique if u.source_path == intro)
+        self.assertEqual(
+            first_intro.dest_path.relative_to(plan.wav_dir).as_posix(),
+            "Same/Hits/Intro.wav",
+        )
+        cafe_dests = sorted(
+            u.dest_path.relative_to(plan.wav_dir).as_posix()
+            for u in plan.unique
+            if "caf" in unicodedata.normalize("NFC", u.dest_name).casefold()
+        )
+        self.assertEqual(len(cafe_dests), 2)
+        self.assertTrue(any(" (2).wav" in d for d in cafe_dests))
         self.assertTrue(
-            any("collision" in w.casefold() for w in plan.warnings),
-            f"expected collision warning(s), got: {plan.warnings!r}",
+            any(
+                rb.collision_key(d) == rb.collision_key("Same/Hits/café.wav")
+                for d in cafe_dests
+            )
         )
-        self.assertIn(str(intro2), warn_text)
-        self.assertTrue(
-            any("n2" in w for w in plan.warnings),
-            f"expected skipped café twin under n2, got: {plan.warnings!r}",
-        )
-        kept_intro = next(
-            u for u in plan.unique if "intro" in u.dest_name.casefold()
-        )
-        self.assertEqual(kept_intro.source_path, intro)
-
-    def test_convert_succeeds_when_filename_collision_skipped_with_warning(
+    def test_convert_succeeds_when_filename_collision_gets_numbered_dest(
         self,
     ) -> None:
         """Given a collision pair plus one clean track: When main converts:
-        Then exit is 0 and warnings mention the skipped collision path."""
+        Then exit is 0 and both colliding sources are converted to numbered dests."""
         intro = self.music / "one" / "Intro.flac"
         intro2 = self.music / "two" / "intro.flac"
         clean = self.music / "clean" / "Clean Track.flac"
@@ -946,12 +964,11 @@ class XmlFixtureTests(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
-        stderr = io.StringIO()
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
-        ), patch.object(sys, "stderr", stderr):
+        ):
             rc = rb.main(
                 [
                     "--xml",
@@ -965,9 +982,309 @@ class XmlFixtureTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(rc, 0)
-        err = stderr.getvalue()
-        self.assertIn("collision", err.casefold())
-        self.assertIn(str(intro2), err)
+        self.assertTrue((self.wav_dir / "Same" / "Hits" / "Intro.wav").is_file())
+        second = self.wav_dir / "Same" / "Hits" / "intro (2).wav"
+        second_alt = self.wav_dir / "Same" / "Hits" / "Intro (2).wav"
+        self.assertTrue(second.is_file() or second_alt.is_file())
+        self.assertTrue(
+            (self.wav_dir / "Other" / "Solo" / "Clean Track.wav").is_file()
+        )
+        data = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            data["tracks"][convert_plan.source_key(intro)]["wav"]["dest"],
+            "Same/Hits/Intro.wav",
+        )
+        second_dest = data["tracks"][convert_plan.source_key(intro2)]["wav"]["dest"]
+        self.assertEqual(
+            rb.collision_key(second_dest),
+            rb.collision_key("Same/Hits/Intro (2).wav"),
+        )
+        self.assertIn(" (2).wav", second_dest)
+
+    def test_convert_saves_manifest_with_preferred_dests_before_encode(
+        self,
+    ) -> None:
+        """Given a fresh wav_dir: When main converts: Then
+        rekordbox-converter-manifest.json exists before the first encode and
+        records preferred Artist/Album/Name dests per source_key."""
+        manifest_file = self.wav_dir / "rekordbox-converter-manifest.json"
+        seen_before_encode: list[dict] = []
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            self.assertTrue(
+                manifest_file.is_file(), "manifest must exist before encode"
+            )
+            seen_before_encode.append(
+                json.loads(manifest_file.read_text(encoding="utf-8"))
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        self.assertTrue(seen_before_encode)
+        data = seen_before_encode[0]
+        self.assertEqual(data["version"], 1)
+        tracks = data["tracks"]
+        bestial_key = convert_plan.source_key(self.a)
+        self.assertEqual(
+            tracks[bestial_key]["wav"]["dest"],
+            "ABSL/It's just a bad dream/Bestial.wav",
+        )
+        self.assertEqual(
+            tracks[convert_plan.source_key(self.b)]["wav"]["dest"],
+            "Shogan/Hits/Revelation.wav",
+        )
+        self.assertEqual(
+            tracks[convert_plan.source_key(self.c)]["wav"]["dest"],
+            "Quantum/Hits/Movement.wav",
+        )
+
+    def test_sticky_manifest_reuses_dest_when_metadata_changes(self) -> None:
+        """Given an existing wav assignment: When Artist/Album/Name change and
+        convert reruns: Then the sticky dest path is reused (not Preferred)."""
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            rc1 = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc1, 0)
+        sticky = "ABSL/It's just a bad dream/Bestial.wav"
+        root = rb.load_dj_playlists(self.xml_path)
+        track = root.find("COLLECTION/TRACK")
+        assert track is not None
+        track.set("Artist", "New Artist")
+        track.set("Album", "New Album")
+        track.set("Name", "New Name")
+        ET.ElementTree(root).write(self.xml_path, encoding="UTF-8", xml_declaration=True)
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=True
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        bestial = next(u for u in plan.unique if u.source_path == self.a)
+        self.assertEqual(
+            bestial.dest_path.relative_to(plan.wav_dir).as_posix(),
+            sticky,
+        )
+        data = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
+            sticky,
+        )
+        self.assertFalse(
+            (self.wav_dir / "New Artist" / "New Album" / "New Name.wav").exists()
+        )
+
+    def test_invalid_manifest_fails_before_audio_or_xml(self) -> None:
+        """Given a corrupt manifest on disk: When main converts: Then exit is
+        nonzero, stderr mentions the manifest, and no audio/XML is written."""
+        self.wav_dir.mkdir(parents=True)
+        (self.wav_dir / "rekordbox-converter-manifest.json").write_text(
+            "{bad", encoding="utf-8"
+        )
+        stderr = io.StringIO()
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(sys, "stderr", stderr):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("manifest", stderr.getvalue().casefold())
+        self.assertFalse(self.output.exists())
+        self.assertFalse(any(self.wav_dir.rglob("*.wav")))
+
+    def test_failed_encodes_keep_manifest_reservations(self) -> None:
+        """Given encode failures: When main returns nonzero: Then the manifest
+        still retains the reserved dests from before conversion."""
+        def boom(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            raise rb.CliError(f"boom {source.name}")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=boom), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 1)
+        data = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
+            "ABSL/It's just a bad dream/Bestial.wav",
+        )
+
+    def test_wav_and_aiff_assignments_coexist_in_manifest(self) -> None:
+        """Given the same source converted as wav then aiff: When manifests are
+        saved: Then both format dests coexist under one source_key."""
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        def fake_aiff(
+            source: Path,
+            dest: Path,
+            source_el,
+            **_kwargs,
+        ) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"FORM")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert_plan, "write_aiff_output", side_effect=fake_aiff):
+            rc_wav = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                    "--format",
+                    "wav",
+                ]
+            )
+            rc_aiff = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.root / "out-aiff.xml"),
+                    "--format",
+                    "aiff",
+                ]
+            )
+        self.assertEqual(rc_wav, 0)
+        self.assertEqual(rc_aiff, 0)
+        data = json.loads(
+            (self.wav_dir / "rekordbox-converter-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        entry = data["tracks"][convert_plan.source_key(self.a)]
+        self.assertEqual(
+            entry["wav"]["dest"],
+            "ABSL/It's just a bad dream/Bestial.wav",
+        )
+        self.assertEqual(
+            entry["aiff"]["dest"],
+            "ABSL/It's just a bad dream/Bestial.aiff",
+        )
+
+    def test_convert_refuses_dest_outside_wav_dir_before_write(self) -> None:
+        """Given a planned dest that no longer resolves under wav_dir: When
+        convert_unique runs: Then the track errors and no encode is attempted."""
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ):
+            plan, errors = rb.prepare(
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+            )
+        self.assertEqual(errors, [])
+        assert plan is not None
+        item = plan.unique[0]
+        encoded: list[Path] = []
+
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            encoded.append(dest)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(
+            converter_manifest,
+            "ensure_dest_path_under_wav_dir",
+            side_effect=converter_manifest.ManifestError("escaped"),
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            rb, "is_cdj_safe_wav", return_value=False
+        ):
+            stats = rb.convert_unique(plan, force=False, progress=False, items=[item])
+        self.assertEqual(encoded, [])
+        self.assertTrue(any("escaped" in e for e in stats.errors))
 
     def test_unknown_fields_preserved_and_ids_start_at_1(self) -> None:
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
@@ -1059,11 +1376,20 @@ class XmlFixtureTests(unittest.TestCase):
         ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
+            manifest = converter_manifest.empty_manifest()
             plan_a, errors_a = rb.prepare(
-                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+                self.xml_path,
+                "Untitled Intelligent List",
+                self.wav_dir,
+                self.output,
+                manifest=manifest,
             )
             plan_b, errors_b = rb.prepare(
-                self.xml_path, "Morning", self.wav_dir, self.output
+                self.xml_path,
+                "Morning",
+                self.wav_dir,
+                self.output,
+                manifest=manifest,
             )
             self.assertEqual(errors_a, [])
             self.assertEqual(errors_b, [])
@@ -1304,6 +1630,9 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertFalse(self.output.exists())
         self.assertFalse(self.wav_dir.exists())
+        self.assertFalse(
+            (self.root / "WAV" / "rekordbox-converter-manifest.json").exists()
+        )
         self.assertIn("Untitled Intelligent List [WAV]", buf.getvalue())
 
     def test_unsupported_lossy_format_errors_flac_without_depth_ok(self) -> None:
