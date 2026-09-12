@@ -102,6 +102,9 @@ classify_source = convert_plan.classify_source
 build_plan = convert_plan.build_plan
 run_ffmpeg = convert_plan.run_ffmpeg
 write_aiff_output = convert_plan.write_aiff_output
+source_key = convert_plan.source_key
+collect_batch_unique = convert_plan.collect_batch_unique
+share_cover_caches = convert_plan.share_cover_caches
 convert_unique = convert_plan.convert_unique
 
 # Re-exports from xml_output for callers.
@@ -306,6 +309,96 @@ def prompt_wizard(
     )
 
 
+def run_convert_batch(
+    xml_path: Path,
+    playlist_refs: list[tuple[str | None, str]],
+    wav_dir: Path,
+    output: Path,
+    *,
+    force: bool,
+    dry_run: bool,
+    output_format: str = "wav",
+    max_bit_depth: int = 24,
+    max_sample_rate: int = 48000,
+    source_root: ET.Element | None = None,
+) -> int:
+    """Prepare all playlists, convert unique (source_key, format) once, apply XML."""
+    if not playlist_refs:
+        return 1
+    if source_root is None:
+        try:
+            source_root = load_dj_playlists(xml_path)
+        except CliError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+    plans: list[Plan] = []
+    for folder, name in playlist_refs:
+        plan, errors = prepare(
+            xml_path,
+            name,
+            wav_dir,
+            output,
+            playlist_folder=folder,
+            output_format=output_format,
+            max_bit_depth=max_bit_depth,
+            max_sample_rate=max_sample_rate,
+            source_root=source_root,
+        )
+        if errors:
+            print_errors(errors)
+            return 1
+        assert plan is not None
+        if plan.warnings:
+            print_warnings(plan.warnings)
+        plans.append(plan)
+
+    xml_output.share_output_root(plans)
+
+    if dry_run:
+        for i, plan in enumerate(plans):
+            if len(plans) > 1:
+                print()
+                folder, name = playlist_refs[i]
+                label = playlist_label(folder, name) if folder else name
+                print(f"=== {label} ({i + 1}/{len(plans)}) ===")
+            print_summary(plan, None, dry_run=True)
+        return 0
+
+    items = convert_plan.collect_batch_unique(plans)
+    host = plans[0]
+    convert_plan.share_cover_caches(plans)
+    try:
+        stats = convert_plan.convert_unique(
+            host,
+            force=force,
+            progress=sys.stderr.isatty(),
+            items=items,
+        )
+        for i, plan in enumerate(plans):
+            if len(plans) > 1:
+                print()
+                folder, name = playlist_refs[i]
+                label = playlist_label(folder, name) if folder else name
+                print(f"=== {label} ({i + 1}/{len(plans)}) ===")
+            plan_stats = ConvertStats(
+                converted=stats.converted if i == 0 else 0,
+                copied=stats.copied if i == 0 else 0,
+                skipped=stats.skipped if i == 0 else 0,
+                errors=list(stats.errors) if i == len(plans) - 1 else [],
+            )
+            plan_stats.appended = xml_output.apply_xml(plan)
+            xml_output.atomic_write_xml(plan.output_root, plan.output)
+            print_summary(plan, plan_stats, dry_run=False)
+    except CliError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    if stats.errors:
+        print_errors(stats.errors)
+        return 1
+    return 0
+
+
 def run_convert_one(
     xml_path: Path,
     playlist_name: str,
@@ -320,40 +413,18 @@ def run_convert_one(
     max_sample_rate: int = 48000,
     source_root: ET.Element | None = None,
 ) -> int:
-    plan, errors = prepare(
+    return run_convert_batch(
         xml_path,
-        playlist_name,
+        [(playlist_folder, playlist_name)],
         wav_dir,
         output,
-        playlist_folder=playlist_folder,
+        force=force,
+        dry_run=dry_run,
         output_format=output_format,
         max_bit_depth=max_bit_depth,
         max_sample_rate=max_sample_rate,
         source_root=source_root,
     )
-    if errors:
-        print_errors(errors)
-        return 1
-    assert plan is not None
-    if plan.warnings:
-        print_warnings(plan.warnings)
-    if dry_run:
-        print_summary(plan, None, dry_run=True)
-        return 0
-    try:
-        stats = convert_plan.convert_unique(
-            plan, force=force, progress=sys.stderr.isatty()
-        )
-        stats.appended = xml_output.apply_xml(plan)
-        xml_output.atomic_write_xml(plan.output_root, plan.output)
-    except CliError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
-    print_summary(plan, stats, dry_run=False)
-    if stats.errors:
-        print_errors(stats.errors)
-        return 1
-    return 0
 
 
 def print_errors(errors: list[str]) -> None:
@@ -523,26 +594,20 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    for i, (folder, name) in enumerate(playlist_refs):
-        if len(playlist_refs) > 1:
-            print()
-            label = playlist_label(folder, name) if folder else name
-            print(f"=== {label} ({i + 1}/{len(playlist_refs)}) ===")
-        rc = run_convert_one(
-            xml_path,
-            name,
-            wav_dir,
-            output,
-            force=args.force,
-            dry_run=args.dry_run,
-            playlist_folder=folder,
-            output_format=output_format,
-            max_bit_depth=max_bit_depth,
-            max_sample_rate=max_sample_rate,
-            source_root=shared_root,
-        )
-        if rc != 0:
-            return rc
+    rc = run_convert_batch(
+        xml_path,
+        playlist_refs,
+        wav_dir,
+        output,
+        force=args.force,
+        dry_run=args.dry_run,
+        output_format=output_format,
+        max_bit_depth=max_bit_depth,
+        max_sample_rate=max_sample_rate,
+        source_root=shared_root,
+    )
+    if rc != 0:
+        return rc
     if not args.dry_run:
         print_import_hints(abs_path(output), output_format=output_format)
     return 0

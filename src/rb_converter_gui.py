@@ -1640,19 +1640,18 @@ class ConverterApp:
                 playlist_dirs.append(plan.playlist_dir)
 
             rb.share_output_root(plans)
-            total = sum(len(plan.unique) for plan in plans)
-            done_base = 0
+            items = rb.collect_batch_unique(plans)
+            total = len(items)
+            rb.share_cover_caches(plans)
 
             def on_progress(
                 current: int,
                 _plan_total: int,
                 action: str,
                 track_name: str,
-                base: int = 0,
             ) -> None:
-                overall = base + current
                 self._ui(
-                    lambda o=overall, t=total, a=action, n=track_name: self._set_progress(
+                    lambda o=current, t=total, a=action, n=track_name: self._set_progress(
                         o, t, action=a, name=n
                     )
                 )
@@ -1661,47 +1660,39 @@ class ConverterApp:
                 encode_errors = [err for s in all_stats for err in s.errors]
                 self._ui(lambda e=encode_errors: self._finish_cancelled(e or None))
 
+            if self._cancel_event.is_set():
+                _finish_cancel_with_errors()
+                return
+            batch_stats = rb.convert_unique(
+                plans[0],
+                force=False,
+                progress=False,
+                on_progress=on_progress,
+                cancel_event=self._cancel_event,
+                items=items,
+            )
+            all_stats.append(batch_stats)
+            if self._cancel_event.is_set():
+                _finish_cancel_with_errors()
+                return
             for plan in plans:
                 if self._cancel_event.is_set():
                     _finish_cancel_with_errors()
                     return
-                base = done_base
-
-                def tick(
-                    current: int,
-                    plan_total: int,
-                    action: str,
-                    track_name: str,
-                    b: int = base,
-                ) -> None:
-                    on_progress(current, plan_total, action, track_name, base=b)
-
-                stats = rb.convert_unique(
-                    plan,
-                    force=False,
-                    progress=False,
-                    on_progress=tick,
-                    cancel_event=self._cancel_event,
-                )
-                all_stats.append(stats)
-                done_base += len(plan.unique)
-                if self._cancel_event.is_set():
-                    _finish_cancel_with_errors()
-                    return
-                stats.appended = rb.apply_xml(plan)
+                appended = rb.apply_xml(plan)
                 rb.atomic_write_xml(plan.output_root, plan.output)
                 if self._cancel_event.is_set():
                     _finish_cancel_with_errors()
                     return
                 parts = []
-                if stats.converted:
-                    parts.append(f"{stats.converted} converted")
-                if stats.copied:
-                    parts.append(f"{stats.copied} copied")
-                if stats.skipped:
-                    parts.append(f"{stats.skipped} skipped")
-                if stats.appended:
-                    parts.append(f"+{stats.appended} playlist entries")
+                if batch_stats.converted and plan is plans[0]:
+                    parts.append(f"{batch_stats.converted} converted")
+                if batch_stats.copied and plan is plans[0]:
+                    parts.append(f"{batch_stats.copied} copied")
+                if batch_stats.skipped and plan is plans[0]:
+                    parts.append(f"{batch_stats.skipped} skipped")
+                if appended:
+                    parts.append(f"+{appended} playlist entries")
                 if plan.warnings:
                     parts.append(f"{len(plan.warnings)} missing skipped")
                 detail = ", ".join(parts) if parts else "done"

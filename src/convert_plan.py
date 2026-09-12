@@ -164,6 +164,36 @@ def convert_worker_count(n_items: int) -> int:
     return max(CONVERT_WORKERS_MIN, min(capped, n_items))
 
 
+def source_key(path: Path) -> str:
+    """NFC-normalized resolved path string identifying an existing source file."""
+    return unicodedata.normalize("NFC", str(path.expanduser().resolve()))
+
+
+def collect_batch_unique(plans: list[Plan]) -> list[PlannedTrack]:
+    """One PlannedTrack per (source_key, format) across plans; first wins."""
+    seen: set[tuple[str, str]] = set()
+    out: list[PlannedTrack] = []
+    for plan in plans:
+        fmt = plan.output_format
+        for item in plan.unique:
+            key = (source_key(item.source_path), fmt)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+    return out
+
+
+def share_cover_caches(plans: list[Plan]) -> None:
+    """Point every plan at the first plan's cover_cache (merged)."""
+    if len(plans) < 2:
+        return
+    host = plans[0]
+    for plan in plans[1:]:
+        host.cover_cache.update(plan.cover_cache)
+        plan.cover_cache = host.cover_cache
+
+
 def convert_unique(
     plan: Plan,
     force: bool,
@@ -171,10 +201,11 @@ def convert_unique(
     progress: bool = False,
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    items: list[PlannedTrack] | None = None,
 ) -> ConvertStats:
     stats = ConvertStats()
     plan.playlist_dir.mkdir(parents=True, exist_ok=True)
-    items = plan.unique
+    items = list(items) if items is not None else plan.unique
     bar = Progress(len(items), progress, on_progress=on_progress)
     completed = 0
     stats_lock = threading.Lock()

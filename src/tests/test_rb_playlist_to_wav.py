@@ -1034,7 +1034,7 @@ class XmlFixtureTests(unittest.TestCase):
         load_spy.assert_not_called()
 
     def test_prepare_all_then_apply_keeps_every_playlist(self) -> None:
-        """GUI prepares every playlist before writing; trees must be shared."""
+        """Batch-prepare playlists; convert unique (source, format) once; share tree."""
         src = rb.load_dj_playlists(self.xml_path)
         playlists_root = src.find("PLAYLISTS/NODE")
         assert playlists_root is not None
@@ -1047,7 +1047,10 @@ class XmlFixtureTests(unittest.TestCase):
         playlists_root.set("Count", "2")
         ET.ElementTree(src).write(self.xml_path, encoding="UTF-8", xml_declaration=True)
 
+        encoded: list[str] = []
+
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            encoded.append(Path(source).name)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
@@ -1069,11 +1072,15 @@ class XmlFixtureTests(unittest.TestCase):
             plans = [plan_a, plan_b]
             rb.share_output_root(plans)
             self.assertIs(plan_a.output_root, plan_b.output_root)
+            items = rb.collect_batch_unique(plans)
+            self.assertEqual(len(items), 3)
+            rb.convert_unique(plan_a, force=False, progress=False, items=items)
             for plan in plans:
-                rb.convert_unique(plan, force=False, progress=False)
                 rb.apply_xml(plan)
                 rb.atomic_write_xml(plan.output_root, plan.output)
 
+        self.assertEqual(len(encoded), 3)
+        self.assertEqual(encoded.count("07 - Bestial.flac"), 1)
         out = ET.parse(self.output).getroot()
         names = sorted(name for _folder, name, _node in rb.iter_playlists(out))
         self.assertEqual(names, ["Morning [WAV]", "Untitled Intelligent List [WAV]"])
@@ -1084,6 +1091,69 @@ class XmlFixtureTests(unittest.TestCase):
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
         morning_pl = rb.find_playlists_by_name(out, "Morning [WAV]")[0]
         self.assertEqual(len(morning_pl.findall("TRACK")), 1)
+        bestial = [t for t in out.findall("COLLECTION/TRACK") if t.get("Name") == "Bestial"]
+        self.assertEqual(len(bestial), 1)
+        tid = bestial[0].get("TrackID")
+        for pl_name in ("Untitled Intelligent List [WAV]", "Morning [WAV]"):
+            pl = rb.find_playlists_by_name(out, pl_name)[0]
+            self.assertIn(tid, [t.get("Key") for t in pl.findall("TRACK")])
+
+    def test_cli_multi_playlist_encodes_shared_source_once(self) -> None:
+        """Given Bestial in two WAV playlists: When CLI converts both in one run:
+        Then ffmpeg encodes each source once; both playlists share one Bestial
+        TrackID and one dest file."""
+        src = rb.load_dj_playlists(self.xml_path)
+        playlists_root = src.find("PLAYLISTS/NODE")
+        assert playlists_root is not None
+        morning = ET.SubElement(
+            playlists_root,
+            "NODE",
+            {"Name": "Morning", "Type": "1", "KeyType": "0", "Entries": "1"},
+        )
+        ET.SubElement(morning, "TRACK", {"Key": "219211420"})
+        playlists_root.set("Count", "2")
+        ET.ElementTree(src).write(self.xml_path, encoding="UTF-8", xml_declaration=True)
+
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        wizard = (
+            self.xml_path,
+            [(None, "Untitled Intelligent List"), (None, "Morning")],
+            self.wav_dir,
+            self.output,
+            "wav",
+            24,
+            48000,
+        )
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            convert_plan, "is_cdj_safe_wav", return_value=False
+        ), patch.object(rb.sys.stdin, "isatty", return_value=True), patch.object(
+            rb, "prompt_wizard", return_value=wizard
+        ):
+            self.assertEqual(rb.main([]), 0)
+
+        self.assertEqual(len(encoded), 3)
+        self.assertEqual(encoded.count("07 - Bestial.flac"), 1)
+        dest = self.wav_dir / "ABSL" / "It's just a bad dream" / "Bestial.wav"
+        self.assertTrue(dest.is_file())
+        out = ET.parse(self.output).getroot()
+        self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
+        bestial = [t for t in out.findall("COLLECTION/TRACK") if t.get("Name") == "Bestial"]
+        self.assertEqual(len(bestial), 1)
+        tid = bestial[0].get("TrackID")
+        for pl_name in ("Untitled Intelligent List [WAV]", "Morning [WAV]"):
+            pl = rb.find_playlists_by_name(out, pl_name)[0]
+            keys = [t.get("Key") for t in pl.findall("TRACK")]
+            self.assertIn(tid, keys)
 
     def test_location_reuse_and_rerun_extends_playlist(self) -> None:
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:

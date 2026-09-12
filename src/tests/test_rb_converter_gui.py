@@ -50,6 +50,29 @@ def _seed_track_selection(app, folder="ROOT", name="Test", key="1"):
     return leaf
 
 
+def _mock_convert_plan(*, n_unique: int = 2):
+    """Minimal Plan-like object for GUI convert-worker tests (batch unique path)."""
+    from types import SimpleNamespace
+
+    unique = [
+        SimpleNamespace(
+            source_path=Path(f"/tmp/track{i}.flac"),
+            dest_name=f"track{i}.wav",
+        )
+        for i in range(n_unique)
+    ]
+    return SimpleNamespace(
+        warnings=[],
+        playlist_dir=Path("/tmp"),
+        unique=unique,
+        wav_playlist_name="Test [WAV]",
+        output_root=object(),
+        output=Path("/tmp/out.xml"),
+        output_format="wav",
+        cover_cache={},
+    )
+
+
 class TotalSuccessfulConversionsTests(unittest.TestCase):
     def test_total_successful_conversions(self) -> None:
         self.assertEqual(
@@ -246,17 +269,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        from types import SimpleNamespace
         from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
 
-        plan = SimpleNamespace(
-            warnings=[],
-            playlist_dir=Path("/tmp"),
-            unique=[object(), object()],
-            wav_playlist_name="Test [WAV]",
-            output_root=object(),
-            output=Path("/tmp/out.xml"),
-        )
+        plan = _mock_convert_plan(n_unique=2)
 
         root = None
         try:
@@ -334,17 +349,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        from types import SimpleNamespace
         from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
 
-        plan = SimpleNamespace(
-            warnings=[],
-            playlist_dir=Path("/tmp"),
-            unique=[object(), object()],
-            wav_playlist_name="Test [WAV]",
-            output_root=object(),
-            output=Path("/tmp/out.xml"),
-        )
+        plan = _mock_convert_plan(n_unique=2)
         error_text = "boom for x.flac"
 
         root = None
@@ -435,17 +442,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        from types import SimpleNamespace
         from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
 
-        plan = SimpleNamespace(
-            warnings=[],
-            playlist_dir=Path("/tmp"),
-            unique=[object()],
-            wav_playlist_name="Test [WAV]",
-            output_root=object(),
-            output=Path("/tmp/out.xml"),
-        )
+        plan = _mock_convert_plan(n_unique=1)
         error_text = "boom for x.flac"
 
         root = None
@@ -612,17 +611,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        from types import SimpleNamespace
         from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
 
-        plan = SimpleNamespace(
-            warnings=[],
-            playlist_dir=Path("/tmp"),
-            unique=[object()],
-            wav_playlist_name="Test [WAV]",
-            output_root=object(),
-            output=Path("/tmp/out.xml"),
-        )
+        plan = _mock_convert_plan(n_unique=1)
 
         root = None
         try:
