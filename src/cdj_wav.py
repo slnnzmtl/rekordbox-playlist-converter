@@ -96,19 +96,6 @@ def is_cdj_safe_wav(
     )
 
 
-def _copy_file_range(
-    src, dest, start: int, size: int, *, bufsize: int = 1024 * 1024
-) -> None:
-    src.seek(start)
-    remaining = size
-    while remaining > 0:
-        chunk = src.read(min(bufsize, remaining))
-        if not chunk:
-            raise CliError("truncated WAV data while streaming copy")
-        dest.write(chunk)
-        remaining -= len(chunk)
-
-
 def _rewrite_wav_pcm(source: Path, dest: Path) -> None:
     """Rewrite as WAVE_FORMAT_PCM with only fmt + data (never EXTENSIBLE)."""
     try:
@@ -167,8 +154,10 @@ def _rewrite_wav_pcm(source: Path, dest: Path) -> None:
                 out.write(b"RIFF" + struct.pack("<I", 4 + body_len) + b"WAVE")
                 out.write(b"fmt " + struct.pack("<I", len(fmt_payload)) + fmt_payload)
                 out.write(b"data" + struct.pack("<I", data_size))
-                _copy_file_range(fp, out, data_start, data_size)
+                iff_chunks.copy_file_range(fp, out, data_start, data_size)
                 if pad:
                     out.write(b"\x00")
     except OSError as exc:
         raise CliError(f"cannot read WAV: {source}: {exc}") from exc
+    except ValueError as exc:
+        raise CliError(f"truncated WAV data while streaming copy") from exc

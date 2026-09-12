@@ -65,3 +65,22 @@ def iter_chunks_file(
             raise ValueError(f"truncated chunk {cid!r}")
         yield cid, size, payload_offset
         offset = payload_end + (size % 2)
+
+
+def copy_file_range(
+    src: BinaryIO,
+    dest: BinaryIO,
+    start: int,
+    size: int,
+    *,
+    bufsize: int = 1024 * 1024,
+) -> None:
+    """Copy *size* bytes from *src* at *start* to *dest* in chunks."""
+    src.seek(start)
+    remaining = size
+    while remaining > 0:
+        chunk = src.read(min(bufsize, remaining))
+        if not chunk:
+            raise ValueError("truncated stream copy")
+        dest.write(chunk)
+        remaining -= len(chunk)

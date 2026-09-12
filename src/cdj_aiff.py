@@ -328,19 +328,6 @@ def _ssnd_pcm_bytes(path: Path) -> bytes:
     raise CliError(f"SSND missing in {path}")
 
 
-def _copy_file_range(
-    src, dest, start: int, size: int, *, bufsize: int = 1024 * 1024
-) -> None:
-    src.seek(start)
-    remaining = size
-    while remaining > 0:
-        chunk = src.read(min(bufsize, remaining))
-        if not chunk:
-            raise CliError("truncated AIFF data while streaming copy")
-        dest.write(chunk)
-        remaining -= len(chunk)
-
-
 def _stream_comm_ssnd_chunks(
     src, end: int
 ) -> list[tuple[bytes, int, int]]:
@@ -360,7 +347,7 @@ def _write_form_aiff_chunks(
     out.write(b"FORM" + struct.pack(">I", 4 + body_size) + b"AIFF")
     for cid, size, payload_start in selected:
         out.write(cid + struct.pack(">I", size))
-        _copy_file_range(src, out, payload_start, size)
+        iff_chunks.copy_file_range(src, out, payload_start, size)
         if size % 2:
             out.write(b"\x00")
     if extra:
@@ -377,8 +364,9 @@ def _normalize_aiff_audio_chunks(source: Path, dest: Path) -> None:
             selected = _stream_comm_ssnd_chunks(src, end)
             with dest.open("wb") as out:
                 _write_form_aiff_chunks(src, out, selected)
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise CliError(f"cannot read AIFF: {source}: {exc}") from exc
+
 
 
 def write_aiff_id3(

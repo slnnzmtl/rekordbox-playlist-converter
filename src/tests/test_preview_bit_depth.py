@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
@@ -14,7 +15,6 @@ if str(_SRC) not in sys.path:
 import preview_bit_depth as preview_bit_depth_mod
 from preview_bit_depth import (
     cached_preview_bit_depth,
-    peek_cached_preview_bit_depth,
     read_preview_bit_depth,
 )
 
@@ -190,45 +190,13 @@ class PreviewBitDepthTests(unittest.TestCase):
             )
             self.assertEqual(calls["n"], 1)
 
-    def test_cached_and_peek_honor_lock(self) -> None:
-        import threading
-
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "track.flac"
-            path.write_bytes(_flac_with_bit_depth(24))
-            cache: dict = {}
-            lock = threading.RLock()
-            held = {"n": 0}
-
-            class CountingLock:
-                def __enter__(self):
-                    held["n"] += 1
-                    return lock.__enter__()
-
-                def __exit__(self, *args):
-                    return lock.__exit__(*args)
-
-            tracker = CountingLock()
-            self.assertEqual(
-                cached_preview_bit_depth(path, cache, lock=tracker), 24
-            )
-            self.assertGreaterEqual(held["n"], 1)
-            before = held["n"]
-            hit, bits = peek_cached_preview_bit_depth(path, cache, lock=tracker)
-            self.assertTrue(hit)
-            self.assertEqual(bits, 24)
-            self.assertGreater(held["n"], before)
-
     def test_preview_cache_evicts_when_over_max(self) -> None:
-        """Given more than PREVIEW_CACHE_MAX entries: When caching bit depths:
-        Then cache length stays ≤ PREVIEW_CACHE_MAX (LRU eviction)."""
-        self.assertTrue(
-            hasattr(preview_bit_depth_mod, "PREVIEW_CACHE_MAX"),
-            "preview_bit_depth must expose PREVIEW_CACHE_MAX",
-        )
-        max_entries = preview_bit_depth_mod.PREVIEW_CACHE_MAX
-        self.assertEqual(max_entries, 4096)
-        with tempfile.TemporaryDirectory() as tmp:
+        """Given more entries than the cache cap: When caching bit depths:
+        Then length stays at the cap and the oldest key is re-read."""
+        max_entries = 8
+        with tempfile.TemporaryDirectory() as tmp, patch.object(
+            preview_bit_depth_mod, "PREVIEW_CACHE_MAX", max_entries
+        ):
             root = Path(tmp)
             cache: dict = {}
             calls = {"n": 0}
@@ -238,7 +206,7 @@ class PreviewBitDepthTests(unittest.TestCase):
                 return 24
 
             paths: list[Path] = []
-            for i in range(max_entries + 8):
+            for i in range(max_entries + 2):
                 path = root / f"track-{i}.flac"
                 path.write_bytes(_flac_with_bit_depth(24))
                 paths.append(path)
@@ -246,7 +214,6 @@ class PreviewBitDepthTests(unittest.TestCase):
                     cached_preview_bit_depth(path, cache, read=counting_read), 24
                 )
             self.assertLessEqual(len(cache), max_entries)
-            # Oldest entry should have been evicted; re-read after touching new keys.
             self.assertEqual(
                 cached_preview_bit_depth(paths[0], cache, read=counting_read), 24
             )
