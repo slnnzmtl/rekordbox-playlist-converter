@@ -140,6 +140,23 @@ def pump_ui(root, times: int = 20) -> None:
         root.update()
 
 
+def run_inline_thread(target=None, **_kwargs):
+    """threading.Thread stand-in that runs *target* synchronously on start()."""
+
+    class _T:
+        def start(self) -> None:
+            if target is not None:
+                target()
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout=None) -> None:
+            return None
+
+    return _T()
+
+
 def seed_track_selection(app, folder="ROOT", name="Test", key="1"):
     """Paint one selected leaf so Convert can proceed without loading a real XML."""
     import tkinter as tk

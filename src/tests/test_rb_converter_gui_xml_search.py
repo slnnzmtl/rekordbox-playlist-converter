@@ -19,10 +19,10 @@ from gui_tk import (
     click_button,
     find_listbox,
     merge_patches,
+    run_inline_thread,
     startup_patches,
     tk_available,
 )
-
 
 class GuiXmlRefreshTests(unittest.TestCase):
     def test_refresh_reloads_xml_without_browse_dialog(self) -> None:
@@ -56,21 +56,6 @@ class GuiXmlRefreshTests(unittest.TestCase):
                 root.destroy()
 
 class GuiFileMenuXmlSearchTests(unittest.TestCase):
-    @staticmethod
-    def _run_inline_thread(target=None, daemon=None, **_kwargs):
-        class _T:
-            def start(self_inner):
-                if target is not None:
-                    target()
-
-            def is_alive(self_inner):
-                return False
-
-            def join(self_inner, timeout=None):
-                return None
-
-        return _T()
-
     def test_file_menu_search_shows_choice_modal_when_xml_already_loaded(self) -> None:
         if not tk_available():
             self.skipTest("_tkinter not available")
@@ -89,7 +74,7 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
                 check_for_update=UpdateCheckResult(kind="up_to_date"),
                 load_preferences={},
                 find_rekordbox_xml_via_child=hits,
-                **{"threading.Thread": {"side_effect": self._run_inline_thread}},
+                **{"threading.Thread": {"side_effect": run_inline_thread}},
             ), patch.object(ConverterApp, "_load_playlists"), patch.object(
                 tk.Toplevel, "wait_window"
             ):
@@ -134,7 +119,7 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
                 load_preferences={},
                 find_rekordbox_xml_via_child=[found],
                 save_preferences=None,
-                **{"threading.Thread": {"side_effect": self._run_inline_thread}},
+                **{"threading.Thread": {"side_effect": run_inline_thread}},
             ) as mocks, patch.object(ConverterApp, "_load_playlists"):
                 find_xml = mocks["find_rekordbox_xml_via_child"]
                 save_prefs = mocks["save_preferences"]
@@ -184,7 +169,6 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
                     submenu.invoke(j)
                     return True
         return False
-
 
 if __name__ == "__main__":
     unittest.main()

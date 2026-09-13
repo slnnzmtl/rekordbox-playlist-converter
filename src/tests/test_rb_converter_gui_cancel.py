@@ -24,12 +24,12 @@ from gui_tk import (
     mark_output_folder_valid,
     merge_patches,
     mock_convert_plan,
+    run_inline_thread,
     seed_track_selection,
     start_convert_and_confirm,
     startup_patches,
     tk_available,
 )
-
 
 class ProgressBusyVisibilityTests(unittest.TestCase):
     def test_finish_cancelled_clears_busy_without_error_dialog(self) -> None:
@@ -127,14 +127,6 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
 
         root = None
         try:
-
-            def run_inline(target=None, **_kwargs):
-                class _T:
-                    def start(self_inner):
-                        target()
-
-                return _T()
-
             with app_patches(
                 merge_patches(
                     startup_patches(),
@@ -150,7 +142,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "rb.apply_xml": {"return_value": 1},
                         "rb.write_import_xml": None,
                         "messagebox.showerror": None,
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
             ) as mocks, patch.object(
@@ -221,14 +213,6 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
 
         root = None
         try:
-
-            def run_inline(target=None, **_kwargs):
-                class _T:
-                    def start(self_inner):
-                        target()
-
-                return _T()
-
             with app_patches(
                 merge_patches(
                     startup_patches(),
@@ -248,7 +232,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "rb.apply_xml": {"return_value": 1},
                         "rb.write_import_xml": None,
                         "messagebox.showerror": None,
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
             ) as mocks, patch.object(
@@ -316,13 +300,6 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 cancel_event.set()
                 return None, []
 
-            def run_inline(target=None, **_kwargs):
-                class _T:
-                    def start(self_inner):
-                        target()
-
-                return _T()
-
             with app_patches(
                 merge_patches(
                     startup_patches(),
@@ -332,7 +309,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "rb.convert_unique": None,
                         "rb.apply_xml": None,
                         "messagebox.showerror": None,
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
             ) as mocks, patch.object(
@@ -390,13 +367,6 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 cancel_event.set()
                 raise rb.CancelledError("conversion cancelled during preview")
 
-            def run_inline(target=None, **_kwargs):
-                class _T:
-                    def start(self_inner):
-                        target()
-
-                return _T()
-
             with app_patches(
                 merge_patches(
                     startup_patches(),
@@ -415,7 +385,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "rb.convert_unique": None,
                         "rb.apply_xml": None,
                         "messagebox.showerror": None,
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
             ) as mocks, patch.object(
@@ -463,14 +433,6 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
 
         root = None
         try:
-
-            def run_inline(target=None, **_kwargs):
-                class _T:
-                    def start(self_inner):
-                        target()
-
-                return _T()
-
             with app_patches(
                 merge_patches(
                     startup_patches(),
@@ -488,7 +450,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "rb.apply_xml": {"return_value": 1},
                         "rb.write_import_xml": None,
                         "messagebox.showerror": None,
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
             ) as mocks, patch.object(
@@ -530,7 +492,6 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
         finally:
             if root is not None:
                 root.destroy()
-
 
 class MissingFilesDialogTests(unittest.TestCase):
     def test_finish_no_conversions_lists_missing_paths_in_scrollbox(self) -> None:
@@ -576,7 +537,6 @@ class MissingFilesDialogTests(unittest.TestCase):
         finally:
             if root is not None:
                 root.destroy()
-
 
 if __name__ == "__main__":
     unittest.main()

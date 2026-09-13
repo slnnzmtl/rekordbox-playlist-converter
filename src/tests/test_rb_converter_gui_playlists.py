@@ -14,9 +14,8 @@ if str(_SRC) not in sys.path:
 if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
-from gui_tk import app_patches, mark_output_folder_valid, startup_patches, tk_available
+from gui_tk import app_patches, mark_output_folder_valid, run_inline_thread, startup_patches, tk_available
 from gui_xml_fixtures import TRACKLIST_XML, write_xml
-
 
 def _flush_debounced(app, attr: str, callback) -> None:
     """Cancel a pending search after() and apply immediately."""
@@ -26,10 +25,8 @@ def _flush_debounced(app, attr: str, callback) -> None:
         setattr(app, attr, None)
     callback()
 
-
 def _flush_playlist_search_debounce(app) -> None:
     _flush_debounced(app, "_playlist_search_after_id", app._apply_playlist_filter)
-
 
 NESTED_XML = """\
 <?xml version="1.0" encoding="UTF-8"?>
@@ -257,23 +254,10 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 tree.event_generate("<<TreeviewSelect>>")
                 # Default selection includes both groups' leaves.
 
-                def run_inline(target=None, **_kwargs):
-                    class _T:
-                        def start(self_inner):
-                            target()
-
-                        def is_alive(self_inner):
-                            return False
-
-                        def join(self_inner, timeout=None):
-                            return None
-
-                    return _T()
-
                 with app_patches(
                     {
                         "rb.prepare": None,
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                         "messagebox.showerror": None,
                     }
                 ) as mocks:
@@ -355,23 +339,10 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                         return (MagicMock(), [])
                     return (None, ["stop"])
 
-                def run_inline(target=None, **_kwargs):
-                    class _T:
-                        def start(self_inner):
-                            target()
-
-                        def is_alive(self_inner):
-                            return False
-
-                        def join(self_inner, timeout=None):
-                            return None
-
-                    return _T()
-
                 with app_patches(
                     {
                         "rb.prepare": {"side_effect": fake_prepare},
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                         "messagebox.showerror": None,
                     }
                 ):
@@ -422,23 +393,10 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     prepare_calls.append((args, kwargs))
                     return (None, ["stop"])
 
-                def run_inline(target=None, **_kwargs):
-                    class _T:
-                        def start(self_inner):
-                            target()
-
-                        def is_alive(self_inner):
-                            return False
-
-                        def join(self_inner, timeout=None):
-                            return None
-
-                    return _T()
-
                 with app_patches(
                     {
                         "rb.prepare": {"side_effect": fake_prepare},
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                         "messagebox.showerror": None,
                     }
                 ):
@@ -472,7 +430,6 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         finally:
             if root is not None:
                 root.destroy()
-
 
 
 if __name__ == "__main__":

@@ -16,9 +16,8 @@ if str(_TESTS) not in sys.path:
 
 from test_preview_bit_depth import _flac_with_bit_depth
 
-from gui_tk import app_patches, mark_output_folder_valid, startup_patches, tk_available
+from gui_tk import app_patches, mark_output_folder_valid, run_inline_thread, startup_patches, tk_available
 from gui_xml_fixtures import TRACKLIST_XML, write_xml
-
 
 def _flush_debounced(app, attr: str, callback) -> None:
     """Cancel a pending search after() and apply immediately."""
@@ -28,10 +27,8 @@ def _flush_debounced(app, attr: str, callback) -> None:
         setattr(app, attr, None)
     callback()
 
-
 def _flush_track_search_debounce(app) -> None:
     _flush_debounced(app, "_track_search_after_id", app._refresh_tracklist_preview)
-
 
 class GuiTracklistTests(unittest.TestCase):
     def _make_app(self, source: Path):
@@ -295,19 +292,6 @@ class GuiTracklistTests(unittest.TestCase):
         import rb_playlist_to_wav as rb
         from unittest.mock import patch
 
-        def run_inline(target=None, **_kwargs):
-            class _T:
-                def start(self_inner):
-                    target()
-
-                def is_alive(self_inner):
-                    return False
-
-                def join(self_inner, timeout=None):
-                    return None
-
-            return _T()
-
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -337,7 +321,7 @@ class GuiTracklistTests(unittest.TestCase):
                 tree = app.playlist_tree
                 crate = tree.get_children("")[0]
                 with app_patches(
-                    **{"threading.Thread": {"side_effect": run_inline}}
+                    **{"threading.Thread": {"side_effect": run_inline_thread}}
                 ):
                     tree.selection_set(crate)
                     tree.event_generate("<<TreeviewSelect>>")
@@ -384,19 +368,6 @@ class GuiTracklistTests(unittest.TestCase):
         import rb_playlist_to_wav as rb
         from unittest.mock import patch
 
-        def run_inline(target=None, **_kwargs):
-            class _T:
-                def start(self_inner):
-                    target()
-
-                def is_alive(self_inner):
-                    return False
-
-                def join(self_inner, timeout=None):
-                    return None
-
-            return _T()
-
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -425,7 +396,7 @@ class GuiTracklistTests(unittest.TestCase):
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 with app_patches(
-                    **{"threading.Thread": {"side_effect": run_inline}}
+                    **{"threading.Thread": {"side_effect": run_inline_thread}}
                 ):
                     crate = tree.get_children("")[0]
                     tree.selection_set(crate)
@@ -512,23 +483,10 @@ class GuiTracklistTests(unittest.TestCase):
                     prepare_calls.append((args, kwargs))
                     return (None, ["stop"])
 
-                def run_inline(target=None, **_kwargs):
-                    class _T:
-                        def start(self_inner):
-                            target()
-
-                        def is_alive(self_inner):
-                            return False
-
-                        def join(self_inner, timeout=None):
-                            return None
-
-                    return _T()
-
                 with app_patches(
                     {
                         "rb.prepare": {"side_effect": fake_prepare},
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                         "messagebox.showerror": None,
                     }
                 ):
@@ -674,19 +632,6 @@ class GuiTracklistTests(unittest.TestCase):
         import rb_playlist_to_wav as rb
         from unittest.mock import patch
 
-        def run_inline(target=None, **_kwargs):
-            class _T:
-                def start(self_inner):
-                    target()
-
-                def is_alive(self_inner):
-                    return False
-
-                def join(self_inner, timeout=None):
-                    return None
-
-            return _T()
-
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
@@ -722,7 +667,7 @@ class GuiTracklistTests(unittest.TestCase):
                 tree = app.playlist_tree
                 crate = tree.get_children("")[0]
                 with app_patches(
-                    **{"threading.Thread": {"side_effect": run_inline}}
+                    **{"threading.Thread": {"side_effect": run_inline_thread}}
                 ):
                     tree.selection_set(crate)
                     tree.event_generate("<<TreeviewSelect>>")
@@ -743,7 +688,6 @@ class GuiTracklistTests(unittest.TestCase):
         finally:
             if root is not None:
                 root.destroy()
-
 
 
 if __name__ == "__main__":

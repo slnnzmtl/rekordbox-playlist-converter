@@ -22,11 +22,11 @@ from gui_tk import (
     merge_patches,
     mock_convert_plan,
     pump_ui,
+    run_inline_thread,
     seed_track_selection,
     startup_patches,
     tk_available,
 )
-
 
 class PrepareWriteBoundaryTests(unittest.TestCase):
     def test_confirm_writes_in_order_without_reprepare(
@@ -65,14 +65,6 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
 
         root = None
         try:
-
-            def run_inline(target=None, **_kwargs):
-                class _T:
-                    def start(self_inner):
-                        target()
-
-                return _T()
-
             with app_patches(
                 merge_patches(
                     startup_patches(),
@@ -100,7 +92,7 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
                                 "write_import_xml"
                             )
                         },
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
             ) as mocks, patch.object(
@@ -163,7 +155,6 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
-
 class ConversionPreviewDialogTests(unittest.TestCase):
     def test_preview_modal_table_and_disabled_controls(self) -> None:
         """Given prepare finishes: When the preview opens: Then the modal shows
@@ -215,13 +206,6 @@ class ConversionPreviewDialogTests(unittest.TestCase):
             ],
         )
 
-        def run_inline(target=None, **_kwargs):
-            class _T:
-                def start(self_inner):
-                    target()
-
-            return _T()
-
         def find_toplevel(parent, title: str):
             for child in parent.winfo_children():
                 if isinstance(child, tk.Toplevel):
@@ -253,7 +237,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                         "rb.collect_batch_unique": plan.unique,
                         "rb.share_cover_caches": None,
                         "rb.build_conversion_preview": preview,
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
             ), patch.object(
@@ -420,13 +404,6 @@ class ConversionPreviewDialogTests(unittest.TestCase):
             ],
         )
 
-        def run_inline(target=None, **_kwargs):
-            class _T:
-                def start(self_inner):
-                    target()
-
-            return _T()
-
         def find_toplevel(parent, title: str):
             for child in parent.winfo_children():
                 if isinstance(child, tk.Toplevel):
@@ -476,7 +453,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                         "rb.collect_batch_unique": plan.unique,
                         "rb.share_cover_caches": None,
                         "rb.build_conversion_preview": preview,
-                        "threading.Thread": {"side_effect": run_inline},
+                        "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
             ), patch.object(
@@ -510,7 +487,6 @@ class ConversionPreviewDialogTests(unittest.TestCase):
         finally:
             if root is not None:
                 root.destroy()
-
 
 if __name__ == "__main__":
     unittest.main()

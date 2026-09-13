@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Internal: shared `gui_tk.run_inline_thread` for GUI unit tests (replaces ~16
+  copied `threading.Thread` stubs).
 - Internal: shared path helpers in `convert/paths.py` (`abs_path`, `collision_key`,
   `same_file`); converter manifest occupancy uses `same_file`; ALAC codec guard
   hoisted once in `classify_source`. Shared `XmlFixtureTests` base in
