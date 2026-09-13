@@ -8,6 +8,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from cli_error import CliError
+from convert.quality import (
+    FORMAT_DIR_NAMES,
+    coerce_bit_depth,
+    coerce_sample_rate,
+)
 from converter_manifest import collision_key
 
 
@@ -68,11 +73,10 @@ def preferred_relative_dest(
 
 def format_dir_name(output_format: str) -> str:
     """Return WAV or AIFF directory name for the output format."""
-    if output_format == "wav":
-        return "WAV"
-    if output_format == "aiff":
-        return "AIFF"
-    raise CliError(f"unsupported output format: {output_format!r}")
+    name = FORMAT_DIR_NAMES.get(output_format)
+    if name is None:
+        raise CliError(f"unsupported output format: {output_format!r}")
+    return name
 
 
 def format_media_dir(wav_dir: Path, output_format: str) -> Path:
@@ -114,10 +118,8 @@ def target_from_stream(
 
     Never raises bit depth or sample rate above the source (within the ceiling).
     """
-    if max_bit_depth not in (16, 24):
-        max_bit_depth = 24
-    if max_sample_rate not in (44100, 48000):
-        max_sample_rate = 48000
+    max_bit_depth = coerce_bit_depth(max_bit_depth)
+    max_sample_rate = coerce_sample_rate(max_sample_rate)
 
     fmt = str(stream.get("sample_fmt") or "")
     raw = stream.get("bits_per_raw_sample")

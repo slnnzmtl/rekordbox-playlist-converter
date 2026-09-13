@@ -11,12 +11,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from cli_error import CliError
+from convert.quality import OUTPUT_FORMATS, FORMAT_DIR_NAMES
 
 MANIFEST_NAME = ".rekordbox-converter-manifest.json"
 MANIFEST_VERSION = 1
 MANIFEST_LAYOUT = "format-flat"
-SUPPORTED_FORMATS = frozenset({"wav", "aiff"})
-_FORMAT_DIRS = {"wav": "WAV", "aiff": "AIFF"}
+SUPPORTED_FORMATS = OUTPUT_FORMATS
+_FORMAT_DIRS = FORMAT_DIR_NAMES
 
 
 class ManifestError(CliError):

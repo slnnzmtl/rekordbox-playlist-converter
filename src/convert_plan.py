@@ -56,6 +56,11 @@ from convert.paths import (
     playlist_dir_name as playlist_dir_name,
     sanitize_path_component as sanitize_path_component,
 )
+from convert.quality import (
+    coerce_bit_depth,
+    coerce_output_format,
+    coerce_sample_rate,
+)
 from converter_manifest import ConverterManifest
 from rekordbox_xml import (
     decode_location,
@@ -568,12 +573,9 @@ def build_plan(
     cancel_event: threading.Event | None = None,
     manifest: ConverterManifest | None = None,
 ) -> tuple[Plan | None, list[str]]:
-    if output_format not in ("wav", "aiff"):
-        output_format = "wav"
-    if max_bit_depth not in (16, 24):
-        max_bit_depth = 24
-    if max_sample_rate not in (44100, 48000):
-        max_sample_rate = 48000
+    output_format = coerce_output_format(output_format)
+    max_bit_depth = coerce_bit_depth(max_bit_depth)
+    max_sample_rate = coerce_sample_rate(max_sample_rate)
     errors: list[str] = []
     tracks_el, resolve_errors = resolve_playlist_tracks(source_root, playlist_el)
     errors.extend(resolve_errors)

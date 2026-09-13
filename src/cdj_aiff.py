@@ -14,12 +14,13 @@ import ffmpeg_tools
 import iff_chunks
 from cdj_wav import CDJ_SAFE_CHANNELS
 from cli_error import CancelledError, CliError
+from convert.quality import BIT_DEPTHS, coerce_bit_depth, coerce_sample_rate
 
 AIFF_RATE_BYTES = {
     44100: bytes.fromhex("400eac44000000000000"),
     48000: bytes.fromhex("400ebb80000000000000"),
 }
-AIFF_SAFE_BIT_DEPTHS = {16, 24}
+AIFF_SAFE_BIT_DEPTHS = set(BIT_DEPTHS)
 
 
 @dataclass(frozen=True)
@@ -132,13 +133,9 @@ def _parse_aiff_audio(path: Path) -> _AiffAudioInfo:
 def _normalize_aiff_quality(
     bit_depth: int, sample_rate: int
 ) -> tuple[int, bytes]:
-    if bit_depth not in AIFF_SAFE_BIT_DEPTHS:
-        bit_depth = 24
-    rate_bytes = AIFF_RATE_BYTES.get(sample_rate)
-    if rate_bytes is None:
-        rate_bytes = AIFF_RATE_BYTES[48000]
-        bit_depth = 24
-    return bit_depth, rate_bytes
+    bit_depth = coerce_bit_depth(bit_depth)
+    sample_rate = coerce_sample_rate(sample_rate)
+    return bit_depth, AIFF_RATE_BYTES[sample_rate]
 
 
 def _info_is_cdj_safe_aiff(

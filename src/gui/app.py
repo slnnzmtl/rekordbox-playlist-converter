@@ -5,6 +5,11 @@ from __future__ import annotations
 import tkinter as tk
 from pathlib import Path
 
+from convert.quality import (
+    coerce_bit_depth,
+    coerce_output_format,
+    coerce_sample_rate,
+)
 from gui import constants
 from gui import runtime
 from gui.convert_flow import ConvertFlowMixin
@@ -45,18 +50,15 @@ class ConverterApp(ConvertFlowMixin, PlaylistsMixin, ShellMixin):
         )
         self.wav_dir_var.set(str(startup_wav))
         self._sync_import_xml_display()
-        saved_format = saved_prefs.get("output_format", "wav")
-        if saved_format not in ("wav", "aiff"):
-            saved_format = "wav"
-        self.format_var = tk.StringVar(value=saved_format)
-        saved_depth = saved_prefs.get("bit_depth", "24")
-        if saved_depth not in ("16", "24"):
-            saved_depth = "24"
-        self.bit_depth_var = tk.StringVar(value=saved_depth)
-        saved_rate = saved_prefs.get("sample_rate", "48000")
-        if saved_rate not in ("44100", "48000"):
-            saved_rate = "48000"
-        self.sample_rate_var = tk.StringVar(value=saved_rate)
+        self.format_var = tk.StringVar(
+            value=coerce_output_format(saved_prefs.get("output_format", "wav"))
+        )
+        self.bit_depth_var = tk.StringVar(
+            value=str(coerce_bit_depth(saved_prefs.get("bit_depth", "24")))
+        )
+        self.sample_rate_var = tk.StringVar(
+            value=str(coerce_sample_rate(saved_prefs.get("sample_rate", "48000")))
+        )
         self.search_var = tk.StringVar()
         self.track_search_var = tk.StringVar()
         self._playlist_search = SearchPlaceholder(self.search_var, constants.SEARCH_PLACEHOLDER)

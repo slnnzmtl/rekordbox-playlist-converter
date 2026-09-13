@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Internal: shared `convert/quality.py` allowlists for output format / bit depth /
+  sample rate (parse for prefs omit, coerce for GUI/convert/CDJ defaults);
+  format directory names shared with the converter manifest.
 - Internal refactor (pass 3): convert plan dataclasses live in `convert/models.py`
   and pure path/stream helpers in `convert/paths.py`; `convert_plan.py` remains the
   patched facade (`planned_action`, `CONVERT_WORKERS`, encode wrappers, orchestrators).
@@ -30,9 +33,6 @@
 - GUI and CLI derive Import XML as `<wav-dir>/rekordbox-import.xml` (CLI `--output` remains an optional override). The GUI shows a read-only path field (click to copy); ignore legacy `import_xml` preferences.
 - GUI Convert opens a conversion preview (unique outputs, action, quality, size); **Back** writes nothing. CLI `--dry-run` prints the same plan. Success offers **Reveal audio folder** (selected format directory) and **Reveal import XML**.
 - GUI quality control is **Max. quality** (`16-bit` / `24-bit` / `44.1 kHz` / `48 kHz`). Output-folder validation runs off the UI thread and disables Convert when the folder is invalid.
-
-## 2.0.0
-
 - Unique-track conversion runs up to **4 encodes in parallel** (capped at 5). Progress counts completed tracks; Cancel stops in-flight encodes (completed files kept; interrupted playlist is not written to Import XML).
 - Track failures no longer abort the rest of the run: convertible tracks finish, Import XML is written for successes, remaining playlists continue, then all errors are reported together. Cancel after a failure still surfaces those encode errors.
 - Filename collisions (same dest name from different sources) no longer abort: the first playlist entry is converted; later duplicates are skipped with a warning.

@@ -92,6 +92,20 @@ class TargetFromStreamTests(unittest.TestCase):
                 )
                 self.assertEqual((bits, rate), (exp_bits, exp_rate))
 
+    def test_invalid_ceilings_coerce_then_never_upconvert(self) -> None:
+        """Given unsupported max_bit_depth/max_sample_rate: When
+        target_from_stream runs: Then ceilings coerce to 24/48000 and
+        source quality is still never raised."""
+        stream = {
+            "sample_fmt": "s16",
+            "bits_per_raw_sample": "16",
+            "sample_rate": "44100",
+        }
+        bits, rate = rb.target_from_stream(
+            stream, max_bit_depth=32, max_sample_rate=96000
+        )
+        self.assertEqual((bits, rate), (16, 44100))
+
 class PlanQualityFieldsTests(unittest.TestCase):
     def test_build_plan_stores_selected_and_effective_quality(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import iff_chunks
 from cli_error import CliError
+from convert.quality import coerce_bit_depth, coerce_sample_rate
 
 CDJ_SAFE_CHANNELS = 2
 WAVE_FORMAT_PCM = 1
@@ -91,10 +92,8 @@ def is_cdj_safe_wav(
     sample_rate: int = 48000,
 ) -> bool:
     """True if path is stereo WAVE_FORMAT_PCM with fmt+data only at the given quality."""
-    if bit_depth not in (16, 24):
-        bit_depth = 24
-    if sample_rate not in (44100, 48000):
-        sample_rate = 48000
+    bit_depth = coerce_bit_depth(bit_depth)
+    sample_rate = coerce_sample_rate(sample_rate)
     if not path.is_file():
         return False
     try:

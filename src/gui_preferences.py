@@ -12,6 +12,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from convert.quality import parse_bit_depth, parse_output_format, parse_sample_rate
 from rekordbox_xml import path_is_under_documents
 
 BUNDLE_ID = "io.github.slnnzmtl.rekordboxWavConverter"
@@ -266,17 +267,15 @@ def load_preferences(config_path: Path | None = None) -> dict[str, str]:
         if isinstance(value, str) and value.strip():
             result[key] = value.strip()
     # Legacy import_xml is tolerated in the file but never returned.
-    fmt = raw.get("output_format")
-    if isinstance(fmt, str) and fmt.strip().lower() in ("wav", "aiff"):
-        result["output_format"] = fmt.strip().lower()
-    depth = raw.get("bit_depth")
-    if depth in (16, 24) or (isinstance(depth, str) and depth.strip() in ("16", "24")):
-        result["bit_depth"] = str(depth).strip()
-    rate = raw.get("sample_rate")
-    if rate in (44100, 48000) or (
-        isinstance(rate, str) and rate.strip() in ("44100", "48000")
-    ):
-        result["sample_rate"] = str(rate).strip()
+    fmt = parse_output_format(raw.get("output_format"))
+    if fmt is not None:
+        result["output_format"] = fmt
+    depth = parse_bit_depth(raw.get("bit_depth"))
+    if depth is not None:
+        result["bit_depth"] = str(depth)
+    rate = parse_sample_rate(raw.get("sample_rate"))
+    if rate is not None:
+        result["sample_rate"] = str(rate)
     return result
 
 
@@ -301,16 +300,18 @@ def save_preferences(
         existing = load_preferences(config_path=path).get("source_xml")
         if existing:
             payload["source_xml"] = existing
-    if output_format is not None and output_format in ("wav", "aiff"):
-        payload["output_format"] = output_format
+    if output_format is not None:
+        fmt = parse_output_format(output_format)
+        if fmt is not None:
+            payload["output_format"] = fmt
     if bit_depth is not None:
-        depth_s = str(bit_depth).strip()
-        if depth_s in ("16", "24"):
-            payload["bit_depth"] = depth_s
+        depth = parse_bit_depth(bit_depth)
+        if depth is not None:
+            payload["bit_depth"] = str(depth)
     if sample_rate is not None:
-        rate_s = str(sample_rate).strip()
-        if rate_s in ("44100", "48000"):
-            payload["sample_rate"] = rate_s
+        rate = parse_sample_rate(sample_rate)
+        if rate is not None:
+            payload["sample_rate"] = str(rate)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         dir=path.parent, prefix=".preferences-", suffix=".tmp"

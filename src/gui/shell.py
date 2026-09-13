@@ -6,6 +6,11 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from convert.quality import (
+    coerce_bit_depth,
+    coerce_output_format,
+    coerce_sample_rate,
+)
 from gui import constants
 from gui import dialogs as gui_dialogs
 from gui import runtime
@@ -369,15 +374,9 @@ class ShellMixin:
         if include_source_xml:
             source_s = self.xml_var.get().strip()
             source_xml = Path(source_s).expanduser() if source_s else None
-        fmt = self.format_var.get().strip().lower()
-        if fmt not in ("wav", "aiff"):
-            fmt = "wav"
-        depth = self.bit_depth_var.get().strip()
-        if depth not in ("16", "24"):
-            depth = "24"
-        rate = self.sample_rate_var.get().strip()
-        if rate not in ("44100", "48000"):
-            rate = "48000"
+        fmt = coerce_output_format(self.format_var.get())
+        depth = str(coerce_bit_depth(self.bit_depth_var.get()))
+        rate = str(coerce_sample_rate(self.sample_rate_var.get()))
         try:
             runtime.save_preferences(
                 wav_dir,

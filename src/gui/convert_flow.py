@@ -6,6 +6,11 @@ import tkinter as tk
 from collections import Counter
 from pathlib import Path
 
+from convert.quality import (
+    coerce_bit_depth,
+    coerce_output_format,
+    coerce_sample_rate,
+)
 from gui import constants
 from gui import dialogs as gui_dialogs
 from gui import runtime
@@ -65,21 +70,9 @@ class ConvertFlowMixin:
 
         wav_dir, output = self._resolved_output_paths()
         self._persist_output_preferences()
-        output_format = self.format_var.get().strip().lower()
-        if output_format not in ("wav", "aiff"):
-            output_format = "wav"
-        try:
-            max_bit_depth = int(self.bit_depth_var.get().strip() or "24")
-        except ValueError:
-            max_bit_depth = 24
-        if max_bit_depth not in (16, 24):
-            max_bit_depth = 24
-        try:
-            max_sample_rate = int(self.sample_rate_var.get().strip() or "48000")
-        except ValueError:
-            max_sample_rate = 48000
-        if max_sample_rate not in (44100, 48000):
-            max_sample_rate = 48000
+        output_format = coerce_output_format(self.format_var.get())
+        max_bit_depth = coerce_bit_depth(self.bit_depth_var.get())
+        max_sample_rate = coerce_sample_rate(self.sample_rate_var.get())
         xml_path = Path(xml_s).expanduser()
 
         self._set_busy(True)
