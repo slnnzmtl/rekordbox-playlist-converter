@@ -16,6 +16,7 @@ from tkinter import filedialog, messagebox
 
 import converter_manifest
 import rb_playlist_to_wav as rb
+from convert.write import execute_prepared
 from gui_preferences import (
     find_rekordbox_xml_via_child,
     import_xml_path,
@@ -50,6 +51,7 @@ __all__ = [
     "messagebox",
     "rb",
     "converter_manifest",
+    "execute_prepared",
     "load_preferences",
     "save_preferences",
     "resolve_startup_paths",

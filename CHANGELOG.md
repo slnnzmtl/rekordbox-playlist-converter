@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Internal: shared write port `convert.write.execute_prepared` (save
+  manifest → convert_unique → apply_xml → write_import_xml). GUI and CLI hosts
+  call it instead of duplicating that sequence; `convert_unique` lives in
+  `convert/write.py` (re-exported from `convert_plan` for existing patches).
 - Internal: `xml_output` imports `Plan` / paths from `convert.models` /
   `convert.paths` (no `convert_plan`); `source_key` lives with path helpers;
   drop unused `playlist_dir_name`; `CONVERT_WORKERS_MAX` matches the default

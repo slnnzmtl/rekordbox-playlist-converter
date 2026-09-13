@@ -124,6 +124,8 @@ class ConvertStats:
     errors: list[str] = field(default_factory=list)
     # (source_key, format) that skipped, copied, or converted successfully.
     succeeded: set[tuple[str, str]] = field(default_factory=set)
+    # Entries appended per plan by apply_xml during execute_prepared.
+    appended_by_plan: list[int] = field(default_factory=list)
 
 
 @dataclass

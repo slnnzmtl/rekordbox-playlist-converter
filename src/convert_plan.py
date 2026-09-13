@@ -26,7 +26,6 @@ from cdj_wav import (
 )
 from cli_error import CancelledError, CliError
 from convert.encode import (
-    _copy_wav_atomic,
     pcm_codec_for_depth,
     run_ffmpeg as _encode_run_ffmpeg,
     write_aiff_output as _encode_write_aiff_output,
@@ -408,117 +407,7 @@ def insufficient_output_space_message(
     )
 
 
-def convert_unique(
-    plan: Plan,
-    force: bool,
-    *,
-    progress: bool = False,
-    on_progress: Callable[[int, int, str, str], None] | None = None,
-    cancel_event: threading.Event | None = None,
-    items: list[PlannedTrack] | None = None,
-) -> ConvertStats:
-    stats = ConvertStats()
-    plan.playlist_dir.mkdir(parents=True, exist_ok=True)
-    items = list(items) if items is not None else plan.unique
-    bar = Progress(len(items), progress, on_progress=on_progress)
-    completed = 0
-    stats_lock = threading.Lock()
-    cover_lock = threading.Lock()
-
-    def finish(action: str, name: str) -> None:
-        nonlocal completed
-        with stats_lock:
-            completed += 1
-            done = completed
-        bar.update(done, action, name)
-
-    def mark_succeeded(item: PlannedTrack) -> None:
-        fmt = coerce_output_format(item.output_format)
-        with stats_lock:
-            stats.succeeded.add((source_key(item.source_path), fmt))
-
-    def process_one(item: PlannedTrack) -> None:
-        if cancel_event is not None and cancel_event.is_set():
-            return
-        name = item.dest_name
-        is_aiff = coerce_output_format(item.output_format) == "aiff"
-        action = planned_action(
-            plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
-        )
-        if action == "reuse":
-            with stats_lock:
-                stats.skipped += 1
-            mark_succeeded(item)
-            finish("skip", name)
-            return
-        try:
-            converter_manifest.ensure_dest_path_under_wav_dir(
-                plan.wav_dir, item.dest_path
-            )
-            if is_aiff:
-                write_aiff_output(
-                    item.source_path,
-                    item.dest_path,
-                    item.source_el,
-                    passthrough=item.copy_wav,
-                    codec=item.codec,
-                    bit_depth=item.bit_depth,
-                    sample_rate=item.sample_rate,
-                    cover_cache=plan.cover_cache,
-                    cancel_event=cancel_event,
-                    cover_lock=cover_lock,
-                )
-                with stats_lock:
-                    if item.copy_wav:
-                        stats.copied += 1
-                    else:
-                        stats.converted += 1
-                mark_succeeded(item)
-                finish("copy" if item.copy_wav else "convert", name)
-                return
-            if item.copy_wav:
-                _copy_wav_atomic(
-                    item.source_path, item.dest_path, cancel_event=cancel_event
-                )
-                with stats_lock:
-                    stats.copied += 1
-                mark_succeeded(item)
-                finish("copy", name)
-                return
-            if not item.codec:
-                raise CliError(f"no codec planned for {item.source_path}")
-            run_ffmpeg(
-                item.source_path,
-                item.dest_path,
-                item.codec,
-                force=True,
-                sample_rate=item.sample_rate,
-                bit_depth=item.bit_depth,
-                cancel_event=cancel_event,
-                output_format=item.output_format,
-            )
-            with stats_lock:
-                stats.converted += 1
-            mark_succeeded(item)
-            finish("convert", name)
-        except CancelledError:
-            return
-        except Exception as exc:  # noqa: BLE001 — collect all; report after pool
-            with stats_lock:
-                stats.errors.append(str(exc))
-            finish("error", name)
-
-    try:
-        if not items:
-            return stats
-        workers = convert_worker_count(len(items))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(process_one, item) for item in items]
-            for fut in as_completed(futures):
-                fut.result()
-    finally:
-        bar.close()
-    return stats
+from convert.write import convert_unique as convert_unique
 
 
 def classify_source(

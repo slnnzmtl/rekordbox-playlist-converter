@@ -234,8 +234,6 @@ class ConvertFlowMixin:
             return
         plans = prepared.plans
         items = prepared.items
-        manifest = prepared.manifest
-        wav_dir = prepared.wav_dir
         output = prepared.output
         skipped = list(prepared.skipped)
         try:
@@ -263,7 +261,13 @@ class ConvertFlowMixin:
                 _finish_cancel_with_errors()
                 return
             try:
-                runtime.converter_manifest.save_manifest(manifest, wav_dir)
+                batch_stats = runtime.execute_prepared(
+                    prepared,
+                    force=False,
+                    progress=False,
+                    on_progress=on_progress,
+                    cancel_event=self._cancel_event,
+                )
             except OSError as exc:
                 self._ui(
                     lambda e=[f"cannot write converter manifest: {exc}"]: self._finish_error(
@@ -271,16 +275,8 @@ class ConvertFlowMixin:
                     )
                 )
                 return
-            batch_stats = runtime.rb.convert_unique(
-                plans[0],
-                force=False,
-                progress=False,
-                on_progress=on_progress,
-                cancel_event=self._cancel_event,
-                items=items,
-            )
-            for plan in plans:
-                appended = runtime.rb.apply_xml(plan, batch_stats.succeeded)
+
+            for i, plan in enumerate(plans):
                 parts = []
                 if batch_stats.converted and plan is plans[0]:
                     parts.append(f"{batch_stats.converted} converted")
@@ -288,18 +284,17 @@ class ConvertFlowMixin:
                     parts.append(f"{batch_stats.copied} copied")
                 if batch_stats.skipped and plan is plans[0]:
                     parts.append(f"{batch_stats.skipped} skipped")
+                appended = (
+                    batch_stats.appended_by_plan[i]
+                    if i < len(batch_stats.appended_by_plan)
+                    else 0
+                )
                 if appended:
                     parts.append(f"+{appended} playlist entries")
                 if plan.warnings:
                     parts.append(f"{len(plan.warnings)} missing skipped")
                 detail = ", ".join(parts) if parts else "done"
                 summaries.append(f"{plan.wav_playlist_name}: {detail}")
-
-            try:
-                runtime.rb.write_import_xml(plans[0].output_root, plans[0].output)
-            except runtime.rb.CliError as exc:
-                self._ui(lambda e=[str(exc)]: self._finish_error(e))
-                return
 
             if self._cancel_event.is_set():
                 _finish_cancel_with_errors(batch_stats.errors or None)

@@ -111,10 +111,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
     def test_cancel_after_encode_writes_import_xml_then_finishes_cancelled(
         self,
     ) -> None:
-        """Given convert_unique returns successes (and optional encode errors)
-        then sets cancel: When the GUI write worker finishes: Then Import XML
-        is written from the success set and status is Cancelled. (encode errors
-        still surface in the list dialog)."""
+        """Given execute_prepared returns successes (and optional encode errors)
+        then sets cancel: When the GUI write worker finishes: Then status is
+        Cancelled and encode errors still surface in the list dialog."""
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -134,13 +133,10 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "save_preferences": None,
                         "rb.prepare": {"return_value": (plan, [])},
                         "rb.share_output_root": None,
-                        "converter_manifest.save_manifest": None,
                         "rb.build_conversion_preview": empty_conversion_preview(
                             selected=2
                         ),
-                        "rb.convert_unique": None,
-                        "rb.apply_xml": {"return_value": 1},
-                        "rb.write_import_xml": None,
+                        "execute_prepared": {"create": True},
                         "messagebox.showerror": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
@@ -152,9 +148,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             ), patch.object(
                 ConverterApp, "_show_list_dialog", create=True
             ) as show_list:
-                convert_unique = mocks["rb.convert_unique"]
-                apply_xml = mocks["rb.apply_xml"]
-                write_xml = mocks["rb.write_import_xml"]
+                execute = mocks["execute_prepared"]
                 showerror = mocks["messagebox.showerror"]
                 root = tk.Tk()
                 root.withdraw()
@@ -162,22 +156,20 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 app.xml_var.set("/tmp/test.xml")
                 seed_track_selection(app)
 
-                def convert_and_cancel(*_args, **_kwargs):
+                def execute_and_cancel(*_args, **_kwargs):
                     app._cancel_event.set()
                     return rb.ConvertStats(
                         converted=1,
                         errors=[error_text],
                         succeeded=succeeded,
+                        appended_by_plan=[1],
                     )
 
-                convert_unique.side_effect = convert_and_cancel
+                execute.side_effect = execute_and_cancel
                 mark_output_folder_valid(app)
                 start_convert_and_confirm(app, root)
 
-                apply_xml.assert_called()
-                write_xml.assert_called()
-                apply_xml.assert_called_with(plan, succeeded)
-                write_xml.assert_called_with(plan.output_root, plan.output)
+                execute.assert_called()
                 showerror.assert_not_called()
                 show_list.assert_called()
                 joined = list_dialog_text(show_list)
@@ -198,10 +190,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
     def test_convert_worker_surfaces_encode_errors_after_writing_xml(
         self,
     ) -> None:
-        """Given convert_unique returns ConvertStats with errors (not cancelled):
-        When the GUI convert worker finishes that playlist: Then it still
-        apply_xml + write_import_xml, and the user sees the encode error text
-        (not a silent clean Done)."""
+        """Given execute_prepared returns ConvertStats with errors (not cancelled):
+        When the GUI write worker finishes: Then the user sees the encode error
+        text (not a silent clean Done)."""
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -220,17 +211,17 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "save_preferences": None,
                         "rb.prepare": {"return_value": (plan, [])},
                         "rb.share_output_root": None,
-                        "converter_manifest.save_manifest": None,
                         "rb.build_conversion_preview": empty_conversion_preview(
                             selected=2
                         ),
-                        "rb.convert_unique": {
+                        "execute_prepared": {
+                            "create": True,
                             "return_value": rb.ConvertStats(
-                                converted=1, errors=[error_text]
-                            )
+                                converted=1,
+                                errors=[error_text],
+                                appended_by_plan=[1],
+                            ),
                         },
-                        "rb.apply_xml": {"return_value": 1},
-                        "rb.write_import_xml": None,
                         "messagebox.showerror": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
@@ -244,8 +235,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             ) as show_list, patch.object(
                 ConverterApp, "_show_done_dialog"
             ) as show_done:
-                apply_xml = mocks["rb.apply_xml"]
-                write_xml = mocks["rb.write_import_xml"]
+                execute = mocks["execute_prepared"]
                 showerror = mocks["messagebox.showerror"]
                 root = tk.Tk()
                 root.withdraw()
@@ -255,8 +245,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 mark_output_folder_valid(app)
                 start_convert_and_confirm(app, root)
 
-                apply_xml.assert_called()
-                write_xml.assert_called()
+                execute.assert_called()
 
                 showerror.assert_not_called()
                 show_list.assert_called()
@@ -306,8 +295,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     {
                         "save_preferences": None,
                         "rb.prepare": {"side_effect": prepare_then_cancel},
-                        "rb.convert_unique": None,
-                        "rb.apply_xml": None,
+                        "execute_prepared": {"create": True},
                         "messagebox.showerror": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
@@ -315,8 +303,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             ) as mocks, patch.object(
                 ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
             ):
-                convert_unique = mocks["rb.convert_unique"]
-                apply_xml = mocks["rb.apply_xml"]
+                execute = mocks["execute_prepared"]
                 showerror = mocks["messagebox.showerror"]
                 root = tk.Tk()
                 root.withdraw()
@@ -329,8 +316,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 for _ in range(20):
                     root.update()
 
-                convert_unique.assert_not_called()
-                apply_xml.assert_not_called()
+                execute.assert_not_called()
                 showerror.assert_not_called()
                 self.assertEqual(app.status_var.get(), "Cancelled.")
                 self.assertFalse(app._busy)
@@ -382,8 +368,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "rb.build_conversion_preview": {
                             "side_effect": preview_then_cancel
                         },
-                        "rb.convert_unique": None,
-                        "rb.apply_xml": None,
+                        "execute_prepared": {"create": True},
                         "messagebox.showerror": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
@@ -391,8 +376,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             ) as mocks, patch.object(
                 ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
             ):
-                convert_unique = mocks["rb.convert_unique"]
-                apply_xml = mocks["rb.apply_xml"]
+                execute = mocks["execute_prepared"]
                 showerror = mocks["messagebox.showerror"]
                 root = tk.Tk()
                 root.withdraw()
@@ -405,8 +389,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 for _ in range(20):
                     root.update()
 
-                convert_unique.assert_not_called()
-                apply_xml.assert_not_called()
+                execute.assert_not_called()
                 showerror.assert_not_called()
                 self.assertEqual(progress_actions, ["preview"])
                 self.assertEqual(app.status_var.get(), "Cancelled.")
@@ -420,9 +403,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
     def test_late_cancel_after_atomic_write_finishes_cancelled_not_done(
         self,
     ) -> None:
-        """Given convert_unique + apply_xml + write_import_xml succeed: When
-        cancel_event is set before finish scheduling: Then the GUI takes the
-        _finish_cancelled path (status Cancelled.), not _finish_ok / Done."""
+        """Given execute_prepared succeeds: When cancel_event is set before
+        finish scheduling: Then the GUI takes the _finish_cancelled path
+        (status Cancelled.), not _finish_ok / Done."""
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -440,15 +423,10 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "save_preferences": None,
                         "rb.prepare": {"return_value": (plan, [])},
                         "rb.share_output_root": None,
-                        "converter_manifest.save_manifest": None,
                         "rb.build_conversion_preview": empty_conversion_preview(
                             selected=1
                         ),
-                        "rb.convert_unique": {
-                            "return_value": rb.ConvertStats(converted=1)
-                        },
-                        "rb.apply_xml": {"return_value": 1},
-                        "rb.write_import_xml": None,
+                        "execute_prepared": {"create": True},
                         "messagebox.showerror": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
@@ -460,8 +438,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             ), patch.object(
                 ConverterApp, "_show_done_dialog"
             ) as show_done:
-                apply_xml = mocks["rb.apply_xml"]
-                write_xml = mocks["rb.write_import_xml"]
+                execute = mocks["execute_prepared"]
                 showerror = mocks["messagebox.showerror"]
                 root = tk.Tk()
                 root.withdraw()
@@ -469,15 +446,15 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 app.xml_var.set("/tmp/test.xml")
                 seed_track_selection(app)
 
-                def write_then_cancel(*_a, **_k):
+                def execute_then_cancel(*_a, **_k):
                     app._cancel_event.set()
+                    return rb.ConvertStats(converted=1, appended_by_plan=[1])
 
-                write_xml.side_effect = write_then_cancel
+                execute.side_effect = execute_then_cancel
                 mark_output_folder_valid(app)
                 start_convert_and_confirm(app, root)
 
-                apply_xml.assert_called()
-                write_xml.assert_called()
+                execute.assert_called()
                 showerror.assert_not_called()
                 self.assertEqual(
                     app.status_var.get(),

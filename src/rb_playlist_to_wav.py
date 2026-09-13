@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Collection
 
 import convert_plan
+import convert.write as convert_write
 import converter_manifest
 import ffmpeg_tools
 import xml_output
@@ -376,8 +377,6 @@ def run_convert_batch(
         print_warnings(prepared.skipped)
 
     plans = prepared.plans
-    items = prepared.items
-    manifest = prepared.manifest
     preview = prepared.preview
 
     if dry_run:
@@ -393,18 +392,10 @@ def run_convert_batch(
         return 1
 
     try:
-        converter_manifest.save_manifest(manifest, wav_dir)
-    except OSError as exc:
-        print(f"cannot write converter manifest: {exc}", file=sys.stderr)
-        return 1
-
-    host = plans[0]
-    try:
-        stats = convert_plan.convert_unique(
-            host,
+        stats = convert_write.execute_prepared(
+            prepared,
             force=force,
             progress=sys.stderr.isatty(),
-            items=items,
         )
         for i, plan in enumerate(plans):
             if len(plans) > 1:
@@ -412,16 +403,21 @@ def run_convert_batch(
                 folder, name = playlist_refs[i]
                 label = playlist_label(folder, name) if folder else name
                 print(f"=== {label} ({i + 1}/{len(plans)}) ===")
+            appended = (
+                stats.appended_by_plan[i] if i < len(stats.appended_by_plan) else 0
+            )
             plan_stats = ConvertStats(
                 converted=stats.converted if i == 0 else 0,
                 copied=stats.copied if i == 0 else 0,
                 skipped=stats.skipped if i == 0 else 0,
                 errors=list(stats.errors) if i == len(plans) - 1 else [],
                 succeeded=set(stats.succeeded),
+                appended=appended,
             )
-            plan_stats.appended = xml_output.apply_xml(plan, stats.succeeded)
             print_summary(plan, plan_stats, dry_run=False)
-        xml_output.write_import_xml(host.output_root, host.output)
+    except OSError as exc:
+        print(f"cannot write converter manifest: {exc}", file=sys.stderr)
+        return 1
     except CliError as exc:
         print(str(exc), file=sys.stderr)
         return 1
