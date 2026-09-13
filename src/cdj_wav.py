@@ -110,7 +110,7 @@ def is_cdj_safe_wav(
     )
 
 
-def _rewrite_wav_pcm(source: Path, dest: Path) -> None:
+def rewrite_wav_pcm(source: Path, dest: Path) -> None:
     """Rewrite as WAVE_FORMAT_PCM with only fmt + data (never EXTENSIBLE)."""
     try:
         with source.open("rb") as fp:
@@ -175,3 +175,6 @@ def _rewrite_wav_pcm(source: Path, dest: Path) -> None:
         raise CliError(f"cannot read WAV: {source}: {exc}") from exc
     except ValueError as exc:
         raise CliError(f"truncated WAV data while streaming copy") from exc
+
+
+_rewrite_wav_pcm = rewrite_wav_pcm

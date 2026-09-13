@@ -57,24 +57,32 @@ class ShellMixin:
     def documents_accessible(self) -> bool:
         return self._documents_accessible
 
+    def _xml_search_hits_if_needed(self) -> list[Path] | None:
+        if self._has_saved_source_xml:
+            return None
+        return runtime.find_rekordbox_xml_via_child(Path.home())
+
+    def _probe_documents_access(self) -> bool:
+        return runtime.probe_path_via_child(Path.home() / "Documents")
+
     def _start_documents_probe(self) -> None:
         def worker() -> None:
-            if not self._has_saved_source_xml:
-                # Search known filenames first so a dismissed Documents listing
-                # prompt cannot block XML autoload on first launch.
-                hits = runtime.find_rekordbox_xml_via_child(Path.home())
+            # Search known filenames first so a dismissed Documents listing
+            # prompt cannot block XML autoload on first launch.
+            hits = self._xml_search_hits_if_needed()
+            if hits is not None:
                 self._ui(lambda paths=hits: self._apply_xml_search_hits(paths))
-            accessible = runtime.probe_path_via_child(Path.home() / "Documents")
+            accessible = self._probe_documents_access()
             self._ui(lambda a=accessible: self._apply_documents_access(a))
 
         runtime.threading.Thread(target=worker, daemon=True).start()
 
     def _probe_documents_after_idle(self) -> None:
-        if not self._has_saved_source_xml:
-            hits = runtime.find_rekordbox_xml_via_child(Path.home())
+        """Same probe as the startup thread, for tests that skip the worker."""
+        hits = self._xml_search_hits_if_needed()
+        if hits is not None:
             self._apply_xml_search_hits(hits)
-        accessible = runtime.probe_path_via_child(Path.home() / "Documents")
-        self._apply_documents_access(accessible)
+        self._apply_documents_access(self._probe_documents_access())
 
     def _apply_xml_search_hits(self, paths: list[Path]) -> None:
         if self.xml_var.get().strip():

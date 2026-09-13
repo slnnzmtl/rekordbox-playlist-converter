@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Internal: `CancelledError` is no longer a `CliError` (cancel is not a fatal
+  CLI failure). Stderr progress lives in `convert.progress`. Cover extract uses
+  `COVER_MAX_SIDE` and does not swallow cancel as a missing cover. CDJ/encode
+  helpers used across modules are public (`parse_aiff_audio`, `copy_wav_atomic`,
+  `rewrite_wav_pcm`, …) with underscore aliases for older patches. Documents
+  probe I/O is shared between the startup thread and the test idle entry.
 - Internal: shared write port `convert.write.execute_prepared` (save
   manifest → convert_unique → apply_xml → write_import_xml). GUI and CLI hosts
   call it instead of duplicating that sequence; `convert_unique` lives in

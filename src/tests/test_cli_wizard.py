@@ -13,8 +13,9 @@ for _p in (_SRC, _TESTS):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import rb_playlist_to_wav as rb
+import convert_plan
 import ffmpeg_tools
+import rb_playlist_to_wav as rb
 from convert_fixtures import write_flac
 
 
@@ -165,6 +166,60 @@ class PlanQualityFieldsTests(unittest.TestCase):
             self.assertEqual(plan.unique[0].bit_depth, 24)
             self.assertEqual(plan.unique[0].sample_rate, 48000)
             self.assertEqual(plan.unique[0].codec, "pcm_s24le")
+
+    def test_prepare_classify_cancel_is_not_a_plan_error(self) -> None:
+        """Given classify_source raises CancelledError: When prepare probes:
+        Then CancelledError propagates instead of becoming a CliError string."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "hi.flac"
+            write_flac(src)
+            xml_path = root / "c.xml"
+            xml_path.write_text(
+                f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="1">
+    <TRACK TrackID="1" Name="Hi" Location="{rb.encode_location(src)}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="P" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+""",
+                encoding="utf-8",
+            )
+
+            def boom(*_a: object, **_k: object) -> tuple[str, bool, int, int]:
+                raise rb.CancelledError("conversion cancelled")
+
+            with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+                ffmpeg_tools,
+                "run_ffprobe",
+                return_value={
+                    "streams": [
+                        {
+                            "codec_name": "flac",
+                            "sample_fmt": "s32",
+                            "bits_per_raw_sample": "24",
+                            "sample_rate": "48000",
+                            "channels": "2",
+                        }
+                    ]
+                },
+            ), patch.object(convert_plan, "classify_source", side_effect=boom):
+                with self.assertRaises(rb.CancelledError):
+                    rb.prepare(
+                        xml_path,
+                        "P",
+                        root / "out",
+                        root / "import.xml",
+                    )
 
 
 if __name__ == "__main__":

@@ -335,15 +335,15 @@ class InPlaceAiffTests(unittest.TestCase):
 
 class Id3AndConvertAiffTests(unittest.TestCase):
     def test_canonical_aiff_output_parses_dest_once(self) -> None:
-        """Given a canonical AIFF dest: When _is_canonical_aiff_output runs:
-        Then _parse_aiff_audio is invoked once (no separate is_cdj_safe + ID3 walk)."""
+        """Given a canonical AIFF dest: When is_canonical_aiff_output runs:
+        Then parse_aiff_audio is invoked once (no separate is_cdj_safe + ID3 walk)."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             dest = root / "out.aiff"
             write_pcm_aiff(dest)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             rb.write_aiff_id3(dest, el, None)
-            real_parse = cdj_aiff._parse_aiff_audio
+            real_parse = cdj_aiff.parse_aiff_audio
             calls = {"n": 0}
 
             def counting_parse(path: Path):
@@ -351,10 +351,10 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 return real_parse(path)
 
             with mock.patch.object(
-                cdj_aiff, "_parse_aiff_audio", side_effect=counting_parse
+                cdj_aiff, "parse_aiff_audio", side_effect=counting_parse
             ):
                 self.assertTrue(
-                    cdj_aiff._is_canonical_aiff_output(
+                    cdj_aiff.is_canonical_aiff_output(
                         dest, el, None, bit_depth=16, sample_rate=44100
                     )
                 )

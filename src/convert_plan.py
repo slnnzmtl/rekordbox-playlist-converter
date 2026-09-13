@@ -14,12 +14,12 @@ from typing import Callable
 import converter_manifest
 import ffmpeg_tools
 from cdj_aiff import (
-    _is_canonical_aiff_from_info,
-    _is_canonical_aiff_output,
-    _info_is_cdj_safe_aiff,
-    _parse_aiff_audio,
     extract_cover_jpeg,
+    info_is_cdj_safe_aiff,
+    is_canonical_aiff_from_info,
+    is_canonical_aiff_output,
     is_cdj_safe_aiff,
+    parse_aiff_audio,
 )
 from cdj_wav import (
     is_cdj_safe_wav,
@@ -36,8 +36,8 @@ from convert.models import (
     ConvertStats,
     Plan,
     PlannedTrack,
-    Progress,
 )
+from convert.progress import Progress as Progress
 from convert.paths import (
     _format_size_mb,
     abs_path,
@@ -60,6 +60,7 @@ from convert.quality import (
     coerce_output_format,
     coerce_sample_rate,
 )
+from convert.write import convert_unique as convert_unique
 from converter_manifest import ConverterManifest
 from rekordbox_xml import (
     decode_location,
@@ -185,13 +186,13 @@ def planned_action(
             # One dest parse: gate cover extract, then canonical ID3/cover check.
             try:
                 dest_info = (
-                    _parse_aiff_audio(item.dest_path)
+                    parse_aiff_audio(item.dest_path)
                     if item.dest_path.is_file()
                     else None
                 )
             except CliError:
                 dest_info = None
-            if dest_info is not None and _info_is_cdj_safe_aiff(
+            if dest_info is not None and info_is_cdj_safe_aiff(
                 dest_info,
                 bit_depth=item.bit_depth,
                 sample_rate=item.sample_rate,
@@ -202,7 +203,7 @@ def planned_action(
                     lock=cover_lock,
                     cancel_event=cancel_event,
                 )
-                if _is_canonical_aiff_from_info(
+                if is_canonical_aiff_from_info(
                     item.dest_path,
                     dest_info,
                     item.source_el,
@@ -407,9 +408,6 @@ def insufficient_output_space_message(
     )
 
 
-from convert.write import convert_unique as convert_unique
-
-
 def classify_source(
     path: Path,
     stream: dict,
@@ -594,7 +592,7 @@ def build_plan(
                     lock=cover_lock,
                     cancel_event=cancel_event,
                 )
-                if _is_canonical_aiff_output(
+                if is_canonical_aiff_output(
                     item.dest_path,
                     item.source_el,
                     cover,

@@ -11,21 +11,23 @@ from pathlib import Path
 
 import ffmpeg_tools
 from cdj_aiff import (
-    _is_canonical_aiff_output,
-    _normalize_aiff_audio_chunks,
     extract_cover_jpeg,
+    is_canonical_aiff_output,
     is_cdj_safe_aiff,
+    normalize_aiff_audio_chunks,
     write_aiff_id3,
 )
 from cdj_wav import (
     CDJ_SAFE_CHANNELS,
-    _rewrite_wav_pcm,
     is_cdj_safe_wav,
+    rewrite_wav_pcm,
 )
 from cli_error import CancelledError, CliError
 from convert.quality import coerce_output_format
 
 _COPY_CHUNK_SIZE = 1024 * 1024
+_normalize_aiff_audio_chunks = normalize_aiff_audio_chunks
+_rewrite_wav_pcm = rewrite_wav_pcm
 
 
 def pcm_codec_for_depth(bit_depth: int, *, output_format: str = "wav") -> str:
@@ -61,7 +63,7 @@ def _rewrite_sidecar(path: Path, rewrite) -> None:
         raise
 
 
-def _copy_wav_atomic(
+def copy_wav_atomic(
     source: Path,
     dest: Path,
     *,
@@ -255,7 +257,7 @@ def write_aiff_output(
             if not is_cdj_safe_aiff(tmp, bit_depth=bit_depth, sample_rate=sample_rate):
                 raise CliError(f"AIFF audio stage failed for {source}")
         write_aiff_id3(tmp, source_el, cover)
-        if not _is_canonical_aiff_output(
+        if not is_canonical_aiff_output(
             tmp, source_el, cover, bit_depth=bit_depth, sample_rate=sample_rate
         ):
             raise CliError(f"AIFF failed canonical validation for {source}")

@@ -10,14 +10,14 @@ import converter_manifest
 import convert_plan
 import xml_output
 from cli_error import CancelledError, CliError
-from convert.encode import _copy_wav_atomic
+from convert.encode import copy_wav_atomic
 from convert.models import (
     ConvertStats,
     Plan,
     PlannedTrack,
     PreparedConversion,
-    Progress,
 )
+from convert.progress import Progress
 from convert.paths import source_key
 from convert.quality import coerce_output_format
 
@@ -92,7 +92,7 @@ def convert_unique(
                 finish("copy" if item.copy_wav else "convert", name)
                 return
             if item.copy_wav:
-                _copy_wav_atomic(
+                copy_wav_atomic(
                     item.source_path, item.dest_path, cancel_event=cancel_event
                 )
                 with stats_lock:
