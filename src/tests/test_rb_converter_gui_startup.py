@@ -16,11 +16,11 @@ if str(_TESTS) not in sys.path:
 from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, FALLBACK_OUTPUT, FALLBACK_WAV_DIR
 from update_check import UpdateCheckResult
 from gui_tk import (
+    app_patches,
     click_button,
     find_listbox,
-    mark_output_folder_valid,
-    pump_ui,
-    seed_track_selection,
+    patch_gui,
+    startup_patches,
     tk_available,
 )
 
@@ -39,19 +39,16 @@ class GuiPreferencesStartupTests(unittest.TestCase):
         derived_xml = saved_wav / "rekordbox-import.xml"
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch(
-                "rb_converter_gui.load_preferences",
-                return_value={
-                    "wav_dir": str(saved_wav),
-                    "import_xml": str(saved_wav / "custom-import.xml"),
-                },
-            ), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(saved_wav, derived_xml),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
+            with app_patches(
+                **startup_patches(
+                    wav_dir=saved_wav,
+                    output=derived_xml,
+                    preferences={
+                        "wav_dir": str(saved_wav),
+                        "import_xml": str(saved_wav / "custom-import.xml"),
+                    },
+                )
+            ):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -84,17 +81,11 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 other = Path("/tmp/other-rekordbox.xml")
-                with patch(
-                    "rb_converter_gui.check_for_update",
-                    return_value=UpdateCheckResult(kind="up_to_date"),
-                ), patch(
-                    "rb_converter_gui.load_preferences",
-                    return_value={"source_xml": str(source)},
-                ), patch(
-                    "rb_converter_gui.find_rekordbox_xml_via_child",
-                    return_value=[other],
-                ), patch(
-                    "rb_converter_gui.probe_path_via_child", return_value=False
+                with app_patches(
+                    check_for_update=UpdateCheckResult(kind="up_to_date"),
+                    load_preferences={"source_xml": str(source)},
+                    find_rekordbox_xml_via_child=[other],
+                    probe_path_via_child=False,
                 ), patch.object(ConverterApp, "_load_playlists") as load_playlists:
                     root = tk.Tk()
                     root.withdraw()
@@ -119,18 +110,13 @@ class GuiPreferencesStartupTests(unittest.TestCase):
         found = Path("/tmp/found-rekordbox.xml")
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch(
-                "rb_converter_gui.load_preferences",
-                return_value={"source_xml": str(missing)},
-            ), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child",
-                return_value=[found],
-            ) as finder, patch(
-                "rb_converter_gui.probe_path_via_child", return_value=False
-            ), patch.object(ConverterApp, "_load_playlists"):
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={"source_xml": str(missing)},
+                find_rekordbox_xml_via_child=[found],
+                probe_path_via_child=False,
+            ) as mocks, patch.object(ConverterApp, "_load_playlists"):
+                finder = mocks["find_rekordbox_xml_via_child"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root)
@@ -165,18 +151,13 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                     encoding="utf-8",
                 )
 
-                with patch(
-                    "rb_converter_gui.check_for_update",
-                    return_value=UpdateCheckResult(kind="up_to_date"),
-                ), patch(
-                    "rb_converter_gui.load_preferences",
-                    return_value={"source_xml": str(source)},
-                ), patch(
-                    "rb_converter_gui.rb.path_is_under_documents",
-                    return_value=True,
-                ), patch(
-                    "rb_converter_gui.find_rekordbox_xml_via_child",
-                    return_value=[],
+                with app_patches(
+                    check_for_update=UpdateCheckResult(kind="up_to_date"),
+                    load_preferences={"source_xml": str(source)},
+                    **{
+                        "rb.path_is_under_documents": True,
+                        "find_rekordbox_xml_via_child": [],
+                    },
                 ), patch.object(ConverterApp, "_load_playlists") as load_playlists:
                     root = tk.Tk()
                     root.withdraw()
@@ -202,22 +183,18 @@ class GuiPreferencesStartupTests(unittest.TestCase):
         saved = Path("/tmp/Documents/rekordbox/Playlists/rekordbox-7-collection.xml")
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch(
-                "rb_converter_gui.load_preferences",
-                return_value={"source_xml": str(saved)},
-            ), patch(
-                "rb_converter_gui.rb.path_is_under_documents",
-                return_value=True,
-            ), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child",
-                return_value=[
-                    saved,
-                    Path("/tmp/Documents/rekordbox/rekordbox-7-collection.xml"),
-                ],
-            ) as finder, patch.object(ConverterApp, "_load_playlists"):
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={"source_xml": str(saved)},
+                **{
+                    "rb.path_is_under_documents": True,
+                    "find_rekordbox_xml_via_child": [
+                        saved,
+                        Path("/tmp/Documents/rekordbox/rekordbox-7-collection.xml"),
+                    ],
+                },
+            ) as mocks, patch.object(ConverterApp, "_load_playlists"):
+                finder = mocks["find_rekordbox_xml_via_child"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -244,14 +221,14 @@ class GuiPreferencesStartupTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.probe_path_via_child"
-            ) as probe, patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child", return_value=[]
-            ) as finder:
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                probe_path_via_child=None,
+                find_rekordbox_xml_via_child=[],
+            ) as mocks:
+                probe = mocks["probe_path_via_child"]
+                finder = mocks["find_rekordbox_xml_via_child"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root)
@@ -277,12 +254,12 @@ class GuiPreferencesStartupTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child", return_value=[]
-            ), patch("rb_converter_gui.probe_path_via_child", return_value=True):
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                find_rekordbox_xml_via_child=[],
+                probe_path_via_child=True,
+            ):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root)
@@ -305,12 +282,12 @@ class GuiPreferencesStartupTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child", return_value=[]
-            ), patch("rb_converter_gui.probe_path_via_child", return_value=False):
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                find_rekordbox_xml_via_child=[],
+                probe_path_via_child=False,
+            ):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root)
@@ -336,15 +313,13 @@ class GuiPreferencesStartupTests(unittest.TestCase):
         xml_path = Path("/tmp/Rekordbox-collection.xml")
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child",
-                return_value=[xml_path],
-            ), patch.object(ConverterApp, "_load_playlists"), patch(
-                "rb_converter_gui.save_preferences"
-            ) as save_prefs:
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                find_rekordbox_xml_via_child=[xml_path],
+                save_preferences=None,
+            ) as mocks, patch.object(ConverterApp, "_load_playlists"):
+                save_prefs = mocks["save_preferences"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -367,11 +342,10 @@ class GuiPreferencesStartupTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child", return_value=[]
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                find_rekordbox_xml_via_child=[],
             ):
                 root = tk.Tk()
                 root.withdraw()
@@ -397,11 +371,10 @@ class GuiPreferencesStartupTests(unittest.TestCase):
         ]
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child", return_value=[]
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                find_rekordbox_xml_via_child=[],
             ), patch.object(ConverterApp, "_load_playlists"), patch.object(
                 tk.Toplevel, "wait_window"
             ):
@@ -419,7 +392,7 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 self.assertIsNotNone(listbox)
                 listbox.selection_clear(0, tk.END)
                 listbox.selection_set(1)
-                with patch("rb_converter_gui.save_preferences") as save_prefs:
+                with patch_gui("save_preferences") as save_prefs:
                     self.assertTrue(click_button(dlg, "Open"))
                     self.assertEqual(app.xml_var.get(), str(paths[1]))
                     save_prefs.assert_called()
@@ -445,11 +418,10 @@ class GuiPreferencesStartupTests(unittest.TestCase):
         ]
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child", return_value=[]
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                find_rekordbox_xml_via_child=[],
             ), patch.object(tk.Toplevel, "wait_window"):
                 root = tk.Tk()
                 root.withdraw()

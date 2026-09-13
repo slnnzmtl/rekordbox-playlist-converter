@@ -13,14 +13,16 @@ if str(_SRC) not in sys.path:
 if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
-from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, FALLBACK_OUTPUT, FALLBACK_WAV_DIR
+from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, FALLBACK_WAV_DIR
 from update_check import UpdateCheckResult
 from gui_tk import (
+    app_patches,
     click_button,
     find_listbox,
     mark_output_folder_valid,
-    pump_ui,
+    merge_patches,
     seed_track_selection,
+    startup_patches,
     tk_available,
 )
 
@@ -37,15 +39,11 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
-                "rb_converter_gui.save_preferences"
-            ) as save_prefs:
+            with app_patches(
+                **startup_patches(),
+                save_preferences=None,
+            ) as mocks:
+                save_prefs = mocks["save_preferences"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -80,15 +78,17 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
-                "rb_converter_gui.filedialog.askdirectory"
-            ) as ask_dir, patch("rb_converter_gui.save_preferences") as save_prefs:
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "filedialog.askdirectory": None,
+                        "save_preferences": None,
+                    },
+                )
+            ) as mocks:
+                ask_dir = mocks["filedialog.askdirectory"]
+                save_prefs = mocks["save_preferences"]
                 ask_dir.return_value = "/tmp/chosen-wav"
                 root = tk.Tk()
                 root.withdraw()
@@ -120,17 +120,17 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
-                "rb_converter_gui.filedialog.askopenfilename"
-            ) as ask_open, patch(
-                "rb_converter_gui.save_preferences"
-            ) as save_prefs, patch.object(ConverterApp, "_load_playlists"):
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "filedialog.askopenfilename": None,
+                        "save_preferences": None,
+                    },
+                )
+            ) as mocks, patch.object(ConverterApp, "_load_playlists"):
+                ask_open = mocks["filedialog.askopenfilename"]
+                save_prefs = mocks["save_preferences"]
                 ask_open.return_value = "/tmp/chosen-rekordbox.xml"
                 root = tk.Tk()
                 root.withdraw()
@@ -158,15 +158,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
-                "rb_converter_gui.save_preferences"
-            ):
+            with app_patches(**startup_patches(), save_preferences=None):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -180,7 +172,6 @@ class GuiPreferencesPersistTests(unittest.TestCase):
             self.assertEqual(root.clipboard_get(), expected)
             self.assertEqual(app.status_var.get(), f"Copied path: {expected}")
             self.assertNotIn("\n", app.status_var.get())
-            # Expire the temporary status the same way the 3s after() would.
             clear_id = app._copy_status_clear_id
             self.assertIsNotNone(clear_id)
             app.root.after_cancel(clear_id)
@@ -220,15 +211,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
-                "rb_converter_gui.save_preferences"
-            ):
+            with app_patches(**startup_patches(), save_preferences=None):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -265,17 +248,19 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
-                "rb_converter_gui.save_preferences"
-            ) as save_prefs, patch.object(
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "save_preferences": None,
+                        "threading.Thread": None,
+                    },
+                )
+            ) as mocks, patch.object(
                 ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
-            ), patch("rb_converter_gui.threading.Thread") as thread_cls:
+            ):
+                save_prefs = mocks["save_preferences"]
+                thread_cls = mocks["threading.Thread"]
                 thread_cls.return_value.start = lambda: None
                 root = tk.Tk()
                 root.withdraw()
@@ -312,33 +297,28 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch(
-                "rb_converter_gui.load_preferences",
-                return_value={
-                    "output_format": "aiff",
-                    "bit_depth": "24",
-                    "sample_rate": "48000",
-                },
-            ), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch(
-                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
-            ), patch(
-                "rb_converter_gui.save_preferences"
-            ), patch.object(
+            with app_patches(
+                merge_patches(
+                    startup_patches(
+                        preferences={
+                            "output_format": "aiff",
+                            "bit_depth": "24",
+                            "sample_rate": "48000",
+                        }
+                    ),
+                    {
+                        "save_preferences": None,
+                        "rb.prepare": {"return_value": (None, ["stop"])},
+                        "threading.Thread": None,
+                    },
+                )
+            ) as mocks, patch.object(
                 ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
-            ), patch(
-                "rb_converter_gui.rb.prepare", return_value=(None, ["stop"])
-            ) as prepare, patch(
-                "rb_converter_gui.threading.Thread"
-            ) as thread_cls:
+            ):
+                prepare = mocks["rb.prepare"]
+                thread_cls = mocks["threading.Thread"]
 
                 def capture_start():
-                    # Run worker synchronously for assertions.
                     target = thread_cls.call_args.kwargs.get("target")
                     if target is None:
                         target = thread_cls.call_args[0][0]
@@ -375,18 +355,18 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
-                "rb_converter_gui.filedialog.askdirectory"
-            ) as ask_dir, patch(
-                "rb_converter_gui.save_preferences",
-                side_effect=OSError("permission denied"),
-            ):
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "filedialog.askdirectory": None,
+                        "save_preferences": {
+                            "side_effect": OSError("permission denied")
+                        },
+                    },
+                )
+            ) as mocks:
+                ask_dir = mocks["filedialog.askdirectory"]
                 ask_dir.return_value = "/tmp/chosen-wav"
                 root = tk.Tk()
                 root.withdraw()
@@ -408,18 +388,20 @@ class GuiPreferencesPersistTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
-                "rb_converter_gui.save_preferences",
-                side_effect=OSError("permission denied"),
-            ), patch.object(
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "save_preferences": {
+                            "side_effect": OSError("permission denied")
+                        },
+                        "threading.Thread": None,
+                    },
+                )
+            ) as mocks, patch.object(
                 ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
-            ), patch("rb_converter_gui.threading.Thread") as thread_cls:
+            ):
+                thread_cls = mocks["threading.Thread"]
                 thread_cls.return_value.start = lambda: None
                 root = tk.Tk()
                 root.withdraw()
@@ -447,12 +429,15 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
-            ), patch("rb_converter_gui.filedialog.askopenfilename") as ask_open:
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                **{
+                    "rb.discover_xml_candidates": [],
+                    "filedialog.askopenfilename": None,
+                },
+            ) as mocks:
+                ask_open = mocks["filedialog.askopenfilename"]
                 ask_open.return_value = ""
                 root = tk.Tk()
                 root.withdraw()
@@ -475,12 +460,15 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
-            ), patch("rb_converter_gui.filedialog.askopenfilename") as ask_open:
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                **{
+                    "rb.discover_xml_candidates": [],
+                    "filedialog.askopenfilename": None,
+                },
+            ) as mocks:
+                ask_open = mocks["filedialog.askopenfilename"]
                 ask_open.return_value = ""
                 root = tk.Tk()
                 root.withdraw()
@@ -507,12 +495,15 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
         last_xml = expected_dir / "Rekordbox-collection.xml"
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
-            ), patch("rb_converter_gui.filedialog.askopenfilename") as ask_open:
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                **{
+                    "rb.discover_xml_candidates": [],
+                    "filedialog.askopenfilename": None,
+                },
+            ) as mocks:
+                ask_open = mocks["filedialog.askopenfilename"]
                 ask_open.return_value = ""
                 root = tk.Tk()
                 root.withdraw()
@@ -536,14 +527,16 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
-            ), patch("rb_converter_gui.filedialog.askdirectory") as ask_dir, patch(
-                "rb_converter_gui.save_preferences"
-            ):
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                **{
+                    "rb.discover_xml_candidates": [],
+                    "filedialog.askdirectory": None,
+                    "save_preferences": None,
+                },
+            ) as mocks:
+                ask_dir = mocks["filedialog.askdirectory"]
                 ask_dir.return_value = ""
                 root = tk.Tk()
                 root.withdraw()
@@ -568,25 +561,19 @@ class GuiXmlRefreshTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch(
-                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
-            ), patch(
-                "rb_converter_gui.filedialog.askopenfilename"
-            ) as ask_open, patch.object(ConverterApp, "_load_playlists") as load:
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {"filedialog.askopenfilename": None},
+                )
+            ) as mocks, patch.object(ConverterApp, "_load_playlists") as load:
+                ask_open = mocks["filedialog.askopenfilename"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
                 app.xml_var.set("/tmp/rekordbox.xml")
                 load.reset_mock()
-                self.assertTrue(
-                    click_button(root, "Refresh")
-                )
+                self.assertTrue(click_button(root, "Refresh"))
                 ask_open.assert_not_called()
                 load.assert_called()
         except tk.TclError:
@@ -626,15 +613,11 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
         ]
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child",
-                return_value=hits,
-            ), patch(
-                "rb_converter_gui.threading.Thread",
-                side_effect=self._run_inline_thread,
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                find_rekordbox_xml_via_child=hits,
+                **{"threading.Thread": {"side_effect": self._run_inline_thread}},
             ), patch.object(ConverterApp, "_load_playlists"), patch.object(
                 tk.Toplevel, "wait_window"
             ):
@@ -674,18 +657,15 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
         found = Path("/tmp/found/Rekordbox-collection.xml")
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.find_rekordbox_xml_via_child",
-                return_value=[found],
-            ) as find_xml, patch(
-                "rb_converter_gui.threading.Thread",
-                side_effect=self._run_inline_thread,
-            ), patch.object(ConverterApp, "_load_playlists"), patch(
-                "rb_converter_gui.save_preferences"
-            ) as save_prefs:
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                load_preferences={},
+                find_rekordbox_xml_via_child=[found],
+                save_preferences=None,
+                **{"threading.Thread": {"side_effect": self._run_inline_thread}},
+            ) as mocks, patch.object(ConverterApp, "_load_playlists"):
+                find_xml = mocks["find_rekordbox_xml_via_child"]
+                save_prefs = mocks["save_preferences"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -751,20 +731,11 @@ class GuiLibraryValidationTests(unittest.TestCase):
                 legacy = Path(tmp) / "legacy"
                 legacy.mkdir()
                 (legacy / "old.wav").write_bytes(b"RIFF")
-                with patch(
-                    "rb_converter_gui.check_for_update",
-                    return_value=UpdateCheckResult(kind="up_to_date"),
-                ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                    "rb_converter_gui.resolve_startup_paths",
-                    return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-                ), patch(
-                    "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
-                ), patch("rb_converter_gui.save_preferences"):
+                with app_patches(**startup_patches(), save_preferences=None):
                     root = tk.Tk()
                     root.withdraw()
                     app = ConverterApp(root, documents_accessible=False)
                     app.wav_dir_var.set(str(legacy))
-                    # Run validation inline (no debounce / worker).
                     after_id = app._wav_dir_validate_after_id
                     if after_id is not None:
                         app.root.after_cancel(after_id)
@@ -778,7 +749,10 @@ class GuiLibraryValidationTests(unittest.TestCase):
                     app._set_wav_dir_error(err)
                     app._update_convert_enabled()
                     self.assertEqual(str(app.convert_btn.cget("state")), "disabled")
-                    self.assertIn("new empty output folder", app.wav_dir_error_var.get().lower())
+                    self.assertIn(
+                        "new empty output folder",
+                        app.wav_dir_error_var.get().lower(),
+                    )
                     self.assertTrue(app.wav_dir_error_label.winfo_manager())
 
                     empty = Path(tmp) / "empty-lib"
@@ -817,17 +791,11 @@ class GuiLibraryValidationTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch(
-                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
-            ), patch.object(tk.Toplevel, "wait_window"), patch(
-                "rb_converter_gui.open_in_finder"
-            ) as reveal:
+            with app_patches(
+                **startup_patches(),
+                open_in_finder=None,
+            ) as mocks, patch.object(tk.Toplevel, "wait_window"):
+                reveal = mocks["open_in_finder"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -843,11 +811,7 @@ class GuiLibraryValidationTests(unittest.TestCase):
                         dlg = child
                         break
                 self.assertIsNotNone(dlg)
-                self.assertTrue(
-                    click_button(
-                        dlg, "Reveal audio folder"
-                    )
-                )
+                self.assertTrue(click_button(dlg, "Reveal audio folder"))
                 reveal.assert_called_with(wav_folder)
 
                 app._show_done_dialog("Done body", aiff_folder, xml)
@@ -857,11 +821,7 @@ class GuiLibraryValidationTests(unittest.TestCase):
                         dlg = child
                         break
                 self.assertIsNotNone(dlg)
-                self.assertTrue(
-                    click_button(
-                        dlg, "Reveal audio folder"
-                    )
-                )
+                self.assertTrue(click_button(dlg, "Reveal audio folder"))
                 reveal.assert_called_with(aiff_folder)
 
                 app._show_done_dialog("Done body", wav_folder, xml)
@@ -871,9 +831,7 @@ class GuiLibraryValidationTests(unittest.TestCase):
                         dlg = child
                         break
                 self.assertIsNotNone(dlg)
-                self.assertTrue(
-                    click_button(dlg, "Reveal import XML")
-                )
+                self.assertTrue(click_button(dlg, "Reveal import XML"))
                 reveal.assert_called_with(xml)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")

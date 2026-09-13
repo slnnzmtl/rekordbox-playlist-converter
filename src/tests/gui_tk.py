@@ -2,6 +2,118 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from typing import Any, Iterator
+from unittest.mock import Mock, patch
+
+GUI_MODULE = "rb_converter_gui"  # pass 2 changes only this
+
+
+def _patch_target(suffix: str) -> str:
+    return f"{GUI_MODULE}.{suffix}"
+
+
+def patch_gui(suffix: str, *args: Any, **kwargs: Any):
+    """Patch a single ``GUI_MODULE.<suffix>`` target (for nested one-offs)."""
+    return patch(_patch_target(suffix), *args, **kwargs)
+
+
+_PATCH_KWARGS = frozenset(
+    {
+        "return_value",
+        "side_effect",
+        "new",
+        "autospec",
+        "spec",
+        "create",
+        "new_callable",
+        "name",
+    }
+)
+
+
+def _coerce_patch_kwargs(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict) and value and set(value).issubset(_PATCH_KWARGS):
+        return value
+    if isinstance(value, Mock):
+        return {"new": value}
+    return {"return_value": value}
+
+
+def startup_patches(
+    *,
+    wav_dir: Any = None,
+    output: Any = None,
+    preferences: dict[str, Any] | None = None,
+    check_for_update: Any = None,
+    discover_xml_candidates: list[Any] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build the common ConverterApp startup patch dict for :func:`app_patches`."""
+    from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR
+    from update_check import UpdateCheckResult
+
+    result: dict[str, Any] = {
+        "check_for_update": check_for_update
+        if check_for_update is not None
+        else UpdateCheckResult(kind="up_to_date"),
+        "load_preferences": preferences if preferences is not None else {},
+        "resolve_startup_paths": (
+            wav_dir if wav_dir is not None else DEFAULT_WAV_DIR,
+            output if output is not None else DEFAULT_OUTPUT,
+        ),
+        "rb.discover_xml_candidates": discover_xml_candidates
+        if discover_xml_candidates is not None
+        else [],
+    }
+    result.update(extra)
+    return result
+
+
+def merge_patches(*dicts: dict[str, Any] | None) -> dict[str, Any]:
+    """Merge patch override dicts (later entries win)."""
+    merged: dict[str, Any] = {}
+    for d in dicts:
+        if d:
+            merged.update(d)
+    return merged
+
+
+@contextmanager
+def app_patches(
+    overrides: dict[str, Any] | None = None, /, **kwargs: Any
+) -> Iterator[dict[str, Mock]]:
+    """Stack patches on ``GUI_MODULE`` targets.
+
+    Keys are dotted suffixes after ``GUI_MODULE`` (e.g. ``"save_preferences"``,
+    ``"threading.Thread"``, ``"rb.prepare"``). Values are patch kwargs dicts,
+    plain return values, or ``None`` for a default :class:`Mock`.
+
+    Use :func:`startup_patches` for the usual startup stack::
+
+        with app_patches(**startup_patches()) as mocks:
+            save_prefs = mocks["save_preferences"]
+
+    Yields a dict of mock objects keyed by suffix.
+    """
+    from contextlib import ExitStack
+
+    merged: dict[str, Any] = {}
+    if overrides:
+        merged.update(overrides)
+    merged.update(kwargs)
+
+    mocks: dict[str, Mock] = {}
+    with ExitStack() as stack:
+        for suffix, value in merged.items():
+            mock = stack.enter_context(
+                patch(_patch_target(suffix), **_coerce_patch_kwargs(value))
+            )
+            mocks[suffix] = mock
+        yield mocks
+
 
 def tk_available() -> bool:
     try:

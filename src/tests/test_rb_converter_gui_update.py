@@ -4,13 +4,13 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from update_check import ReleaseInfo, UpdateCheckResult
+from gui_tk import app_patches
 
 
 class UpdateCheckBehaviorTests(unittest.TestCase):
@@ -21,6 +21,7 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
+        from unittest.mock import patch
         from rb_converter_gui import ConverterApp
 
         release = ReleaseInfo(
@@ -31,10 +32,12 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
         )
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="update_available", release=release),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
+            with app_patches(
+                check_for_update=UpdateCheckResult(
+                    kind="update_available", release=release
+                ),
+                **{"rb.discover_xml_candidates": []},
+            ):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -63,6 +66,8 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
+        from unittest.mock import patch
+
         from rb_converter_gui import ConverterApp
 
         started: list[object] = []
@@ -80,17 +85,15 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch.object(
-                ConverterApp, "_start_update_check"
-            ):
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                **{"rb.discover_xml_candidates": []},
+            ), patch.object(ConverterApp, "_start_update_check"):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
 
-            with patch("rb_converter_gui.threading.Thread", FakeThread):
+            with app_patches(**{"threading.Thread": {"new": FakeThread}}):
                 started.clear()
                 app._start_update_check(manual=True)
                 app._start_update_check(manual=True)
@@ -112,6 +115,8 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
+        from unittest.mock import patch
+
         from rb_converter_gui import ConverterApp
 
         release = ReleaseInfo(
@@ -122,16 +127,14 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
         )
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
+            with app_patches(**{"rb.discover_xml_candidates": []}):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
-            with patch("rb_converter_gui.webbrowser.open") as open_url, patch.object(
+            with app_patches({"webbrowser.open": None}) as mocks, patch.object(
                 tk.Toplevel, "wait_window"
             ):
+                open_url = mocks["webbrowser.open"]
                 app._show_update_available(release)
                 for child in root.winfo_children():
                     if isinstance(child, tk.Toplevel):

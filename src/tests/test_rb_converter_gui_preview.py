@@ -14,14 +14,16 @@ if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
 import rb_playlist_to_wav as rb
-from update_check import UpdateCheckResult
 
 from gui_tk import (
+    app_patches,
     confirm_conversion_preview,
     mark_output_folder_valid,
+    merge_patches,
     mock_convert_plan,
     pump_ui,
     seed_track_selection,
+    startup_patches,
     tk_available,
 )
 
@@ -38,8 +40,7 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        from contextlib import ExitStack
-        from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
+        from rb_converter_gui import ConverterApp
 
         plan = mock_convert_plan(n_unique=1)
         preview = rb.ConversionPreview(
@@ -57,7 +58,6 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
             call_order.append("convert_unique")
             items = kwargs.get("items") or plan_arg.unique
             for item in items:
-                # Execution-time recheck (files may change while preview is open).
                 planned_action_calls.append(
                     rb.planned_action(plan_arg, item, force)
                 )
@@ -73,98 +73,48 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
 
                 return _T()
 
-            with ExitStack() as stack:
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.check_for_update",
-                        return_value=UpdateCheckResult(kind="up_to_date"),
-                    )
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "save_preferences": None,
+                        "rb.prepare": {"return_value": (plan, [])},
+                        "rb.share_output_root": None,
+                        "rb.collect_batch_unique": plan.unique,
+                        "rb.share_cover_caches": None,
+                        "rb.build_conversion_preview": preview,
+                        "converter_manifest.save_manifest": {
+                            "side_effect": lambda *a, **k: call_order.append(
+                                "save_manifest"
+                            )
+                        },
+                        "rb.convert_unique": {"side_effect": convert_side_effect},
+                        "rb.apply_xml": {
+                            "side_effect": lambda *a, **k: (
+                                call_order.append("apply_xml"),
+                                1,
+                            )[1]
+                        },
+                        "rb.write_import_xml": {
+                            "side_effect": lambda *a, **k: call_order.append(
+                                "write_import_xml"
+                            )
+                        },
+                        "threading.Thread": {"side_effect": run_inline},
+                    },
                 )
-                stack.enter_context(
-                    patch("rb_converter_gui.load_preferences", return_value={})
-                )
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.resolve_startup_paths",
-                        return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.discover_xml_candidates",
-                        return_value=[],
-                    )
-                )
-                stack.enter_context(patch("rb_converter_gui.save_preferences"))
-                stack.enter_context(
-                    patch.object(
-                        ConverterApp,
-                        "_selected_playlists",
-                        return_value=[("ROOT", "Test")],
-                    )
-                )
-                prepare = stack.enter_context(
-                    patch("rb_converter_gui.rb.prepare", return_value=(plan, []))
-                )
-                stack.enter_context(patch("rb_converter_gui.rb.share_output_root"))
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.collect_batch_unique",
-                        return_value=plan.unique,
-                    )
-                )
-                stack.enter_context(patch("rb_converter_gui.rb.share_cover_caches"))
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.build_conversion_preview",
-                        return_value=preview,
-                    )
-                )
-                save_manifest = stack.enter_context(
-                    patch(
-                        "rb_converter_gui.converter_manifest.save_manifest",
-                        side_effect=lambda *a, **k: call_order.append(
-                            "save_manifest"
-                        ),
-                    )
-                )
-                convert_unique = stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.convert_unique",
-                        side_effect=convert_side_effect,
-                    )
-                )
-                apply_xml = stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.apply_xml",
-                        side_effect=lambda *a, **k: (
-                            call_order.append("apply_xml"),
-                            1,
-                        )[1],
-                    )
-                )
-                write_xml = stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.write_import_xml",
-                        side_effect=lambda *a, **k: call_order.append(
-                            "write_import_xml"
-                        ),
-                    )
-                )
-                stack.enter_context(
-                    patch.object(
-                        ConverterApp, "_show_conversion_preview", create=True
-                    )
-                )
-                stack.enter_context(
-                    patch.object(ConverterApp, "_show_done_dialog")
-                )
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.threading.Thread",
-                        side_effect=run_inline,
-                    )
-                )
+            ) as mocks, patch.object(
+                ConverterApp,
+                "_selected_playlists",
+                return_value=[("ROOT", "Test")],
+            ), patch.object(
+                ConverterApp, "_show_conversion_preview", create=True
+            ), patch.object(ConverterApp, "_show_done_dialog"):
+                prepare = mocks["rb.prepare"]
+                save_manifest = mocks["converter_manifest.save_manifest"]
+                convert_unique = mocks["rb.convert_unique"]
+                apply_xml = mocks["rb.apply_xml"]
+                write_xml = mocks["rb.write_import_xml"]
 
                 root = tk.Tk()
                 root.withdraw()
@@ -213,6 +163,7 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+
 class ConversionPreviewDialogTests(unittest.TestCase):
     def test_preview_modal_table_and_disabled_controls(self) -> None:
         """Given prepare finishes: When the preview opens: Then the modal shows
@@ -224,8 +175,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
 
         import tkinter as tk
         import tkinter.ttk as ttk
-        from contextlib import ExitStack
-        from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
+        from rb_converter_gui import ConverterApp
 
         plan = mock_convert_plan(n_unique=1)
         preview = rb.ConversionPreview(
@@ -293,60 +243,24 @@ class ConversionPreviewDialogTests(unittest.TestCase):
 
         root = None
         try:
-            with ExitStack() as stack:
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.check_for_update",
-                        return_value=UpdateCheckResult(kind="up_to_date"),
-                    )
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "save_preferences": None,
+                        "rb.prepare": {"return_value": (plan, [])},
+                        "rb.share_output_root": None,
+                        "rb.collect_batch_unique": plan.unique,
+                        "rb.share_cover_caches": None,
+                        "rb.build_conversion_preview": preview,
+                        "threading.Thread": {"side_effect": run_inline},
+                    },
                 )
-                stack.enter_context(
-                    patch("rb_converter_gui.load_preferences", return_value={})
-                )
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.resolve_startup_paths",
-                        return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.discover_xml_candidates",
-                        return_value=[],
-                    )
-                )
-                stack.enter_context(patch("rb_converter_gui.save_preferences"))
-                stack.enter_context(
-                    patch.object(
-                        ConverterApp,
-                        "_selected_playlists",
-                        return_value=[("ROOT", "Test")],
-                    )
-                )
-                stack.enter_context(
-                    patch("rb_converter_gui.rb.prepare", return_value=(plan, []))
-                )
-                stack.enter_context(patch("rb_converter_gui.rb.share_output_root"))
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.collect_batch_unique",
-                        return_value=plan.unique,
-                    )
-                )
-                stack.enter_context(patch("rb_converter_gui.rb.share_cover_caches"))
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.build_conversion_preview",
-                        return_value=preview,
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.threading.Thread",
-                        side_effect=run_inline,
-                    )
-                )
-
+            ), patch.object(
+                ConverterApp,
+                "_selected_playlists",
+                return_value=[("ROOT", "Test")],
+            ):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -370,8 +284,6 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     )
                     for iid in table.get_children("")
                 ]
-                # Normalize to (file, action, quality, size) regardless of
-                # whether file is tree text (#0) or a values column.
                 normalized = []
                 for text, values in rows:
                     vals = list(values)
@@ -485,9 +397,8 @@ class ConversionPreviewDialogTests(unittest.TestCase):
 
         import tkinter as tk
         import tkinter.ttk as ttk
-        from contextlib import ExitStack
         from types import SimpleNamespace
-        from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
+        from rb_converter_gui import ConverterApp
 
         plan = mock_convert_plan(n_unique=1)
         preview = rb.ConversionPreview(
@@ -555,66 +466,27 @@ class ConversionPreviewDialogTests(unittest.TestCase):
 
         root = None
         try:
-            with ExitStack() as stack:
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.check_for_update",
-                        return_value=UpdateCheckResult(kind="up_to_date"),
-                    )
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "save_preferences": None,
+                        "rb.prepare": {"return_value": (plan, [])},
+                        "rb.share_output_root": None,
+                        "rb.collect_batch_unique": plan.unique,
+                        "rb.share_cover_caches": None,
+                        "rb.build_conversion_preview": preview,
+                        "threading.Thread": {"side_effect": run_inline},
+                    },
                 )
-                stack.enter_context(
-                    patch("rb_converter_gui.load_preferences", return_value={})
-                )
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.resolve_startup_paths",
-                        return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.discover_xml_candidates",
-                        return_value=[],
-                    )
-                )
-                stack.enter_context(patch("rb_converter_gui.save_preferences"))
-                stack.enter_context(
-                    patch.object(
-                        ConverterApp,
-                        "_selected_playlists",
-                        return_value=[("ROOT", "Test")],
-                    )
-                )
-                stack.enter_context(
-                    patch("rb_converter_gui.rb.prepare", return_value=(plan, []))
-                )
-                stack.enter_context(patch("rb_converter_gui.rb.share_output_root"))
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.collect_batch_unique",
-                        return_value=plan.unique,
-                    )
-                )
-                stack.enter_context(patch("rb_converter_gui.rb.share_cover_caches"))
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.rb.build_conversion_preview",
-                        return_value=preview,
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "convert_plan.shutil.disk_usage",
-                        return_value=SimpleNamespace(free=1_000_000),
-                    )
-                )
-                stack.enter_context(
-                    patch(
-                        "rb_converter_gui.threading.Thread",
-                        side_effect=run_inline,
-                    )
-                )
-
+            ), patch.object(
+                ConverterApp,
+                "_selected_playlists",
+                return_value=[("ROOT", "Test")],
+            ), patch(
+                "convert_plan.shutil.disk_usage",
+                return_value=SimpleNamespace(free=1_000_000),
+            ):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)

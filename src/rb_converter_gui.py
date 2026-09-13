@@ -38,6 +38,14 @@ from tkinter import filedialog, messagebox, ttk
 
 import rb_playlist_to_wav as rb
 import converter_manifest
+from gui.browser import (
+    build_format_quality_controls,
+    build_menubar,
+    build_playlist_pane,
+    build_progress_convert_row,
+    build_status_row,
+    build_tracklist_pane,
+)
 from gui.layout import (
     ACTION_BUTTON_WIDTH,
     HoverTooltip,
@@ -47,10 +55,12 @@ from gui.layout import (
     fit_window_geometry,
     path_row,
     place_dialog_over_parent,
-    tree_with_yscroll,
 )
 from gui import dialogs as gui_dialogs
+from gui import tracklist as gui_tracklist
 from preview_bit_depth import (
+    PREVIEW_BIT_DEPTH_BATCH,
+    PREVIEW_BIT_DEPTH_YIELD_S,
     cached_preview_bit_depth,
     peek_cached_preview_bit_depth,
 )
@@ -106,9 +116,6 @@ class PreparedConversion:
     skipped: list[str]
 SEARCH_DEBOUNCE_MS = 200
 WAV_DIR_VALIDATE_DEBOUNCE_MS = 300
-# One probe worker; apply this many depths per UI callback so Tk can paint.
-PREVIEW_BIT_DEPTH_BATCH = 24
-PREVIEW_BIT_DEPTH_YIELD_S = 0.02
 
 
 def _bundled_asset(name: str) -> Path:
@@ -415,78 +422,24 @@ class ConverterApp:
         self.browser_panes = panes
         panes.bind("<Configure>", self._on_browser_panes_configure, add="+")
 
-        left = ttk.Frame(panes)
-        left.columnconfigure(0, weight=1)
-        left.rowconfigure(1, weight=1)
-        self.search_entry = ttk.Entry(left, textvariable=self.search_var)
-        self.search_entry.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        self._playlist_search.bind(self.search_entry)
-        self.playlist_tree, scroll = tree_with_yscroll(
-            left, show="tree", selectmode="extended", height=12
+        left, self.search_entry, self.playlist_tree = build_playlist_pane(
+            panes,
+            search_var=self.search_var,
+            bind_search=self._playlist_search.bind,
+            on_select=self._on_playlist_select,
+            on_button1=self._on_playlist_button1,
         )
-        self.playlist_tree.grid(row=1, column=0, sticky="nsew")
-        scroll.grid(row=1, column=1, sticky="ns")
-        self.playlist_tree.bind("<<TreeviewSelect>>", self._on_playlist_select, add="+")
-        self.playlist_tree.bind("<Button-1>", self._on_playlist_button1, add="+")
-
-        right = ttk.Frame(panes)
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(1, weight=1)
-        self.track_search_entry = ttk.Entry(right, textvariable=self.track_search_var)
-        self.track_search_entry.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        self._track_search.bind(self.track_search_entry)
-        self.tracklist_tree, track_scroll = tree_with_yscroll(
-            right,
-            columns=("format", "bit_depth", "sample_rate"),
-            show="tree headings",
-            selectmode="extended",
-            height=12,
-        )
-        self.tracklist_tree.heading(
-            "#0", text="Track", anchor="w", command=lambda: self._on_tracklist_sort("#0")
-        )
-        self.tracklist_tree.heading(
-            "format",
-            text="Format",
-            anchor="w",
-            command=lambda: self._on_tracklist_sort("format"),
-        )
-        self.tracklist_tree.heading(
-            "bit_depth",
-            text="Bit depth",
-            anchor="w",
-            command=lambda: self._on_tracklist_sort("bit_depth"),
-        )
-        self.tracklist_tree.heading(
-            "sample_rate",
-            text="Sample rate",
-            anchor="w",
-            command=lambda: self._on_tracklist_sort("sample_rate"),
-        )
-        self.tracklist_tree.column("#0", stretch=True, minwidth=120)
-        self.tracklist_tree.column("format", width=70, stretch=False, anchor="center")
-        self.tracklist_tree.column(
-            "bit_depth", width=90, stretch=False, anchor="center"
-        )
-        self.tracklist_tree.column(
-            "sample_rate", width=90, stretch=False, anchor="center"
-        )
-        self.tracklist_tree.tag_configure(
-            TRACKLIST_HEADER_SELECTED_TAG,
-            background=TRACKLIST_HEADER_SELECTED_BG,
-            foreground=TRACKLIST_HEADER_SELECTED_FG,
-        )
-        self.tracklist_tree.grid(row=1, column=0, sticky="nsew")
-        track_scroll.grid(row=1, column=1, sticky="ns")
-        self.tracklist_tree.bind(
-            "<<TreeviewSelect>>", self._on_tracklist_select, add="+"
-        )
-        self.tracklist_tree.bind("<Button-1>", self._on_tracklist_button1, add="+")
-        self.tracklist_tree.bind(
-            "<<TreeviewOpen>>", self._remember_tracklist_group_open, add="+"
-        )
-        self.tracklist_tree.bind(
-            "<<TreeviewClose>>", self._remember_tracklist_group_open, add="+"
+        right, self.track_search_entry, self.tracklist_tree = build_tracklist_pane(
+            panes,
+            search_var=self.track_search_var,
+            bind_search=self._track_search.bind,
+            on_select=self._on_tracklist_select,
+            on_button1=self._on_tracklist_button1,
+            on_group_open=self._remember_tracklist_group_open,
+            on_sort=self._on_tracklist_sort,
+            header_selected_tag=TRACKLIST_HEADER_SELECTED_TAG,
+            header_selected_bg=TRACKLIST_HEADER_SELECTED_BG,
+            header_selected_fg=TRACKLIST_HEADER_SELECTED_FG,
         )
 
         panes.add(left, weight=1)
@@ -527,108 +480,46 @@ class ConverterApp:
         )
         HoverTooltip(self.import_xml_entry, "Click to copy the Import XML path")
 
-        ttk.Label(frm, text="Format").grid(row=5, column=0, sticky="w", **pad)
-        format_opts = ttk.Frame(frm)
-        format_opts.grid(row=5, column=1, sticky="w", **pad)
-        self.format_wav_radio = ttk.Radiobutton(
-            format_opts,
-            text="WAV",
-            variable=self.format_var,
-            value="wav",
-            command=self._persist_output_preferences,
-        )
-        self.format_wav_radio.pack(side=tk.LEFT)
-        self.format_aiff_radio = ttk.Radiobutton(
-            format_opts,
-            text="AIFF",
-            variable=self.format_var,
-            value="aiff",
-            command=self._persist_output_preferences,
-        )
-        self.format_aiff_radio.pack(side=tk.LEFT, padx=(8, 0))
-
-        ttk.Label(frm, text="Max. quality").grid(row=6, column=0, sticky="w", **pad)
-        quality = ttk.Frame(frm)
-        quality.grid(row=6, column=1, sticky="w", **pad)
-        self.bit_depth_combo = ttk.Combobox(
-            quality,
-            values=list(BIT_DEPTH_LABELS.values()),
-            state="readonly",
-            width=8,
-        )
-        self.bit_depth_combo.set(
-            BIT_DEPTH_LABELS.get(self.bit_depth_var.get(), "24-bit")
-        )
-        self.bit_depth_combo.pack(side=tk.LEFT)
-        self.bit_depth_combo.bind(
-            "<<ComboboxSelected>>", self._on_bit_depth_selected, add="+"
-        )
-        HoverTooltip(self.bit_depth_combo, BIT_DEPTH_24_TOOLTIP)
-        self.sample_rate_combo = ttk.Combobox(
-            quality,
-            values=list(SAMPLE_RATE_LABELS.values()),
-            state="readonly",
-            width=9,
-        )
-        self.sample_rate_combo.set(
-            SAMPLE_RATE_LABELS.get(self.sample_rate_var.get(), "48 kHz")
-        )
-        self.sample_rate_combo.pack(side=tk.LEFT, padx=(8, 0))
-        self.sample_rate_combo.bind(
-            "<<ComboboxSelected>>", self._on_sample_rate_selected, add="+"
-        )
-        HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
-
-        self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=7, column=0, columnspan=2, sticky="ew", **pad)
-        self.progress["value"] = 0
-        self.convert_btn = ttk.Button(
+        (
+            self.format_wav_radio,
+            self.format_aiff_radio,
+            self.bit_depth_combo,
+            self.sample_rate_combo,
+        ) = build_format_quality_controls(
             frm,
-            text="Convert",
-            width=ACTION_BUTTON_WIDTH,
-            command=self._start_convert,
+            pad=pad,
+            format_var=self.format_var,
+            bit_depth_var=self.bit_depth_var,
+            sample_rate_var=self.sample_rate_var,
+            bit_depth_labels=BIT_DEPTH_LABELS,
+            sample_rate_labels=SAMPLE_RATE_LABELS,
+            bit_depth_tooltip=BIT_DEPTH_24_TOOLTIP,
+            sample_rate_tooltip=SAMPLE_RATE_48_TOOLTIP,
+            on_persist=self._persist_output_preferences,
+            on_bit_depth=self._on_bit_depth_selected,
+            on_sample_rate=self._on_sample_rate_selected,
         )
-        self.convert_btn.grid(row=7, column=2, sticky="e", **pad)
-        self.cancel_btn = ttk.Button(
-            frm,
-            text="Cancel",
-            width=ACTION_BUTTON_WIDTH,
-            command=self._request_cancel,
-            state=tk.DISABLED,
-        )
-        self.cancel_btn.grid(row=7, column=2, sticky="e", **pad)
-        self.cancel_btn.grid_remove()
 
-        status_row = ttk.Frame(frm)
-        status_row.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
-        status_row.columnconfigure(0, weight=1)
-        status_label = ttk.Label(status_row, textvariable=self.status_var)
-        status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        bind_wraplength(status_label, status_row, inset=12)
-        ttk.Label(status_row, textvariable=self.scan_status_var).pack(
-            side=tk.LEFT, padx=(12, 0)
+        self.progress, self.convert_btn, self.cancel_btn = build_progress_convert_row(
+            frm,
+            pad=pad,
+            on_convert=self._start_convert,
+            on_cancel=self._request_cancel,
+        )
+        build_status_row(
+            frm,
+            pad=pad,
+            status_var=self.status_var,
+            scan_status_var=self.scan_status_var,
         )
 
     def _build_menubar(self) -> None:
-        menubar = tk.Menu(self.root)
-        file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(
-            label="Search for Rekordbox XML…",
-            command=self._search_rekordbox_xml,
+        build_menubar(
+            self.root,
+            on_search_xml=self._search_rekordbox_xml,
+            on_usage=self._show_usage_guide,
+            on_updates=self._check_for_updates_manual,
         )
-        menubar.add_cascade(label="File", menu=file_menu)
-        help_menu = tk.Menu(menubar, tearoff=0)
-        help_menu.add_command(
-            label="How to Use…",
-            command=self._show_usage_guide,
-            accelerator="Command-?",
-        )
-        help_menu.add_command(
-            label="Check for Updates…",
-            command=self._check_for_updates_manual,
-        )
-        menubar.add_cascade(label="Help", menu=help_menu)
-        self.root.config(menu=menubar)
         try:
             self.root.bind_all("<Command-?>", lambda _e: self._show_usage_guide())
             self.root.bind_all("<Command-Shift-/>", lambda _e: self._show_usage_guide())
@@ -874,13 +765,13 @@ class ConverterApp:
 
     @staticmethod
     def _playlist_iid(kind: str, folder: str, name: str) -> str:
-        return f"{kind}:{rb.playlist_label(folder, name)}"
+        return gui_tracklist.playlist_iid(
+            kind, folder, name, playlist_label=rb.playlist_label
+        )
 
     @staticmethod
     def _playlist_row_text(kind: str, name: str, count: int) -> str:
-        if kind == "folder":
-            return name
-        return f"{name} ({count} tracks)"
+        return gui_tracklist.playlist_row_text(kind, name, count)
 
     def _apply_playlist_filter(self) -> None:
         query = self._playlist_search.query().casefold()
@@ -1069,23 +960,9 @@ class ConverterApp:
 
         Bit depth is always — here; file headers are filled asynchronously.
         """
-        empty = "—"
-        if track is None:
-            return "(missing track)", empty, empty, empty
-        artist = track.get("Artist") or ""
-        title = track.get("Name") or ""
-        label = f"{artist} - {title}" if artist else title
-        loc = track.get("Location") or ""
-        path = rb.decode_location(loc) if loc else None
-        if path is not None and path.suffix:
-            label = f"{label}{path.suffix.lower()}"
-        kind = (track.get("Kind") or "").strip()
-        if kind.endswith(" File"):
-            fmt = kind[: -len(" File")].strip() or empty
-        else:
-            fmt = kind or empty
-        rate = (track.get("SampleRate") or "").strip() or empty
-        return label, fmt, empty, rate
+        return gui_tracklist.track_preview_row(
+            track, decode_location=rb.decode_location
+        )
 
     def _sync_scan_indicator(self) -> None:
         if self._busy or not self._preview_scan_active:
@@ -1221,19 +1098,11 @@ class ConverterApp:
 
     def _tracklist_sort_key(self, iid: str, column: str):
         preview = self.tracklist_tree
-        if column == "#0":
-            return preview.item(iid, "text").casefold()
-        values = list(preview.item(iid, "values"))
-        idx = {"format": 0, "bit_depth": 1, "sample_rate": 2}.get(column)
-        if idx is None or idx >= len(values):
-            return ""
-        raw = str(values[idx] or "")
-        if column in ("bit_depth", "sample_rate"):
-            try:
-                return (0, int(raw))
-            except ValueError:
-                return (1, 0)
-        return raw.casefold()
+        return gui_tracklist.tracklist_sort_key(
+            preview.item(iid, "text"),
+            list(preview.item(iid, "values")),
+            column,
+        )
 
     def _apply_tracklist_sort(self) -> None:
         column = self._tracklist_sort_column
@@ -1243,23 +1112,12 @@ class ConverterApp:
         reverse = self._tracklist_sort_reverse
         for group_iid in preview.get_children(""):
             leaves = list(preview.get_children(group_iid))
-            if column in ("bit_depth", "sample_rate"):
-                numbered: list[tuple[int, str]] = []
-                empty: list[str] = []
-                for iid in leaves:
-                    key = self._tracklist_sort_key(iid, column)
-                    if isinstance(key, tuple) and key[0] == 0:
-                        numbered.append((key[1], iid))
-                    else:
-                        empty.append(iid)
-                numbered.sort(key=lambda pair: pair[0], reverse=reverse)
-                ordered = [iid for _, iid in numbered] + empty
-            else:
-                ordered = sorted(
-                    leaves,
-                    key=lambda iid: self._tracklist_sort_key(iid, column),
-                    reverse=reverse,
-                )
+            ordered = gui_tracklist.order_tracklist_leaves(
+                leaves,
+                column=column,
+                reverse=reverse,
+                sort_key=self._tracklist_sort_key,
+            )
             for index, iid in enumerate(ordered):
                 preview.move(iid, group_iid, index)
 

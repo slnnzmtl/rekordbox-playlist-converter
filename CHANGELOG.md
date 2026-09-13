@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Internal refactor (pass 1): oversized convert/CLI/GUI tests split into flat
+  `test_*.py` modules; shared fixtures in `convert_fixtures.py` and GUI patch stacks
+  in `gui_tk.app_patches` (`GUI_MODULE` constant). Leaf GUI builders live in
+  `gui/browser.py` and `gui/tracklist.py`; preview bit-depth batch constants in
+  `preview_bit_depth.py`. `rb_converter_gui.py` remains the TCC / PyInstaller entry.
 - Internal refactor: GUI layout helpers live in `gui/layout.py` and dialog builders in
   `gui/dialogs.py`; encode/copy bodies live in `convert/encode.py` behind `convert_plan`.
   Status and dialog labels wrap with window size.
