@@ -40,6 +40,12 @@ class ConvertFlowMixin:
     def _start_convert(self) -> None:
         if self._busy:
             return
+        if getattr(self, "_import_edit_active", lambda: False)():
+            runtime.messagebox.showerror(
+                "Editing Import XML",
+                "Finish or cancel Import XML editing before converting.",
+            )
+            return
         if not self._wav_dir_valid or self._wav_dir_checking:
             return
         xml_s = self.xml_var.get().strip()

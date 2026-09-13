@@ -87,6 +87,19 @@ assignment on the next run. Dest files that already match the chosen profile
 are skipped unless you force a rebuild (CLI: --force). CLI --dry-run prints
 the same plan as this preview and writes nothing.
 
+Editing a generated library (GUI):
+• When the output folder already has rekordbox-import.xml and the hidden
+  converter manifest, an Edit button appears beside Import XML.
+• Edit mode loads that Import XML (not your Rekordbox source export). Remove
+  playlists or tracks from the right-click menus. Shift/Command-click to select
+  several tracks, then right-click to remove them together. Missing tracks show
+  a ! prefix.
+• Changes stay in a draft until Save. Save shows a preview of pending removals
+  (remove from playlist vs move to Trash), then updates the Import XML and
+  manifest and moves deleted managed audio to the Trash. Cancel discards the
+  draft.
+• Conversion, Refresh, and folder browsing stay locked while you edit.
+
 ────────────────────────────────────────
 3. Bring it into Rekordbox
 ────────────────────────────────────────

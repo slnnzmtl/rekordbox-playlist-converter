@@ -28,6 +28,7 @@ from gui_prefs import (
     resolve_startup_paths,
     save_preferences,
 )
+from import_edit import load_import_edit_draft, save_import_edit_draft
 from rekordbox_xml import (
     collection_indexes,
     decode_location,
@@ -76,6 +77,8 @@ __all__ = [
     "find_rekordbox_xml_via_child",
     "probe_path_via_child",
     "import_xml_path",
+    "load_import_edit_draft",
+    "save_import_edit_draft",
     "check_for_update",
     "open_in_finder",
     "collection_indexes",

@@ -33,7 +33,6 @@ from convert.quality import (
     coerce_output_format,
     coerce_sample_rate,
 )
-from converter_manifest import ConverterManifest
 from rekordbox_xml import decode_location, encode_location, resolve_playlist_tracks
 
 DEFAULT_WAV_DIR = Path("output")
@@ -147,7 +146,7 @@ def build_plan(
     max_sample_rate: int = 48000,
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
-    manifest: ConverterManifest | None = None,
+    manifest: converter_manifest.ConverterManifest | None = None,
     workers: int | None = None,
 ) -> tuple[Plan | None, list[str]]:
     output_format = coerce_output_format(output_format)

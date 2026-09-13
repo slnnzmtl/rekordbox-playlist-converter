@@ -216,6 +216,92 @@ def show_conversion_preview_dialog(
     return dlg
 
 
+def show_edit_confirm_dialog(
+    parent: tk.Tk,
+    *,
+    title: str,
+    summary: str,
+    rows: list[Any],
+    confirm_label: str,
+    place_over: Callable[[tk.Toplevel], None],
+) -> bool:
+    """Preview table of edit actions; Back cancels, confirm returns True."""
+    result = False
+    dlg = tk.Toplevel(parent)
+    dlg.title(title)
+    dlg.geometry("760x480")
+    dlg.minsize(640, 360)
+    dlg.resizable(True, True)
+    dlg.transient(parent)
+    dlg.grab_set()
+
+    frm = ttk.Frame(dlg, padding=16)
+    frm.grid(row=0, column=0, sticky="nsew")
+    dlg.columnconfigure(0, weight=1)
+    dlg.rowconfigure(0, weight=1)
+    frm.columnconfigure(0, weight=1)
+    frm.rowconfigure(1, weight=1)
+
+    summary_label = ttk.Label(frm, text=summary)
+    summary_label.grid(row=0, column=0, sticky="w", pady=(0, 8))
+    bind_wraplength(summary_label, frm, inset=32)
+
+    table_frame = ttk.Frame(frm)
+    table_frame.grid(row=1, column=0, sticky="nsew")
+    table_frame.columnconfigure(0, weight=1)
+    table_frame.rowconfigure(0, weight=1)
+
+    table, yscroll = tree_with_yscroll(
+        table_frame,
+        columns=("action", "playlist"),
+        show="tree headings",
+        selectmode="browse",
+        height=14,
+    )
+    table.heading("#0", text="Track", anchor="w")
+    table.heading("action", text="Action", anchor="w")
+    table.heading("playlist", text="Playlist", anchor="w")
+    table.column("#0", width=320, stretch=True, minwidth=140)
+    table.column("action", width=180, stretch=False, anchor="w")
+    table.column("playlist", width=200, stretch=True, minwidth=120)
+    table.grid(row=0, column=0, sticky="nsew")
+    yscroll.grid(row=0, column=1, sticky="ns")
+
+    for row in rows:
+        table.insert(
+            "",
+            tk.END,
+            text=row.track,
+            values=(row.action, row.playlist),
+        )
+
+    btns = ttk.Frame(frm)
+    btns.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+    btns.columnconfigure(0, weight=1)
+
+    def on_back() -> None:
+        nonlocal result
+        result = False
+        dlg.destroy()
+
+    def on_confirm() -> None:
+        nonlocal result
+        result = True
+        dlg.destroy()
+
+    ttk.Button(
+        btns, text="Back", command=on_back, width=ACTION_BUTTON_WIDTH
+    ).grid(row=0, column=0, sticky="w")
+    ttk.Button(
+        btns, text=confirm_label, command=on_confirm, width=ACTION_BUTTON_WIDTH
+    ).grid(row=0, column=1, sticky="e")
+    dlg.protocol("WM_DELETE_WINDOW", on_back)
+    dlg.bind("<Escape>", lambda _e: on_back())
+    place_over(dlg)
+    dlg.wait_window()
+    return result
+
+
 def show_list_dialog(
     parent: tk.Tk,
     title: str,
