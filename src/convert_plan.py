@@ -43,6 +43,7 @@ from convert.models import (
 from convert.paths import (
     _format_size_mb,
     abs_path,
+    collision_key,
     format_media_dir,
     parse_duration_seconds,
     preferred_relative_dest,
@@ -82,8 +83,6 @@ AIFF_EXT = {".aiff", ".aif"}
 # Parallel unique-track converts (clamped when used).
 CONVERT_WORKERS_MIN = 1
 CONVERT_WORKERS_MAX = 5
-
-collision_key = converter_manifest.collision_key
 
 
 def default_convert_workers() -> int:
@@ -532,18 +531,16 @@ def classify_source(
     bits, rate = target_from_stream(
         stream, max_bit_depth=max_bit_depth, max_sample_rate=max_sample_rate
     )
+    if ext in ALAC_EXT and codec_name != "alac":
+        raise CliError(f"unsupported format: {path} (expected ALAC)")
     if output_format == "aiff":
         if ext in AIFF_EXT and is_cdj_safe_aiff(
             path, bit_depth=bits, sample_rate=rate
         ):
             return "copy", True, bits, rate
-        if ext in ALAC_EXT and codec_name != "alac":
-            raise CliError(f"unsupported format: {path} (expected ALAC)")
         codec = pcm_codec_for_depth(bits, output_format="aiff")
         return codec, False, bits, rate
     if ext in ALAC_EXT:
-        if codec_name != "alac":
-            raise CliError(f"unsupported format: {path} (expected ALAC)")
         codec = pcm_codec_for_depth(bits, output_format="wav")
         return codec, False, bits, rate
     if ext in WAV_EXT:

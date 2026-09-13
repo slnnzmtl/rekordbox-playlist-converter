@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Internal: shared path helpers in `convert/paths.py` (`abs_path`, `collision_key`,
+  `same_file`); converter manifest occupancy uses `same_file`; ALAC codec guard
+  hoisted once in `classify_source`. Shared `XmlFixtureTests` base in
+  `convert_fixtures.py` (four CLI/convert test modules subclass it).
 - Internal: shared `convert/quality.py` allowlists for output format / bit depth /
   sample rate (parse for prefs omit, coerce for GUI/convert/CDJ defaults);
   format directory names shared with the converter manifest.

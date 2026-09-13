@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import io
 import struct
+import tempfile
+import unittest
 from pathlib import Path
+
+import rb_playlist_to_wav as rb
 
 
 class HangProc:
@@ -140,3 +144,34 @@ def wav_probe(bits: int = 24) -> dict:
 def write_flac(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"fLaC")
+
+
+class XmlFixtureTests(unittest.TestCase):
+    """Temp dir + FIXTURE collection XML; subclass in test_* modules."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.music = self.root / "music"
+        self.a = self.music / "It's just a bad dream" / "07 - Bestial.flac"
+        self.b = self.music / "Shogan" / "Revelation.flac"
+        self.c = self.music / "Quantum" / "Movement.flac"
+        for p in (self.a, self.b, self.c):
+            write_flac(p)
+        self.xml_path = self.root / "collection.xml"
+        xml = FIXTURE.format(
+            loc_a=rb.encode_location(self.a),
+            loc_b=rb.encode_location(self.b),
+            loc_c=rb.encode_location(self.c),
+        )
+        self.xml_path.write_text(xml, encoding="utf-8")
+        self.wav_dir = self.root / "WAV"
+        self.output = self.root / "out.xml"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _probe(self, path: Path, **_kwargs: object) -> dict:
+        if path.suffix.lower() == ".wav":
+            return wav_probe()
+        return flac_probe()

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 import unicodedata
 import unittest
 import xml.etree.ElementTree as ET
@@ -22,6 +21,7 @@ import converter_manifest
 import ffmpeg_tools
 from convert_fixtures import (
     FIXTURE,
+    XmlFixtureTests as XmlFixtureBase,
     flac_probe,
     wav_probe,
     write_flac,
@@ -29,31 +29,7 @@ from convert_fixtures import (
 )
 
 
-class XmlFixtureTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-        self.music = self.root / "music"
-        self.a = self.music / "It's just a bad dream" / "07 - Bestial.flac"
-        self.b = self.music / "Shogan" / "Revelation.flac"
-        self.c = self.music / "Quantum" / "Movement.flac"
-        for p in (self.a, self.b, self.c):
-            write_flac(p)
-        self.xml_path = self.root / "collection.xml"
-        xml = FIXTURE.format(
-            loc_a=rb.encode_location(self.a),
-            loc_b=rb.encode_location(self.b),
-            loc_c=rb.encode_location(self.c),
-        )
-        self.xml_path.write_text(xml, encoding="utf-8")
-        self.wav_dir = self.root / "WAV"
-        self.output = self.root / "out.xml"
-    def tearDown(self) -> None:
-        self.tmp.cleanup()
-    def _probe(self, path: Path, **_kwargs: object) -> dict:
-        if path.suffix.lower() == ".wav":
-            return wav_probe()
-        return flac_probe()
+class XmlFixtureTests(XmlFixtureBase):
     def test_identical_metadata_gets_numbered_suffixes(self) -> None:
         """Given three sources with identical Artist/Album/Name: When prepare
         runs: Then dests are Name.wav, Name (2).wav, Name (3).wav and none are

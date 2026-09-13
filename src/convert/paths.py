@@ -13,7 +13,6 @@ from convert.quality import (
     coerce_bit_depth,
     coerce_sample_rate,
 )
-from converter_manifest import collision_key
 
 
 def abs_path(path: Path) -> Path:
@@ -21,6 +20,18 @@ def abs_path(path: Path) -> Path:
     if not path.is_absolute():
         path = Path.cwd() / path
     return path
+
+
+def collision_key(name: str) -> str:
+    """NFC + casefold key for filename / relative-dest collision checks."""
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def same_file(a: Path, b: Path) -> bool:
+    try:
+        return a.exists() and b.exists() and a.samefile(b)
+    except OSError:
+        return False
 
 
 _RESERVED_FILENAME_CHARS = '<>:"|?*'
@@ -163,13 +174,6 @@ def target_from_stream(
         rate = 44100 if 44100 <= max_sample_rate else max_sample_rate
 
     return bits, rate
-
-
-def same_file(a: Path, b: Path) -> bool:
-    try:
-        return a.exists() and b.exists() and a.samefile(b)
-    except OSError:
-        return False
 
 
 def parse_duration_seconds(probe: dict) -> float | None:
