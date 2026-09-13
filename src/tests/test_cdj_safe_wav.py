@@ -14,6 +14,9 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 import rb_playlist_to_wav as rb
+import cdj_wav
+from cli_error import CliError
+from convert.format_policy import classify_source
 import convert.plan
 from convert import encode
 import ffmpeg_tools
@@ -61,7 +64,7 @@ class WavHeaderParseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "ok.wav"
             write_pcm_wav(path)
-            info = rb.parse_wav_info(path)
+            info = cdj_wav.parse_wav_info(path)
             self.assertEqual(info.format_tag, 1)
             self.assertEqual(info.channels, 2)
             self.assertEqual(info.sample_rate, 44100)
@@ -82,7 +85,7 @@ class WavHeaderParseTests(unittest.TestCase):
                 fmt_extra=extra,
                 extra_chunks=[(b"LIST", b"INFO" + b"\x00" * 4)],
             )
-            info = rb.parse_wav_info(path)
+            info = cdj_wav.parse_wav_info(path)
             self.assertEqual(info.format_tag, 0xFFFE)
             self.assertEqual(info.channels, 2)
             self.assertEqual(info.sample_rate, 48000)
@@ -95,10 +98,10 @@ class WavHeaderParseTests(unittest.TestCase):
             path = Path(tmp) / "trail.wav"
             write_pcm_wav(path)
             path.write_bytes(path.read_bytes() + b"\x00\x01")
-            with self.assertRaises(rb.CliError):
-                rb.parse_wav_info(path)
+            with self.assertRaises(CliError):
+                cdj_wav.parse_wav_info(path)
             self.assertFalse(
-                rb.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100)
+                cdj_wav.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100)
             )
 
     def test_wrong_riff_declared_size_raises(self) -> None:
@@ -109,10 +112,10 @@ class WavHeaderParseTests(unittest.TestCase):
             # Corrupt RIFF size so declared + 8 != len(data)
             data[4:8] = struct.pack("<I", struct.unpack_from("<I", data, 4)[0] + 10)
             path.write_bytes(data)
-            with self.assertRaises(rb.CliError):
-                rb.parse_wav_info(path)
+            with self.assertRaises(CliError):
+                cdj_wav.parse_wav_info(path)
             self.assertFalse(
-                rb.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100)
+                cdj_wav.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100)
             )
 
 
@@ -121,7 +124,7 @@ class CdjSafeWavTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "safe.wav"
             write_pcm_wav(path)
-            self.assertTrue(rb.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100))
+            self.assertTrue(cdj_wav.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100))
 
     def test_rejects_extensible_list_wrong_rate_depth_and_mono(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -143,10 +146,10 @@ class CdjSafeWavTests(unittest.TestCase):
             for name, kwargs in cases:
                 path = root / name
                 write_pcm_wav(path, **kwargs)
-                self.assertFalse(rb.is_cdj_safe_wav(path), msg=name)
+                self.assertFalse(cdj_wav.is_cdj_safe_wav(path), msg=name)
 
     def test_missing_file_is_not_safe(self) -> None:
-        self.assertFalse(rb.is_cdj_safe_wav(Path("/no/such/file.wav")))
+        self.assertFalse(cdj_wav.is_cdj_safe_wav(Path("/no/such/file.wav")))
 
     def test_parse_wav_info_does_not_read_data_payload(self) -> None:
         """Given a multi-MB CDJ-safe WAV: When parse_wav_info / is_cdj_safe_wav
@@ -162,10 +165,10 @@ class CdjSafeWavTests(unittest.TestCase):
             bytes_read = {"n": 0}
             open_patch, read_bytes_patch = patch_counting_open(path, bytes_read)
             with open_patch, read_bytes_patch:
-                info = rb.parse_wav_info(path)
+                info = cdj_wav.parse_wav_info(path)
                 self.assertEqual(info.chunk_ids, ("fmt ", "data"))
                 self.assertTrue(
-                    rb.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100)
+                    cdj_wav.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100)
                 )
 
             # Header (12) + two chunk headers (16) + fmt payload (16) ≈ 44;
@@ -201,15 +204,15 @@ class CdjSafeConvertTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            info = rb.parse_wav_info(src)
+            info = cdj_wav.parse_wav_info(src)
             self.assertEqual(info.format_tag, 0xFFFE)
             self.assertEqual(info.sample_rate, 48000)
-            self.assertFalse(rb.is_cdj_safe_wav(src))
+            self.assertFalse(cdj_wav.is_cdj_safe_wav(src))
 
-            rb.run_ffmpeg(src, dest, "pcm_s16le", force=True)
+            convert.plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
 
-            self.assertTrue(rb.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100))
-            out = rb.parse_wav_info(dest)
+            self.assertTrue(cdj_wav.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100))
+            out = cdj_wav.parse_wav_info(dest)
             self.assertEqual(out.format_tag, 1)
             self.assertEqual(out.sample_rate, 44100)
             self.assertEqual(out.bits_per_sample, 16)
@@ -242,7 +245,7 @@ class CdjSafeConvertTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
-            rb.run_ffmpeg(
+            convert.plan.run_ffmpeg(
                 src,
                 dest,
                 "pcm_s24le",
@@ -251,9 +254,9 @@ class CdjSafeConvertTests(unittest.TestCase):
                 bit_depth=24,
             )
             self.assertTrue(
-                rb.is_cdj_safe_wav(dest, bit_depth=24, sample_rate=48000)
+                cdj_wav.is_cdj_safe_wav(dest, bit_depth=24, sample_rate=48000)
             )
-            out = rb.parse_wav_info(dest)
+            out = cdj_wav.parse_wav_info(dest)
             self.assertEqual(out.format_tag, 1)
             self.assertEqual(out.fmt_chunk_size, 16)
             self.assertEqual(out.sample_rate, 48000)
@@ -316,7 +319,7 @@ class RunFfmpegRewriteGateTests(unittest.TestCase):
                 )
             self.assertEqual(rewrite_calls, [])
             self.assertTrue(
-                rb.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100)
+                cdj_wav.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100)
             )
 
 
@@ -331,19 +334,19 @@ class ClassifyCdjSafeTests(unittest.TestCase):
             flac = root / "track.flac"
             flac.write_bytes(b"fLaC")
 
-            codec, is_copy, _bits, _rate = rb.classify_source(
+            codec, is_copy, _bits, _rate = classify_source(
                 safe, {"codec_name": "pcm_s16le", "sample_fmt": "s16"}
             )
             self.assertTrue(is_copy)
             self.assertEqual(codec, "copy")
 
-            codec, is_copy, _bits, _rate = rb.classify_source(
+            codec, is_copy, _bits, _rate = classify_source(
                 unsafe, {"codec_name": "pcm_s16le", "sample_fmt": "s16"}
             )
             self.assertFalse(is_copy)
             self.assertEqual(codec, "pcm_s16le")
 
-            codec, is_copy, bits, rate = rb.classify_source(
+            codec, is_copy, bits, rate = classify_source(
                 flac,
                 {
                     "codec_name": "flac",
@@ -362,11 +365,11 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             root = Path(tmp)
             src = root / "a.flac"
             src.write_bytes(b"fLaC")
-            playlist_dir = root / "WAV" / "P"
-            playlist_dir.mkdir(parents=True)
-            safe_dest = playlist_dir / "safe.wav"
+            media_dir = root / "WAV" / "P"
+            media_dir.mkdir(parents=True)
+            safe_dest = media_dir / "safe.wav"
             write_pcm_wav(safe_dest)
-            unsafe_dest = playlist_dir / "unsafe.wav"
+            unsafe_dest = media_dir / "unsafe.wav"
             write_pcm_wav(unsafe_dest, sample_rate=48000)
 
             def make_item(dest: Path) -> rb.PlannedTrack:
@@ -380,7 +383,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                     dest_location=rb.encode_location(dest),
                     dest_name=dest.name,
                     codec="pcm_s16le",
-                    copy_wav=False,
+                    passthrough=False,
                     noop=False,
                     bit_depth=16,
                     sample_rate=44100,
@@ -391,8 +394,8 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             plan = rb.Plan(
                 playlist_name="P",
                 wav_playlist_name="P [WAV]",
-                wav_dir=root / "WAV",
-                playlist_dir=playlist_dir,
+                library_dir=root / "WAV",
+                media_dir=media_dir,
                 output=root / "o.xml",
                 tracks=[safe_item, unsafe_item],
                 unique=[safe_item, unsafe_item],
@@ -426,9 +429,9 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             root = Path(tmp)
             src = root / "a.flac"
             src.write_bytes(b"fLaC")
-            playlist_dir = root / "WAV" / "P"
-            playlist_dir.mkdir(parents=True)
-            dest = playlist_dir / "a.wav"
+            media_dir = root / "WAV" / "P"
+            media_dir.mkdir(parents=True)
+            dest = media_dir / "a.wav"
             write_pcm_wav(dest)  # existing 16/44100
             el = ET.Element(
                 "TRACK", {"TrackID": "1", "Location": rb.encode_location(src)}
@@ -440,7 +443,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 dest_location=rb.encode_location(dest),
                 dest_name=dest.name,
                 codec="pcm_s24le",
-                copy_wav=False,
+                passthrough=False,
                 noop=False,
                 bit_depth=24,
                 sample_rate=48000,
@@ -448,8 +451,8 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             plan = rb.Plan(
                 playlist_name="P",
                 wav_playlist_name="P [WAV]",
-                wav_dir=root / "WAV",
-                playlist_dir=playlist_dir,
+                library_dir=root / "WAV",
+                media_dir=media_dir,
                 output=root / "o.xml",
                 tracks=[item],
                 unique=[item],
@@ -480,9 +483,9 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             root = Path(tmp)
             src = root / "a.flac"
             src.write_bytes(b"fLaC")
-            playlist_dir = root / "WAV" / "P"
-            playlist_dir.mkdir(parents=True)
-            dest = playlist_dir / "a.wav"
+            media_dir = root / "WAV" / "P"
+            media_dir.mkdir(parents=True)
+            dest = media_dir / "a.wav"
             write_pcm_wav(dest, bits=16, sample_rate=44100)
             prior = dest.read_bytes()
             el = ET.Element(
@@ -495,7 +498,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 dest_location=rb.encode_location(dest),
                 dest_name=dest.name,
                 codec="pcm_s16le",
-                copy_wav=False,
+                passthrough=False,
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
@@ -503,8 +506,8 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             plan = rb.Plan(
                 playlist_name="P",
                 wav_playlist_name="P [WAV]",
-                wav_dir=root / "WAV",
-                playlist_dir=playlist_dir,
+                library_dir=root / "WAV",
+                media_dir=media_dir,
                 output=root / "o.xml",
                 tracks=[item],
                 unique=[item],
@@ -516,7 +519,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             def boom(
                 source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
             ) -> None:
-                raise rb.CliError(f"encode failed for {source}")
+                raise CliError(f"encode failed for {source}")
 
             with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=boom):
                 stats = rb.convert_unique(plan, force=True)
@@ -529,7 +532,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             root = Path(tmp)
             flac = root / "track.flac"
             flac.write_bytes(b"fLaC")
-            codec, is_copy, bits, rate = rb.classify_source(
+            codec, is_copy, bits, rate = classify_source(
                 flac,
                 {
                     "codec_name": "flac",

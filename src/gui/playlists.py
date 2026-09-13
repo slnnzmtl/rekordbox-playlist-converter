@@ -8,6 +8,7 @@ from pathlib import Path
 from gui import constants
 from gui import runtime
 from gui import tracklist as gui_tracklist
+from gui.types import PlaylistEntry, PlaylistNodeKind, PlaylistRef, TrackLeafRef
 from preview_bit_depth import (
     PREVIEW_BIT_DEPTH_BATCH,
     PREVIEW_BIT_DEPTH_YIELD_S,
@@ -37,27 +38,29 @@ class PlaylistsMixin:
             self.status_var.set(f"XML not found: {path}")
             return
         try:
-            root = runtime.rb.load_dj_playlists(path)
-        except runtime.rb.CliError as exc:
+            root = runtime.load_dj_playlists(path)
+        except runtime.CliError as exc:
             self._refresh_tracklist_preview()
             self.status_var.set(str(exc))
             return
         self._source_root = root
-        self._collection_indexes_cache = runtime.rb.collection_indexes(root)
-        nodes = runtime.rb.iter_playlist_nodes(root)
+        self._collection_indexes_cache = runtime.collection_indexes(root)
+        nodes = runtime.iter_playlist_nodes(root)
         by_id, by_location = self._collection_indexes_cache
         for kind, folder, name, node in nodes:
             count = (
-                runtime.rb.playlist_preview_track_count(
+                runtime.playlist_preview_track_count(
                     node,
                     by_id,
                     by_location,
-                    supported_ext=runtime.rb.SUPPORTED_LOSSLESS_EXT,
+                    supported_ext=runtime.SUPPORTED_LOSSLESS_EXT,
                 )
                 if kind == "playlist"
                 else 0
             )
-            self._playlist_entries.append((kind, folder, name, count, node))
+            self._playlist_entries.append(
+                PlaylistEntry.from_walk(kind, folder, name, count, node)
+            )
         self._playlist_search.show()
         self._track_search.show()
         self._apply_playlist_filter()
@@ -65,7 +68,7 @@ class PlaylistsMixin:
     @staticmethod
     def _playlist_iid(kind: str, folder: str, name: str) -> str:
         return gui_tracklist.playlist_iid(
-            kind, folder, name, playlist_label=runtime.rb.playlist_label
+            kind, folder, name, playlist_label=runtime.playlist_label
         )
 
     @staticmethod
@@ -79,31 +82,33 @@ class PlaylistsMixin:
 
         if query:
             keep: set[tuple[str, str, str]] = set()
-            for kind, folder, name, count, _node in self._playlist_entries:
-                if kind != "playlist":
+            for entry in self._playlist_entries:
+                if entry.kind != PlaylistNodeKind.PLAYLIST:
                     continue
-                label = runtime.rb.playlist_label(folder, name)
-                display = f"{label} ({count} tracks)"
-                haystack = f"{name} {label} {display}".casefold()
+                label = runtime.playlist_label(entry.folder, entry.name)
+                display = f"{label} ({entry.count} tracks)"
+                haystack = f"{entry.name} {label} {display}".casefold()
                 if query not in haystack:
                     continue
-                keep.add((kind, folder, name))
-                # Ancestor folders for the matched playlist path.
-                parts = [p for p in folder.split(" / ") if p] if folder else []
+                keep.add((entry.kind.value, entry.folder, entry.name))
+                parts = [p for p in entry.folder.split(" / ") if p] if entry.folder else []
                 for i in range(len(parts)):
                     anc_folder = " / ".join(parts[:i]) if i else ""
                     keep.add(("folder", anc_folder, parts[i]))
             visible = [
                 entry
                 for entry in self._playlist_entries
-                if (entry[0], entry[1], entry[2]) in keep
+                if (entry.kind.value, entry.folder, entry.name) in keep
             ]
         else:
             visible = list(self._playlist_entries)
 
-        # Parent folder iid for a row: folder path maps to the folder node's iid.
         folder_iid_by_path: dict[str, str] = {"": ""}
-        for kind, folder, name, count, _node in visible:
+        for entry in visible:
+            kind = entry.kind.value
+            folder = entry.folder
+            name = entry.name
+            count = entry.count
             iid = self._playlist_iid(kind, folder, name)
             parent_path = folder
             parent_iid = folder_iid_by_path.get(parent_path, "")
@@ -111,7 +116,7 @@ class PlaylistsMixin:
             self.playlist_tree.insert(parent_iid, tk.END, iid=iid, text=text, open=False)
             self._playlist_iids[iid] = (kind, folder, name)
             if kind == "folder":
-                child_path = runtime.rb.playlist_label(folder, name)
+                child_path = runtime.playlist_label(folder, name)
                 folder_iid_by_path[child_path] = iid
 
         if query:
@@ -195,12 +200,10 @@ class PlaylistsMixin:
             if iid in self._tracklist_iids:
                 leaf_iids.append(iid)
                 continue
-            # Group header → that group's track leaves.
             remapped = True
             for child in preview.get_children(iid):
                 if child in self._tracklist_iids:
                     leaf_iids.append(child)
-        # Preserve order, drop duplicates.
         seen: set[str] = set()
         unique_leaves: list[str] = []
         for iid in leaf_iids:
@@ -237,10 +240,9 @@ class PlaylistsMixin:
             meta = self._tracklist_iids.get(iid)
             if meta is None:
                 continue
-            folder, name, key = meta
-            playlists.add((folder, name))
-            if key:
-                unique_keys.add(key)
+            playlists.add((meta.folder, meta.name))
+            if meta.key:
+                unique_keys.add(meta.key)
         if not unique_keys or not playlists:
             return None
         painted = len(playlists)
@@ -248,9 +250,13 @@ class PlaylistsMixin:
         return f"{len(unique_keys)} unique tracks from {painted} {playlist_word}"
 
     def _playlist_node(self, folder: str, name: str):
-        for kind, entry_folder, entry_name, _count, node in self._playlist_entries:
-            if kind == "playlist" and entry_folder == folder and entry_name == name:
-                return node
+        for entry in self._playlist_entries:
+            if (
+                entry.kind == PlaylistNodeKind.PLAYLIST
+                and entry.folder == folder
+                and entry.name == name
+            ):
+                return entry.node
         return None
 
     @staticmethod
@@ -260,7 +266,7 @@ class PlaylistsMixin:
         Bit depth is always — here; file headers are filled asynchronously.
         """
         return gui_tracklist.track_preview_row(
-            track, decode_location=runtime.rb.decode_location
+            track, decode_location=runtime.decode_location
         )
 
     def _sync_scan_indicator(self) -> None:
@@ -297,7 +303,7 @@ class PlaylistsMixin:
                 del self._tracklist_group_open[key]
         query = self._track_search.query().casefold()
         if self._collection_indexes_cache is None:
-            self._collection_indexes_cache = runtime.rb.collection_indexes(self._source_root)
+            self._collection_indexes_cache = runtime.collection_indexes(self._source_root)
         by_id, by_location = self._collection_indexes_cache
         leaf_iids: list[str] = []
         painted = 0
@@ -321,9 +327,9 @@ class PlaylistsMixin:
                 if query and query not in label.casefold():
                     continue
                 loc = (track.get("Location") or "") if track is not None else ""
-                path = runtime.rb.decode_location(loc) if loc else None
-                if not runtime.rb.track_included_in_playlist_preview(
-                    track, supported_ext=runtime.rb.SUPPORTED_LOSSLESS_EXT
+                path = runtime.decode_location(loc) if loc else None
+                if not runtime.track_included_in_playlist_preview(
+                    track, supported_ext=runtime.SUPPORTED_LOSSLESS_EXT
                 ):
                     continue
                 if path is not None:
@@ -357,7 +363,9 @@ class PlaylistsMixin:
                 leaf_iid = self.tracklist_tree.insert(
                     group_iid, tk.END, text=label, values=values
                 )
-                self._tracklist_iids[leaf_iid] = (folder, name, key)
+                self._tracklist_iids[leaf_iid] = TrackLeafRef(
+                    folder=folder, name=name, key=key
+                )
                 if path is not None:
                     self._tracklist_paths[leaf_iid] = path
                 leaf_iids.append(leaf_iid)
@@ -376,7 +384,6 @@ class PlaylistsMixin:
         if self._tracklist_sort_column is not None:
             self._apply_tracklist_sort()
         if paths:
-            # Generation already bumped; old worker exits between files.
             self._set_preview_scan_active(True)
             worker = runtime.threading.Thread(
                 target=lambda: self._fill_preview_bit_depths(gen, paths),
@@ -494,9 +501,7 @@ class PlaylistsMixin:
 
         if unique_names:
             names = [name for _folder, name in chosen]
-            # Same output playlist name `{name} [WAV]` — refuse converting two at once.
-            dupe_error = runtime.rb.duplicate_playlist_name_error(names)
+            dupe_error = runtime.duplicate_playlist_name_error(names)
             if dupe_error is not None:
-                raise runtime.rb.CliError(dupe_error)
+                raise runtime.CliError(dupe_error)
         return chosen
-

@@ -226,7 +226,7 @@ def prepare_batch(
             items=items,
             manifest=manifest,
             preview=preview,
-            wav_dir=wav_dir,
+            library_dir=wav_dir,
             output=output,
             skipped=skipped,
         ),

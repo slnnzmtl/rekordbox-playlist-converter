@@ -30,7 +30,9 @@ from gui.layout import (
     path_row,
     place_dialog_over_parent,
 )
-from gui_preferences import default_output_paths
+from gui.startup_probe import StartupProbeResult, run_startup_probe
+from gui.types import PlaylistNodeKind
+from gui_prefs import default_output_paths
 from usage_guide import USAGE_GUIDE
 
 
@@ -40,7 +42,7 @@ class ShellMixin:
         if not raw:
             return
         candidate = Path(raw).expanduser()
-        if not self._documents_accessible and runtime.rb.path_is_under_documents(candidate):
+        if not self._documents_accessible and runtime.path_is_under_documents(candidate):
             return
         try:
             if not candidate.is_file():
@@ -62,27 +64,21 @@ class ShellMixin:
             return None
         return runtime.find_rekordbox_xml_via_child(Path.home())
 
-    def _probe_documents_access(self) -> bool:
-        return runtime.probe_path_via_child(Path.home() / "Documents")
-
     def _start_documents_probe(self) -> None:
         def worker() -> None:
-            # Search known filenames first so a dismissed Documents listing
-            # prompt cannot block XML autoload on first launch.
-            hits = self._xml_search_hits_if_needed()
-            if hits is not None:
-                self._ui(lambda paths=hits: self._apply_xml_search_hits(paths))
-            accessible = self._probe_documents_access()
-            self._ui(lambda a=accessible: self._apply_documents_access(a))
+            result = run_startup_probe(
+                has_saved_source_xml=self._has_saved_source_xml,
+                probe_documents=runtime.probe_path_via_child,
+                find_xml=runtime.find_rekordbox_xml_via_child,
+            )
+            self._ui(lambda r=result: self._apply_startup_probe(r))
 
         runtime.threading.Thread(target=worker, daemon=True).start()
 
-    def _probe_documents_after_idle(self) -> None:
-        """Same probe as the startup thread, for tests that skip the worker."""
-        hits = self._xml_search_hits_if_needed()
-        if hits is not None:
-            self._apply_xml_search_hits(hits)
-        self._apply_documents_access(self._probe_documents_access())
+    def _apply_startup_probe(self, result: StartupProbeResult) -> None:
+        if result.xml_search_hits is not None:
+            self._apply_xml_search_hits(result.xml_search_hits)
+        self._apply_documents_access(result.documents_accessible)
 
     def _apply_xml_search_hits(self, paths: list[Path]) -> None:
         if self.xml_var.get().strip():
@@ -117,7 +113,7 @@ class ShellMixin:
                 default_import_xml=docs_xml,
                 documents_accessible=True,
             )
-            self.wav_dir_var.set(str(startup_wav))
+            self.library_dir_var.set(str(startup_wav))
             self._schedule_wav_dir_validation()
             if not self.xml_var.get().strip():
                 self._restore_saved_source_xml(saved)
@@ -194,7 +190,7 @@ class ShellMixin:
         self._refresh_tracklist_preview()
 
         _, self.wav_dir_entry, wav_btns = path_row(
-            frm, row=2, label="Output folder", textvariable=self.wav_dir_var, pad=pad
+            frm, row=2, label="Output folder", textvariable=self.library_dir_var, pad=pad
         )
         self.wav_dir_browse_btn = ttk.Button(
             wav_btns,
@@ -343,7 +339,7 @@ class ShellMixin:
 
     def _resolved_output_paths(self) -> tuple[Path, Path]:
         wav_dir = Path(
-            self.wav_dir_var.get().strip() or str(constants.DEFAULT_WAV_DIR)
+            self.library_dir_var.get().strip() or str(constants.DEFAULT_WAV_DIR)
         ).expanduser()
         if not wav_dir.is_absolute():
             wav_dir = Path.home() / wav_dir
@@ -409,7 +405,7 @@ class ShellMixin:
             preferred_s = str(preferred).strip()
             if preferred_s:
                 preferred_path = Path(preferred_s).expanduser()
-                if self._documents_accessible or not runtime.rb.path_is_under_documents(
+                if self._documents_accessible or not runtime.path_is_under_documents(
                     preferred_path
                 ):
                     return str(preferred_path)
@@ -443,7 +439,7 @@ class ShellMixin:
     def _browse_wav_dir(self) -> None:
         if self._busy:
             return
-        current = self.wav_dir_var.get().strip()
+        current = self.library_dir_var.get().strip()
         path = runtime.filedialog.askdirectory(
             title="Audio output folder",
             initialdir=self._browse_initial_dir(
@@ -451,7 +447,7 @@ class ShellMixin:
             ),
         )
         if path:
-            self.wav_dir_var.set(path)
+            self.library_dir_var.set(path)
             self._persist_output_preferences()
             self._schedule_wav_dir_validation()
 
@@ -565,7 +561,7 @@ class ShellMixin:
     def _request_cancel(self) -> None:
         if not self._busy:
             return
-        if self._prepared_conversion is not None and self._write_prepared is None:
+        if self._prepared_conversion is not None and self._confirm_prepared is None:
             self._discard_prepared_conversion()
             return
         self._cancel_event.set()
@@ -584,7 +580,9 @@ class ShellMixin:
             self.status_var.set(unique_summary)
             return
         playlist_count = sum(
-            1 for kind, *_rest in self._playlist_entries if kind == "playlist"
+            1
+            for entry in self._playlist_entries
+            if entry.kind == PlaylistNodeKind.PLAYLIST
         )
         if playlist_count:
             self.status_var.set(

@@ -14,6 +14,8 @@ for _p in (_SRC, _TESTS):
         sys.path.insert(0, str(_p))
 
 import rb_playlist_to_wav as rb
+import cdj_aiff
+from cli_error import CliError
 import convert.plan
 from convert import encode
 import ffmpeg_tools
@@ -31,7 +33,7 @@ class SubprocessTimeoutTests(unittest.TestCase):
         ), patch.object(
             ffmpeg_tools.time, "monotonic", side_effect=[0.0, 100.0]
         ), patch.object(ffmpeg_tools.time, "sleep", lambda _s: None):
-            with self.assertRaises(rb.CliError) as ctx:
+            with self.assertRaises(CliError) as ctx:
                 ffmpeg_tools.run_ffprobe(path)
         self.assertIn("timed out", str(ctx.exception).lower())
         self.assertIn(str(path), str(ctx.exception))
@@ -60,7 +62,7 @@ class SubprocessTimeoutTests(unittest.TestCase):
         ), patch.object(
             ffmpeg_tools.time, "monotonic", side_effect=[0.0, 401.0]
         ):
-            with self.assertRaises(rb.CliError) as ctx:
+            with self.assertRaises(CliError) as ctx:
                 convert.plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
         msg = str(ctx.exception).lower()
         self.assertIn("timed out", msg)
@@ -84,7 +86,7 @@ class SubprocessTimeoutTests(unittest.TestCase):
             ), patch.object(cdj_aiff.subprocess, "Popen", _HangProc), patch.object(
                 ffmpeg_tools.time, "monotonic", side_effect=[0.0, 100.0]
             ), patch.object(ffmpeg_tools.time, "sleep", lambda _s: None):
-                self.assertIsNone(rb.extract_cover_jpeg(src))
+                self.assertIsNone(cdj_aiff.extract_cover_jpeg(src))
 
     def test_ffmpeg_supports_soxr_false_on_timeout(self) -> None:
         import subprocess

@@ -15,8 +15,12 @@ for _p in (_SRC, _TESTS):
         sys.path.insert(0, str(_p))
 
 import rb_playlist_to_wav as rb
+import cdj_wav
+from cli_error import CancelledError, CliError
 import convert.models
+import convert.format_policy
 import convert.plan
+import convert.write
 from convert import encode
 import ffmpeg_tools
 import xml_output
@@ -51,24 +55,23 @@ class XmlFixtureTests(XmlFixtureBase):
                 first_done.set()
                 return
             if cancel.wait(timeout=5):
-                raise rb.CancelledError(f"conversion cancelled for {source}")
+                raise CancelledError(f"conversion cancelled for {source}")
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_cdj_safe_wav", return_value=False
-        ), patch.object(convert.plan, "default_convert_workers", return_value=1):
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
             plan, errors = rb.prepare(
-                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output, workers=1
             )
             self.assertEqual(errors, [])
             assert plan is not None
 
             def run() -> convert.models.ConvertStats:
                 return rb.convert_unique(
-                    plan, force=False, progress=False, cancel_event=cancel
+                    plan, force=False, progress=False, cancel_event=cancel, workers=1
                 )
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -103,26 +106,25 @@ class XmlFixtureTests(XmlFixtureBase):
                 idx = n["i"]
             if idx == 1:
                 first_failed.set()
-                raise rb.CliError(boom)
+                raise CliError(boom)
             if cancel.wait(timeout=5):
-                raise rb.CancelledError(f"conversion cancelled for {source}")
+                raise CancelledError(f"conversion cancelled for {source}")
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_cdj_safe_wav", return_value=False
-        ), patch.object(convert.plan, "default_convert_workers", return_value=1):
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
             plan, errors = rb.prepare(
-                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
+                self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output, workers=1
             )
             self.assertEqual(errors, [])
             assert plan is not None
 
             def run() -> convert.models.ConvertStats:
                 return rb.convert_unique(
-                    plan, force=False, progress=False, cancel_event=cancel
+                    plan, force=False, progress=False, cancel_event=cancel, workers=1
                 )
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
@@ -154,8 +156,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
             plan, errors = rb.prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
@@ -179,14 +180,13 @@ class XmlFixtureTests(XmlFixtureBase):
 
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
             if source.name == fail_name:
-                raise rb.CliError(f"boom for {source.name}")
+                raise CliError(f"boom for {source.name}")
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
             plan, errors = rb.prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
@@ -210,7 +210,7 @@ class XmlFixtureTests(XmlFixtureBase):
         uses the success set: Then that track is omitted from the collection."""
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(rb, "is_cdj_safe_wav", return_value=False):
+        ), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False):
             plan, errors = rb.prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
             )
@@ -248,14 +248,13 @@ class XmlFixtureTests(XmlFixtureBase):
         def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
             if source.name == fail_name:
                 failed_dest.append(dest)
-                raise rb.CliError(f"boom for {source.name}")
+                raise CliError(f"boom for {source.name}")
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(
                 [
@@ -312,7 +311,7 @@ class XmlFixtureTests(XmlFixtureBase):
             ), patch.object(encode.subprocess, "Popen", FakeProc), patch.object(
                 ffmpeg_tools.time, "sleep", lambda _s: None
             ):
-                with self.assertRaises(rb.CancelledError):
+                with self.assertRaises(CancelledError):
                     convert.plan.run_ffmpeg(
                         src, dest, "pcm_s16le", force=True, cancel_event=cancel
                     )
@@ -348,14 +347,14 @@ class XmlFixtureTests(XmlFixtureBase):
             ), patch.object(
                 ffmpeg_tools.subprocess, "Popen", FakeProc
             ), patch.object(ffmpeg_tools.time, "sleep", lambda _s: None):
-                with self.assertRaises(rb.CancelledError):
+                with self.assertRaises(CancelledError):
                     ffmpeg_tools.run_ffprobe(src, cancel_event=cancel)
             self.assertTrue(killed)
 
     def test_convert_unique_copy_wav_cancel_mid_copy_leaves_no_final_dest(
         self,
     ) -> None:
-        """Given copy_wav and cancel mid-copy: When convert_unique returns:
+        """Given passthrough and cancel mid-copy: When convert_unique returns:
         Then the final dest must not exist (no incomplete final file)."""
         import threading
         import xml.etree.ElementTree as ET
@@ -378,7 +377,7 @@ class XmlFixtureTests(XmlFixtureBase):
                 dest_location=rb.encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
-                copy_wav=True,
+                passthrough=True,
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
@@ -386,8 +385,8 @@ class XmlFixtureTests(XmlFixtureBase):
             plan = rb.Plan(
                 playlist_name="P",
                 wav_playlist_name="P [WAV]",
-                wav_dir=root / "WAV",
-                playlist_dir=dest.parent,
+                library_dir=root / "WAV",
+                media_dir=dest.parent,
                 output=root / "o.xml",
                 tracks=[item],
                 unique=[item],

@@ -15,6 +15,8 @@ if str(_TESTS) not in sys.path:
 
 from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, FALLBACK_OUTPUT, FALLBACK_WAV_DIR
 from update_check import UpdateCheckResult
+from gui.startup_probe import run_startup_probe
+import gui.runtime as runtime
 from gui_tk import (
     app_patches,
     click_button,
@@ -44,7 +46,7 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                     wav_dir=saved_wav,
                     output=derived_xml,
                     preferences={
-                        "wav_dir": str(saved_wav),
+                        "library_dir": str(saved_wav),
                         "import_xml": str(saved_wav / "custom-import.xml"),
                     },
                 )
@@ -52,7 +54,7 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
-            self.assertEqual(app.wav_dir_var.get(), str(saved_wav))
+            self.assertEqual(app.library_dir_var.get(), str(saved_wav))
             self.assertEqual(app._resolved_output_paths()[1], derived_xml)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -90,7 +92,11 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                     root = tk.Tk()
                     root.withdraw()
                     app = ConverterApp(root)
-                    app._probe_documents_after_idle()
+                    app._apply_startup_probe(run_startup_probe(
+                    has_saved_source_xml=app._has_saved_source_xml,
+                    probe_documents=runtime.probe_path_via_child,
+                    find_xml=runtime.find_rekordbox_xml_via_child,
+                ))
                 self.assertEqual(app.xml_var.get(), str(source))
                 load_playlists.assert_called()
         except tk.TclError:
@@ -120,7 +126,11 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root)
-                app._probe_documents_after_idle()
+                app._apply_startup_probe(run_startup_probe(
+                    has_saved_source_xml=app._has_saved_source_xml,
+                    probe_documents=runtime.probe_path_via_child,
+                    find_xml=runtime.find_rekordbox_xml_via_child,
+                ))
             finder.assert_not_called()
             self.assertEqual(app.xml_var.get(), "")
         except tk.TclError:
@@ -155,7 +165,7 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                     check_for_update=UpdateCheckResult(kind="up_to_date"),
                     load_preferences={"source_xml": str(source)},
                     **{
-                        "rb.path_is_under_documents": True,
+                        "path_is_under_documents": True,
                         "find_rekordbox_xml_via_child": [],
                     },
                 ), patch.object(ConverterApp, "_load_playlists") as load_playlists:
@@ -187,7 +197,7 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 check_for_update=UpdateCheckResult(kind="up_to_date"),
                 load_preferences={"source_xml": str(saved)},
                 **{
-                    "rb.path_is_under_documents": True,
+                    "path_is_under_documents": True,
                     "find_rekordbox_xml_via_child": [
                         saved,
                         Path("/tmp/Documents/rekordbox/rekordbox-7-collection.xml"),
@@ -198,7 +208,11 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
-                app._probe_documents_after_idle()
+                app._apply_startup_probe(run_startup_probe(
+                    has_saved_source_xml=app._has_saved_source_xml,
+                    probe_documents=runtime.probe_path_via_child,
+                    find_xml=runtime.find_rekordbox_xml_via_child,
+                ))
                 finder.assert_not_called()
                 dialogs = [
                     child
@@ -232,7 +246,7 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root)
-            self.assertEqual(app.wav_dir_var.get(), str(FALLBACK_WAV_DIR))
+            self.assertEqual(app.library_dir_var.get(), str(FALLBACK_WAV_DIR))
             self.assertEqual(
                 app._resolved_output_paths()[1], FALLBACK_OUTPUT
             )
@@ -263,9 +277,13 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root)
-                app._probe_documents_after_idle()
+                app._apply_startup_probe(run_startup_probe(
+                    has_saved_source_xml=app._has_saved_source_xml,
+                    probe_documents=runtime.probe_path_via_child,
+                    find_xml=runtime.find_rekordbox_xml_via_child,
+                ))
             self.assertTrue(app.documents_accessible)
-            self.assertEqual(app.wav_dir_var.get(), str(DEFAULT_WAV_DIR))
+            self.assertEqual(app.library_dir_var.get(), str(DEFAULT_WAV_DIR))
             self.assertEqual(app._resolved_output_paths()[1], DEFAULT_OUTPUT)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -291,9 +309,13 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root)
-                app._probe_documents_after_idle()
+                app._apply_startup_probe(run_startup_probe(
+                    has_saved_source_xml=app._has_saved_source_xml,
+                    probe_documents=runtime.probe_path_via_child,
+                    find_xml=runtime.find_rekordbox_xml_via_child,
+                ))
             self.assertFalse(app.documents_accessible)
-            self.assertEqual(app.wav_dir_var.get(), str(FALLBACK_WAV_DIR))
+            self.assertEqual(app.library_dir_var.get(), str(FALLBACK_WAV_DIR))
             self.assertEqual(
                 app._resolved_output_paths()[1], FALLBACK_OUTPUT
             )

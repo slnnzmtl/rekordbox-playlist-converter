@@ -485,7 +485,7 @@ class GuiTracklistTests(unittest.TestCase):
 
                 with app_patches(
                     {
-                        "rb.prepare": {"side_effect": fake_prepare},
+                        "prepare_batch": {"side_effect": fake_prepare},
                         "threading.Thread": {"side_effect": run_inline_thread},
                         "messagebox.showerror": None,
                     }
@@ -496,7 +496,9 @@ class GuiTracklistTests(unittest.TestCase):
 
                 self.assertEqual(len(prepare_calls), 1)
                 _args, kwargs = prepare_calls[0]
-                keys = set(kwargs.get("track_keys") or ())
+                keys = set(
+                    kwargs.get("track_keys_by_playlist", {}).get(("", "Mixed"), [])
+                )
                 self.assertIn("1", keys)
                 self.assertNotIn("2", keys)
                 self.assertNotIn("3", keys)

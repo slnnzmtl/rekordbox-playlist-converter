@@ -18,8 +18,8 @@ class PlannedTrack:
     dest_path: Path
     dest_location: str
     dest_name: str
-    codec: str | None  # None means copy WAV (or no-op)
-    copy_wav: bool
+    codec: str | None  # None means passthrough (or no-op)
+    passthrough: bool
     noop: bool
     bit_depth: int = 24
     sample_rate: int = 48000
@@ -52,8 +52,8 @@ class ConversionPreview:
 class Plan:
     playlist_name: str
     wav_playlist_name: str
-    wav_dir: Path
-    playlist_dir: Path
+    library_dir: Path
+    media_dir: Path
     output: Path
     tracks: list[PlannedTrack]  # playlist order, may repeat dest
     unique: list[PlannedTrack]  # one per dest path
@@ -88,6 +88,6 @@ class PreparedConversion:
     items: list[PlannedTrack]
     manifest: ConverterManifest
     preview: ConversionPreview
-    wav_dir: Path
+    library_dir: Path
     output: Path
     skipped: list[str]

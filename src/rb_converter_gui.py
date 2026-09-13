@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sys
 
-from gui_preferences import (
+from gui_prefs import (
     DOCUMENTS_PROBE_FLAG,
     FIND_REKORDBOX_XML_FLAG,
     run_documents_probe_cli,

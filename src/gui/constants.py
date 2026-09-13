@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from gui_preferences import default_output_paths
+from gui_prefs import default_output_paths
 
 DEFAULT_WAV_DIR, DEFAULT_OUTPUT = default_output_paths(documents_accessible=True)
 FALLBACK_WAV_DIR, FALLBACK_OUTPUT = default_output_paths(documents_accessible=False)

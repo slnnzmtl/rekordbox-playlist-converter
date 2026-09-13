@@ -157,6 +157,6 @@ def planned_action(
             sample_rate=item.sample_rate,
         ):
             return "reuse"
-    if item.copy_wav:
+    if item.passthrough:
         return "copy"
     return "transcode"

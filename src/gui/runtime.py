@@ -1,7 +1,7 @@
 """Patched GUI namespace: tests set gui_tk.GUI_MODULE to this module.
 
 Mixin / app code must look up patched names here (runtime.threading,
-runtime.rb.prepare, runtime.messagebox, …). Local imports of those names
+runtime.prepare, runtime.messagebox, …). Local imports of those names
 make patches miss.
 """
 
@@ -15,15 +15,29 @@ from pathlib import Path
 from tkinter import filedialog, messagebox
 
 import converter_manifest
-import rb_playlist_to_wav as rb
+from cli_error import CancelledError, CliError
+from convert import prepare, prepare_batch
+from convert.format_policy import SUPPORTED_LOSSLESS_EXT
+from convert.preview import insufficient_output_space_message, preview_write_bytes
 from convert.write import execute_prepared
-from gui_preferences import (
+from gui_prefs import (
     find_rekordbox_xml_via_child,
     import_xml_path,
     load_preferences,
     probe_path_via_child,
     resolve_startup_paths,
     save_preferences,
+)
+from rekordbox_xml import (
+    collection_indexes,
+    decode_location,
+    duplicate_playlist_name_error,
+    iter_playlist_nodes,
+    load_dj_playlists,
+    path_is_under_documents,
+    playlist_label,
+    playlist_preview_track_count,
+    track_included_in_playlist_preview,
 )
 from update_check import check_for_update
 
@@ -44,12 +58,16 @@ def open_in_finder(path: Path) -> None:
 
 
 __all__ = [
+    "CancelledError",
+    "CliError",
+    "SUPPORTED_LOSSLESS_EXT",
     "threading",
     "time",
     "webbrowser",
     "filedialog",
     "messagebox",
-    "rb",
+    "prepare",
+    "prepare_batch",
     "converter_manifest",
     "execute_prepared",
     "load_preferences",
@@ -60,4 +78,15 @@ __all__ = [
     "import_xml_path",
     "check_for_update",
     "open_in_finder",
+    "collection_indexes",
+    "decode_location",
+    "duplicate_playlist_name_error",
+    "iter_playlist_nodes",
+    "load_dj_playlists",
+    "path_is_under_documents",
+    "playlist_label",
+    "playlist_preview_track_count",
+    "track_included_in_playlist_preview",
+    "insufficient_output_space_message",
+    "preview_write_bytes",
 ]

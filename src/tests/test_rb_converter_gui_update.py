@@ -36,8 +36,7 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
                 check_for_update=UpdateCheckResult(
                     kind="update_available", release=release
                 ),
-                **{"rb.discover_xml_candidates": []},
-            ):
+                            ):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -87,8 +86,7 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
         try:
             with app_patches(
                 check_for_update=UpdateCheckResult(kind="up_to_date"),
-                **{"rb.discover_xml_candidates": []},
-            ), patch.object(ConverterApp, "_start_update_check"):
+                            ), patch.object(ConverterApp, "_start_update_check"):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -127,7 +125,7 @@ class UpdateCheckBehaviorTests(unittest.TestCase):
         )
         root = None
         try:
-            with app_patches(**{"rb.discover_xml_candidates": []}):
+            with app_patches():
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)

@@ -4,153 +4,37 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import sys
-import threading
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Callable, Collection
 
 import convert.write as convert_write
 import converter_manifest
-import ffmpeg_tools
-import xml_output
-from convert.encode import pcm_codec_for_depth
-from convert.format_policy import (
-    AIFF_EXT,
-    ALAC_EXT,
-    SUPPORTED_LOSSLESS_EXT,
-    WAV_EXT,
-    classify_source,
-    planned_action,
-)
-from convert.models import (
-    ConversionPreview,
-    ConversionPreviewItem,
+from cli_error import CliError
+from convert import (
     ConvertStats,
     Plan,
-    PlannedTrack,
     PreparedConversion,
+    execute_prepared,
+    prepare,
+    prepare_batch,
 )
-from convert.paths import (
-    abs_path,
-    collision_key,
-    format_dir_name,
-    format_media_dir,
-    parse_duration_seconds,
-    preferred_relative_dest,
-    resolve_existing_file,
-    same_file,
-    sanitize_path_component,
-    source_key,
-    target_from_stream,
-)
-from convert.plan import (
-    AIFF_SUFFIX,
-    DEFAULT_OUTPUT,
-    DEFAULT_WAV_DIR,
-    WAV_SUFFIX,
-    build_plan,
-    cached_cover_jpeg,
-    collect_batch_unique,
-    run_ffmpeg,
-    share_cover_caches,
-    write_aiff_output,
-)
+from convert.plan import DEFAULT_OUTPUT, DEFAULT_WAV_DIR
 from convert.preview import (
     build_conversion_preview,
     insufficient_output_space_message,
     preview_write_bytes,
 )
-from convert.prepare import prepare as _prepare_impl
-from convert.prepare import prepare_batch as _prepare_batch_impl
-from convert.progress import Progress
-from convert.write import convert_unique
-from cdj_aiff import (
-    AIFF_SAFE_BIT_DEPTHS,
-    build_id3v23_tag,
-    expected_id3_text_from_track,
-    extract_cover_jpeg,
-    is_cdj_safe_aiff,
-    write_aiff_id3,
-)
-from cdj_wav import (
-    CDJ_SAFE_CHANNELS,
-    CDJ_SAFE_CHUNK_IDS,
-    WAVE_FORMAT_PCM,
-    WavInfo,
-    is_cdj_safe_wav,
-    parse_wav_info,
-)
-from cli_error import CancelledError, CliError
-from gui_preferences import import_xml_path
+from gui_prefs import import_xml_path
 from rekordbox_xml import (
-    XML_CANDIDATE_RELATIVE,
-    collection_indexes,
-    decode_location,
     discover_xml_candidates,
-    duplicate_playlist_name_error,
-    encode_location,
-    find_playlists_by_name,
-    iter_playlist_nodes,
     iter_playlists,
     load_dj_playlists,
     parse_playlist_selection,
-    path_is_under_documents,
     playlist_label,
-    playlist_preview_track_count,
     playlist_track_count,
-    resolve_playlist,
-    resolve_playlist_tracks,
-    skeleton_from,
-    track_included_in_playlist_preview,
 )
 
-
-def prepare(*args, **kwargs):
-    return _prepare_impl(*args, **kwargs)
-
-
-def prepare_batch(*args, **kwargs):
-    """Facade prepare_batch that routes batch steps through rb module seams."""
-    kwargs.setdefault("prepare_fn", prepare)
-    kwargs.setdefault("share_output_root_fn", share_output_root)
-    kwargs.setdefault("collect_batch_unique_fn", collect_batch_unique)
-    kwargs.setdefault("share_cover_caches_fn", share_cover_caches)
-    kwargs.setdefault("build_conversion_preview_fn", build_conversion_preview)
-    return _prepare_batch_impl(*args, **kwargs)
-
-
-# Re-exports for callers (launcher / GUI / tests that import rb.*).
-FFPROBE_TIMEOUT_S = ffmpeg_tools.FFPROBE_TIMEOUT_S
-FFMPEG_SOXR_TIMEOUT_S = ffmpeg_tools.FFMPEG_SOXR_TIMEOUT_S
-FFMPEG_CONVERT_TIMEOUT_S = ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S
-FFMPEG_COVER_TIMEOUT_S = ffmpeg_tools.FFMPEG_COVER_TIMEOUT_S
-CODEC_BY_DEPTH = ffmpeg_tools.CODEC_BY_DEPTH
-tool_path = ffmpeg_tools.tool_path
-require_tools = ffmpeg_tools.require_tools
-run_ffprobe = ffmpeg_tools.run_ffprobe
-first_stream = ffmpeg_tools.first_stream
-pcm_codec_for_stream = ffmpeg_tools.pcm_codec_for_stream
-bit_depth_of_codec = ffmpeg_tools.bit_depth_of_codec
-ffmpeg_supports_soxr = ffmpeg_tools.ffmpeg_supports_soxr
-
-
-# Re-exports from xml_output for callers.
-next_track_id = xml_output.next_track_id
-ensure_root_node = xml_output.ensure_root_node
-find_or_create_wav_playlist = xml_output.find_or_create_wav_playlist
-share_output_root = xml_output.share_output_root
-rewrite_counts = xml_output.rewrite_counts
-probe_dest_tech = xml_output.probe_dest_tech
-clone_track = xml_output.clone_track
-refresh_track = xml_output.refresh_track
-playlist_keys = xml_output.playlist_keys
-apply_xml = xml_output.apply_xml
-atomic_write_xml = xml_output.atomic_write_xml
-validate_import_xml = xml_output.validate_import_xml
-write_import_xml = xml_output.write_import_xml
-assignment_key = xml_output.assignment_key
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -229,6 +113,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     return parser.parse_args(argv)
 
+
 def prompt_line(message: str, default: str | None = None) -> str:
     if default is not None:
         shown = f"{message} [{default}]: "
@@ -292,7 +177,7 @@ def prompt_playlists(
 
 
 def resolve_cli_output(wav_dir: Path, output: Path | None) -> Path:
-    """Return explicit --output, or <wav_dir>/rekordbox-import.xml when omitted."""
+    """Return explicit --output, or <wav-dir>/rekordbox-import.xml when omitted."""
     if output is not None:
         return output
     return import_xml_path(wav_dir)
@@ -460,7 +345,7 @@ def print_warnings(warnings: list[str]) -> None:
         print(f"warning: {warning}", file=sys.stderr)
 
 
-def print_conversion_preview(plans: list[Plan], preview: ConversionPreview) -> None:
+def print_conversion_preview(plans: list[Plan], preview) -> None:
     """Print shared ConversionPreview for CLI --dry-run (read-only)."""
     print(
         f"{preview.unique_outputs} unique output file(s) · "
@@ -471,7 +356,7 @@ def print_conversion_preview(plans: list[Plan], preview: ConversionPreview) -> N
     )
     print()
     print("Format directory:")
-    print(plans[0].playlist_dir)
+    print(plans[0].media_dir)
     print()
     if preview.items:
         print("Inputs:")
@@ -501,7 +386,7 @@ def print_summary(
     if dry_run:
         print("Converted:")
         missing = f" ({len(plan.warnings)} missing skipped)" if plan.warnings else ""
-        print(f"{unique_n} audio files → {plan.playlist_dir}{missing}")
+        print(f"{unique_n} audio files → {plan.media_dir}{missing}")
         print()
         print("Output:")
         print(plan.output)
@@ -522,7 +407,7 @@ def print_summary(
         parts.append(f"{len(plan.warnings)} missing skipped")
     if not parts:
         parts.append(f"{unique_n} audio files")
-    print(f"{', '.join(parts)} → {plan.playlist_dir}")
+    print(f"{', '.join(parts)} → {plan.media_dir}")
     print()
     print("Output:")
     print(plan.output)
@@ -573,6 +458,8 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
+    from convert.paths import abs_path
+
     rc = run_convert_batch(
         xml_path,
         playlist_refs,
@@ -592,5 +479,83 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+# Thin re-exports for tests that still patch rb.* seams.
+from cli_error import CancelledError  # noqa: E402
+from convert.format_policy import SUPPORTED_LOSSLESS_EXT, planned_action  # noqa: E402
+from convert.models import ConversionPreview, ConversionPreviewItem, PlannedTrack  # noqa: E402
+from convert.paths import (  # noqa: E402
+    preferred_relative_dest,
+    source_key,
+    target_from_stream,
+)
+from convert.plan import (  # noqa: E402
+    collect_batch_unique,
+    share_cover_caches,
+    write_aiff_output,
+)
+from convert.preview import (  # noqa: E402
+    build_conversion_preview,
+    insufficient_output_space_message,
+    preview_write_bytes,
+)
+from convert.write import convert_unique  # noqa: E402
+from convert.paths import collision_key  # noqa: E402
+from xml_output import (  # noqa: E402
+    apply_xml,
+    clone_track,
+    probe_dest_tech,
+    share_output_root,
+    write_import_xml,
+)
+from rekordbox_xml import (  # noqa: E402
+    decode_location,
+    duplicate_playlist_name_error,
+    encode_location,
+    find_playlists_by_name,
+    iter_playlists,
+    load_dj_playlists,
+)
+
+__all__ = [
+    "CancelledError",
+    "CliError",
+    "ConversionPreview",
+    "ConversionPreviewItem",
+    "ConvertStats",
+    "DEFAULT_OUTPUT",
+    "DEFAULT_WAV_DIR",
+    "Plan",
+    "PlannedTrack",
+    "PreparedConversion",
+    "SUPPORTED_LOSSLESS_EXT",
+    "apply_xml",
+    "build_conversion_preview",
+    "clone_track",
+    "collision_key",
+    "collect_batch_unique",
+    "convert_unique",
+    "decode_location",
+    "duplicate_playlist_name_error",
+    "encode_location",
+    "execute_prepared",
+    "find_playlists_by_name",
+    "insufficient_output_space_message",
+    "iter_playlists",
+    "load_dj_playlists",
+    "main",
+    "parse_args",
+    "planned_action",
+    "prepare",
+    "prepare_batch",
+    "preferred_relative_dest",
+    "preview_write_bytes",
+    "probe_dest_tech",
+    "prompt_wizard",
+    "run_convert_batch",
+    "share_cover_caches",
+    "share_output_root",
+    "source_key",
+    "target_from_stream",
+    "write_aiff_output",
+    "write_import_xml",
+]

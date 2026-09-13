@@ -14,6 +14,7 @@ if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
 import rb_playlist_to_wav as rb
+from cli_error import CancelledError, CliError
 import converter_manifest
 
 from gui_tk import (
@@ -24,6 +25,7 @@ from gui_tk import (
     mark_output_folder_valid,
     merge_patches,
     mock_convert_plan,
+    mock_prepared_conversion,
     run_inline_thread,
     seed_track_selection,
     start_convert_and_confirm,
@@ -75,9 +77,16 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
+                import xml.etree.ElementTree as ET
+                from gui.types import PlaylistEntry, PlaylistNodeKind
+
                 app._playlist_entries = [
-                    ("playlist", "ROOT", "A", 1, object()),
-                    ("playlist", "ROOT", "B", 2, object()),
+                    PlaylistEntry(
+                        PlaylistNodeKind.PLAYLIST, "ROOT", "A", 1, ET.Element("x")
+                    ),
+                    PlaylistEntry(
+                        PlaylistNodeKind.PLAYLIST, "ROOT", "B", 2, ET.Element("y")
+                    ),
                 ]
                 scheduled: list[tuple[int, object]] = []
                 real_after = root.after
@@ -131,11 +140,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     startup_patches(),
                     {
                         "save_preferences": None,
-                        "rb.prepare": {"return_value": (plan, [])},
-                        "rb.share_output_root": None,
-                        "rb.build_conversion_preview": empty_conversion_preview(
-                            selected=2
-                        ),
+                        "prepare_batch": {"return_value": (mock_prepared_conversion(n_unique=2), [])},
                         "execute_prepared": {"create": True},
                         "messagebox.showerror": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
@@ -209,11 +214,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     startup_patches(),
                     {
                         "save_preferences": None,
-                        "rb.prepare": {"return_value": (plan, [])},
-                        "rb.share_output_root": None,
-                        "rb.build_conversion_preview": empty_conversion_preview(
-                            selected=2
-                        ),
+                        "prepare_batch": {"return_value": (mock_prepared_conversion(n_unique=2), [])},
                         "execute_prepared": {
                             "create": True,
                             "return_value": rb.ConvertStats(
@@ -287,14 +288,14 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 self.assertIsNotNone(on_progress)
                 on_progress(1, 2, "prepare", "track.wav")
                 cancel_event.set()
-                return None, []
+                raise CancelledError("conversion cancelled")
 
             with app_patches(
                 merge_patches(
                     startup_patches(),
                     {
                         "save_preferences": None,
-                        "rb.prepare": {"side_effect": prepare_then_cancel},
+                        "prepare_batch": {"side_effect": prepare_then_cancel},
                         "execute_prepared": {"create": True},
                         "messagebox.showerror": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
@@ -351,23 +352,14 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 on_progress(1, 2, "preview", "a.wav")
                 progress_actions.append("preview")
                 cancel_event.set()
-                raise rb.CancelledError("conversion cancelled during preview")
+                raise CancelledError("conversion cancelled during preview")
 
             with app_patches(
                 merge_patches(
                     startup_patches(),
                     {
                         "save_preferences": None,
-                        "converter_manifest.load_manifest": {
-                            "return_value": converter_manifest.empty_manifest()
-                        },
-                        "rb.prepare": {"return_value": (plan, [])},
-                        "rb.share_output_root": None,
-                        "rb.collect_batch_unique": plan.unique,
-                        "rb.share_cover_caches": None,
-                        "rb.build_conversion_preview": {
-                            "side_effect": preview_then_cancel
-                        },
+                        "prepare_batch": {"side_effect": preview_then_cancel},
                         "execute_prepared": {"create": True},
                         "messagebox.showerror": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
@@ -421,11 +413,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     startup_patches(),
                     {
                         "save_preferences": None,
-                        "rb.prepare": {"return_value": (plan, [])},
-                        "rb.share_output_root": None,
-                        "rb.build_conversion_preview": empty_conversion_preview(
-                            selected=1
-                        ),
+                        "prepare_batch": {
+                            "return_value": (mock_prepared_conversion(n_unique=1), [])
+                        },
                         "execute_prepared": {"create": True},
                         "messagebox.showerror": None,
                         "threading.Thread": {"side_effect": run_inline_thread},

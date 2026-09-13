@@ -34,7 +34,6 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
                 check_for_update=UpdateCheckResult(kind="up_to_date"),
                 load_preferences={},
                 **{
-                    "rb.discover_xml_candidates": [],
                     "filedialog.askopenfilename": None,
                 },
             ) as mocks:
@@ -65,7 +64,6 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
                 check_for_update=UpdateCheckResult(kind="up_to_date"),
                 load_preferences={},
                 **{
-                    "rb.discover_xml_candidates": [],
                     "filedialog.askopenfilename": None,
                 },
             ) as mocks:
@@ -100,7 +98,6 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
                 check_for_update=UpdateCheckResult(kind="up_to_date"),
                 load_preferences={},
                 **{
-                    "rb.discover_xml_candidates": [],
                     "filedialog.askopenfilename": None,
                 },
             ) as mocks:
@@ -132,7 +129,6 @@ class GuiBrowseInitialDirTests(unittest.TestCase):
                 check_for_update=UpdateCheckResult(kind="up_to_date"),
                 load_preferences={},
                 **{
-                    "rb.discover_xml_candidates": [],
                     "filedialog.askdirectory": None,
                     "save_preferences": None,
                 },

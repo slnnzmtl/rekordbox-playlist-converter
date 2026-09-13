@@ -58,7 +58,7 @@ def build_conversion_preview(
     selected = resolved + missing
     unique_outputs = len(items)
     duplicates = resolved - unique_outputs
-    wav_dir = plans[0].wav_dir
+    library_dir = plans[0].library_dir
     total = len(items)
     if total == 0:
         return ConversionPreview(
@@ -92,7 +92,7 @@ def build_conversion_preview(
             cancel_event=cancel_event,
         )
         try:
-            relative_dest = item.dest_path.relative_to(wav_dir).as_posix()
+            relative_dest = item.dest_path.relative_to(library_dir).as_posix()
         except ValueError:
             relative_dest = item.dest_path.name
         size_bytes, size_display = _preview_size(item, action)

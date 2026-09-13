@@ -16,7 +16,10 @@ for _p in (_SRC, _TESTS):
 
 import rb_playlist_to_wav as rb
 import cdj_aiff
+import convert.format_policy
 import convert.plan
+from cli_error import CancelledError
+from convert.preview import build_conversion_preview
 import converter_manifest
 import ffmpeg_tools
 from convert_fixtures import write_flac, write_pcm_wav
@@ -35,10 +38,10 @@ class ConversionPreviewTests(unittest.TestCase):
         return rb.Plan(
             playlist_name="P",
             wav_playlist_name="P [WAV]" if output_format == "wav" else "P [AIFF]",
-            wav_dir=item.dest_path.parent.parent
+            library_dir=item.dest_path.parent.parent
             if item.dest_path.parent.name in ("WAV", "AIFF")
             else item.dest_path.parent,
-            playlist_dir=item.dest_path.parent,
+            media_dir=item.dest_path.parent,
             output=item.dest_path.parent / "o.xml",
             tracks=[item],
             unique=[item],
@@ -52,7 +55,7 @@ class ConversionPreviewTests(unittest.TestCase):
     def test_planned_action_classifies_noop_reuse_copy_transcode_and_force(
         self,
     ) -> None:
-        """Given noop/canonical/copy_wav/transcode items: When planned_action
+        """Given noop/canonical/passthrough/transcode items: When planned_action
         runs with and without force: Then actions follow the shared rules."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -70,7 +73,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 dest_location=rb.encode_location(noop_dest),
                 dest_name=noop_dest.name,
                 codec=None,
-                copy_wav=True,
+                passthrough=True,
                 noop=True,
                 bit_depth=16,
                 sample_rate=44100,
@@ -89,7 +92,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 dest_location=rb.encode_location(wav_dest),
                 dest_name=wav_dest.name,
                 codec="pcm_s16le",
-                copy_wav=False,
+                passthrough=False,
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
@@ -106,7 +109,7 @@ class ConversionPreviewTests(unittest.TestCase):
             aiff_dest = root / "AIFF" / "out.aiff"
             aiff_dest.parent.mkdir(parents=True)
             __import__("shutil").copy2(aiff_src, aiff_dest)
-            rb.write_aiff_id3(aiff_dest, el, None)
+            cdj_aiff.write_aiff_id3(aiff_dest, el, None)
             aiff_item = rb.PlannedTrack(
                 source_el=el,
                 source_path=aiff_src,
@@ -114,7 +117,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 dest_location=rb.encode_location(aiff_dest),
                 dest_name=aiff_dest.name,
                 codec=None,
-                copy_wav=True,
+                passthrough=True,
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
@@ -124,7 +127,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 rb.planned_action(plan, aiff_item, force=False), "reuse"
             )
 
-            # copy_wav → copy (no existing dest)
+            # passthrough → copy (no existing dest)
             copy_dest = root / "WAV" / "copy.wav"
             copy_item = rb.PlannedTrack(
                 source_el=el,
@@ -133,7 +136,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 dest_location=rb.encode_location(copy_dest),
                 dest_name=copy_dest.name,
                 codec=None,
-                copy_wav=True,
+                passthrough=True,
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
@@ -150,7 +153,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 dest_location=rb.encode_location(tx_dest),
                 dest_name=tx_dest.name,
                 codec="pcm_s24le",
-                copy_wav=False,
+                passthrough=False,
                 noop=False,
                 bit_depth=24,
                 sample_rate=48000,
@@ -177,7 +180,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 dest_location=rb.encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
-                copy_wav=True,
+                passthrough=True,
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
@@ -197,7 +200,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 dest_location=rb.encode_location(dest),
                 dest_name=dest.name,
                 codec="pcm_s24le",
-                copy_wav=False,
+                passthrough=False,
                 noop=False,
                 bit_depth=24,
                 sample_rate=48000,
@@ -233,7 +236,7 @@ class ConversionPreviewTests(unittest.TestCase):
                         dest_location=rb.encode_location(dest),
                         dest_name=dest.name,
                         codec="pcm_s24le",
-                        copy_wav=False,
+                        passthrough=False,
                         noop=False,
                         bit_depth=24,
                         sample_rate=48000,
@@ -242,8 +245,8 @@ class ConversionPreviewTests(unittest.TestCase):
             plan = rb.Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
-                wav_dir=root,
-                playlist_dir=root / "AIFF",
+                library_dir=root,
+                media_dir=root / "AIFF",
                 output=root / "o.xml",
                 tracks=items,
                 unique=items,
@@ -264,8 +267,8 @@ class ConversionPreviewTests(unittest.TestCase):
             with patch.object(
                 convert.format_policy, "planned_action", side_effect=action_side_effect
             ), patch.object(convert.plan, "default_convert_workers", return_value=1):
-                with self.assertRaises(rb.CancelledError):
-                    rb.build_conversion_preview(
+                with self.assertRaises(CancelledError):
+                    build_conversion_preview(
                         [plan], items, force=False, cancel_event=cancel
                     )
             self.assertEqual(calls, ["out0.aiff"])
@@ -292,7 +295,7 @@ class ConversionPreviewTests(unittest.TestCase):
                         dest_location=rb.encode_location(dest),
                         dest_name=dest.name,
                         codec="pcm_s24le",
-                        copy_wav=False,
+                        passthrough=False,
                         noop=False,
                         bit_depth=24,
                         sample_rate=48000,
@@ -357,7 +360,7 @@ class ConversionPreviewTests(unittest.TestCase):
                         dest_location=rb.encode_location(dest),
                         dest_name=dest.name,
                         codec="pcm_s24le",
-                        copy_wav=False,
+                        passthrough=False,
                         noop=False,
                         bit_depth=24,
                         sample_rate=48000,

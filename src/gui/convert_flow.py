@@ -33,7 +33,7 @@ class ConvertFlowMixin:
             return
         try:
             selected = self._selected_playlists(unique_names=False)
-        except runtime.rb.CliError as exc:
+        except runtime.CliError as exc:
             runtime.messagebox.showerror("Selection", str(exc))
             return
         if not selected:
@@ -45,7 +45,7 @@ class ConvertFlowMixin:
             meta = self._tracklist_iids.get(iid)
             if meta is None:
                 continue
-            folder, name, key = meta
+            folder, name, key = meta.folder, meta.name, meta.key
             if not key:
                 continue
             keys_by_playlist.setdefault((folder, name), []).append(key)
@@ -58,7 +58,7 @@ class ConvertFlowMixin:
             runtime.messagebox.showerror("Selection", "Select at least one track.")
             return
         names = [name for _folder, name in selected]
-        dupe_error = runtime.rb.duplicate_playlist_name_error(names)
+        dupe_error = runtime.duplicate_playlist_name_error(names)
         if dupe_error is not None:
             runtime.messagebox.showerror("Selection", dupe_error)
             return
@@ -100,8 +100,8 @@ class ConvertFlowMixin:
                 source_root = self._source_root
             elif xml_path.is_file():
                 try:
-                    source_root = runtime.rb.load_dj_playlists(xml_path)
-                except runtime.rb.CliError as exc:
+                    source_root = runtime.load_dj_playlists(xml_path)
+                except runtime.CliError as exc:
                     self._ui(lambda e=[str(exc)]: self._finish_error(e))
                     return
             else:
@@ -123,7 +123,7 @@ class ConvertFlowMixin:
                 label = f"{name} ({index + 1}/{total})"
                 self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
 
-            prepared, errors = runtime.rb.prepare_batch(
+            prepared, errors = runtime.prepare_batch(
                 xml_path,
                 selected,
                 wav_dir,
@@ -143,9 +143,9 @@ class ConvertFlowMixin:
                 return
             assert prepared is not None
             self._ui(lambda p=prepared: self._on_prepare_ready(p))
-        except runtime.rb.CancelledError:
+        except runtime.CancelledError:
             self._ui(self._finish_cancelled)
-        except runtime.rb.CliError as exc:
+        except runtime.CliError as exc:
             self._ui(lambda e=str(exc): self._finish_error(e))
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
             self._ui(lambda e=str(exc): self._finish_error(e))
@@ -168,9 +168,9 @@ class ConvertFlowMixin:
             f"{preview.duplicates} duplicate(s) · "
             f"{preview.missing} missing"
         )
-        space_issue = runtime.rb.insufficient_output_space_message(
-            prepared.wav_dir,
-            runtime.rb.preview_write_bytes(preview),
+        space_issue = runtime.insufficient_output_space_message(
+            prepared.library_dir,
+            runtime.preview_write_bytes(preview),
         )
         self._preview_dialog = gui_dialogs.show_conversion_preview_dialog(
             self.root,
@@ -204,7 +204,7 @@ class ConvertFlowMixin:
     def _discard_prepared_conversion(self) -> None:
         self._close_preview_dialog()
         self._prepared_conversion = None
-        self._write_prepared = None
+        self._confirm_prepared = None
         self._cancel_event.clear()
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
@@ -214,21 +214,21 @@ class ConvertFlowMixin:
         prepared = self._prepared_conversion
         if prepared is None:
             return
-        space_issue = runtime.rb.insufficient_output_space_message(
-            prepared.wav_dir,
-            runtime.rb.preview_write_bytes(prepared.preview),
+        space_issue = runtime.insufficient_output_space_message(
+            prepared.library_dir,
+            runtime.preview_write_bytes(prepared.preview),
         )
         if space_issue:
             runtime.messagebox.showerror("Not enough space", space_issue)
             return
         self._close_preview_dialog()
         self._prepared_conversion = None
-        self._write_prepared = prepared
+        self._confirm_prepared = prepared
         self.status_var.set("Converting…")
         runtime.threading.Thread(target=self._write_worker, daemon=True).start()
 
     def _write_worker(self) -> None:
-        prepared = self._write_prepared
+        prepared = self._confirm_prepared
         if prepared is None:
             self._ui(lambda: self._finish_error("Nothing to convert."))
             return
@@ -306,7 +306,7 @@ class ConvertFlowMixin:
             if batch_stats.errors:
                 self._ui(lambda e=batch_stats.errors: self._finish_error(e))
                 return
-            open_dir = plans[0].playlist_dir
+            open_dir = plans[0].media_dir
             out = str(output)
             if total_successful_conversions([batch_stats]) == 0:
                 self._ui(
@@ -318,12 +318,12 @@ class ConvertFlowMixin:
                         s, o, w, d, x
                     )
                 )
-        except runtime.rb.CliError as exc:
+        except runtime.CliError as exc:
             self._ui(lambda e=str(exc): self._finish_error(e))
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
             self._ui(lambda e=str(exc): self._finish_error(e))
         finally:
-            self._write_prepared = None
+            self._confirm_prepared = None
 
     def _show_conversion_errors(self, message: str | list[str]) -> None:
         lines = message if isinstance(message, list) else message.splitlines()
@@ -337,7 +337,7 @@ class ConvertFlowMixin:
     def _finish_cancelled(self, errors: str | list[str] | None = None) -> None:
         self._close_preview_dialog()
         self._prepared_conversion = None
-        self._write_prepared = None
+        self._confirm_prepared = None
         self._set_busy(False)
         self.status_var.set("Cancelled.")
         self._cancel_cancelled_clear()
@@ -350,7 +350,7 @@ class ConvertFlowMixin:
     def _finish_error(self, message: str | list[str]) -> None:
         self._close_preview_dialog()
         self._prepared_conversion = None
-        self._write_prepared = None
+        self._confirm_prepared = None
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Failed.")
@@ -362,7 +362,7 @@ class ConvertFlowMixin:
         warnings: list[str] | None = None,
     ) -> None:
         self._prepared_conversion = None
-        self._write_prepared = None
+        self._confirm_prepared = None
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Finished with no audio files converted or copied.")
@@ -385,7 +385,7 @@ class ConvertFlowMixin:
         import_xml: Path | None = None,
     ) -> None:
         self._prepared_conversion = None
-        self._write_prepared = None
+        self._confirm_prepared = None
         self._set_busy(False)
         self._animate_progress_to(100, snap=True)
         body = "\n".join(summaries)

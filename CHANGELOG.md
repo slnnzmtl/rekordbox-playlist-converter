@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- GUI preferences save failures show “Couldn’t save preferences” on the status line; conversion still continues.
+- Preferences persist `library_dir` (legacy `wav_dir` is read for compatibility but no longer written). CLI `--wav-dir` is unchanged.
+- Prepare validation for output format, bit depth, and sample rate fails loudly with a clear error instead of silently coercing invalid values.
+- Internal: public `convert` package exports `prepare`, `prepare_batch`, and `execute_prepared`; `rb_playlist_to_wav.py` is CLI-focused with thin test seams.
+- Internal: `PlannedTrack.passthrough`, `Plan.media_dir` / `Plan.library_dir`, GUI `library_dir_var`, and `_confirm_prepared` replace leaky `copy_wav` / `playlist_dir` / `wav_dir_var` / `_write_prepared` names.
+- Internal: `gui_prefs/` splits preference storage, default paths, Documents child probe, and XML discovery; `run_startup_probe` replaces `_probe_documents_after_idle`; typed `PlaylistEntry` / `TrackLeafRef` and `UpdateCheckKind`.
 - Internal: `CancelledError` is no longer a `CliError` (cancel is not a fatal
   CLI failure). Stderr progress lives in `convert.progress`. Cover extract uses
   `COVER_MAX_SIDE` and does not swallow cancel as a missing cover. CDJ/encode

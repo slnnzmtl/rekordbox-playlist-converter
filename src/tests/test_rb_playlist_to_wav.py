@@ -15,7 +15,10 @@ for _p in (_SRC, _TESTS):
         sys.path.insert(0, str(_p))
 
 import rb_playlist_to_wav as rb
+from cli_error import CancelledError, CliError
 import ffmpeg_tools
+from convert.paths import collision_key
+from rekordbox_xml import find_playlists_by_name, load_dj_playlists
 from convert_fixtures import XmlFixtureTests as XmlFixtureBase
 from convert_fixtures import FIXTURE, flac_probe, wav_probe, write_flac
 
@@ -23,49 +26,49 @@ from convert_fixtures import FIXTURE, flac_probe, wav_probe, write_flac
 class CodecMapTests(unittest.TestCase):
     def test_16_24_32_float(self) -> None:
         self.assertEqual(
-            rb.pcm_codec_for_stream({"sample_fmt": "s16", "bits_per_raw_sample": "16"}),
+            ffmpeg_tools.pcm_codec_for_stream({"sample_fmt": "s16", "bits_per_raw_sample": "16"}),
             "pcm_s16le",
         )
         self.assertEqual(
-            rb.pcm_codec_for_stream({"sample_fmt": "s32", "bits_per_raw_sample": "24"}),
+            ffmpeg_tools.pcm_codec_for_stream({"sample_fmt": "s32", "bits_per_raw_sample": "24"}),
             "pcm_s24le",
         )
         self.assertEqual(
-            rb.pcm_codec_for_stream({"sample_fmt": "s32", "bits_per_raw_sample": "32"}),
+            ffmpeg_tools.pcm_codec_for_stream({"sample_fmt": "s32", "bits_per_raw_sample": "32"}),
             "pcm_s32le",
         )
         self.assertEqual(
-            rb.pcm_codec_for_stream({"sample_fmt": "fltp"}),
+            ffmpeg_tools.pcm_codec_for_stream({"sample_fmt": "fltp"}),
             "pcm_f32le",
         )
 
     def test_unknown_depth_fails(self) -> None:
-        with self.assertRaises(rb.CliError):
-            rb.pcm_codec_for_stream({"sample_fmt": "s32"})
-        with self.assertRaises(rb.CliError):
-            rb.pcm_codec_for_stream({"sample_fmt": "u8", "bits_per_raw_sample": "8"})
+        with self.assertRaises(CliError):
+            ffmpeg_tools.pcm_codec_for_stream({"sample_fmt": "s32"})
+        with self.assertRaises(CliError):
+            ffmpeg_tools.pcm_codec_for_stream({"sample_fmt": "u8", "bits_per_raw_sample": "8"})
 
 
 class CollisionKeyTests(unittest.TestCase):
     def test_case_and_nfd(self) -> None:
-        self.assertEqual(rb.collision_key("Intro.wav"), rb.collision_key("intro.wav"))
+        self.assertEqual(collision_key("Intro.wav"), collision_key("intro.wav"))
         nfc = unicodedata.normalize("NFC", "café.wav")
         nfd = unicodedata.normalize("NFD", "café.wav")
         self.assertNotEqual(nfc, nfd)
-        self.assertEqual(rb.collision_key(nfc), rb.collision_key(nfd))
+        self.assertEqual(collision_key(nfc), collision_key(nfd))
 
 
 
 class XmlFixtureTests(XmlFixtureBase):
     def test_recursive_playlist_lookup(self) -> None:
-        root = rb.load_dj_playlists(self.xml_path)
-        found = rb.find_playlists_by_name(root, "Untitled Intelligent List")
+        root = load_dj_playlists(self.xml_path)
+        found = find_playlists_by_name(root, "Untitled Intelligent List")
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].get("Entries"), "3")
-        self.assertEqual(rb.find_playlists_by_name(root, "missing"), [])
+        self.assertEqual(find_playlists_by_name(root, "missing"), [])
 
     def test_duplicate_playlist_name(self) -> None:
-        root = rb.load_dj_playlists(self.xml_path)
+        root = load_dj_playlists(self.xml_path)
         playlists = root.find("PLAYLISTS/NODE")
         assert playlists is not None
         ET.SubElement(playlists, "NODE", {"Name": "Untitled Intelligent List", "Type": "1", "KeyType": "0", "Entries": "0"})
@@ -78,7 +81,7 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertIn("Intelligent playlists / Untitled Intelligent List", joined)
 
     def test_duplicate_playlist_resolved_by_folder(self) -> None:
-        root = rb.load_dj_playlists(self.xml_path)
+        root = load_dj_playlists(self.xml_path)
         playlists = root.find("PLAYLISTS/NODE")
         assert playlists is not None
         ET.SubElement(
@@ -103,7 +106,7 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(len(plan.unique), 3)
 
     def test_duplicate_playlist_resolved_by_path(self) -> None:
-        root = rb.load_dj_playlists(self.xml_path)
+        root = load_dj_playlists(self.xml_path)
         playlists = root.find("PLAYLISTS/NODE")
         assert playlists is not None
         ET.SubElement(
@@ -160,8 +163,8 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(plan.tracks[0].source_path, self.a)
 
     def test_missing_collection_key(self) -> None:
-        root = rb.load_dj_playlists(self.xml_path)
-        node = rb.find_playlists_by_name(root, "Untitled Intelligent List")[0]
+        root = load_dj_playlists(self.xml_path)
+        node = find_playlists_by_name(root, "Untitled Intelligent List")[0]
         ET.SubElement(node, "TRACK", {"Key": "999"})
         bad = self.root / "missing-key.xml"
         ET.ElementTree(root).write(bad, encoding="UTF-8", xml_declaration=True)
@@ -172,7 +175,7 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertTrue(any("missing collection track" in e for e in errors))
 
     def test_invalid_url(self) -> None:
-        root = rb.load_dj_playlists(self.xml_path)
+        root = load_dj_playlists(self.xml_path)
         track = root.find("COLLECTION/TRACK")
         assert track is not None
         track.set("Location", "http://example.com/x.flac")

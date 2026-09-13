@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,6 +22,7 @@ from gui_tk import (
     mark_output_folder_valid,
     merge_patches,
     mock_convert_plan,
+    mock_prepared_conversion,
     pump_ui,
     run_inline_thread,
     seed_track_selection,
@@ -43,14 +45,8 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
         from rb_converter_gui import ConverterApp
 
         plan = mock_convert_plan(n_unique=1)
-        preview = rb.ConversionPreview(
-            selected=1,
-            resolved=1,
-            unique_outputs=1,
-            duplicates=0,
-            missing=0,
-            items=[],
-        )
+        prepared = mock_prepared_conversion(n_unique=1)
+        preview = prepared.preview
         call_order: list[str] = []
         planned_action_calls: list[object] = []
 
@@ -70,19 +66,11 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
                     startup_patches(),
                     {
                         "save_preferences": None,
-                        "rb.prepare": {"return_value": (plan, [])},
-                        "rb.share_output_root": None,
-                        "rb.collect_batch_unique": plan.unique,
-                        "rb.share_cover_caches": None,
-                        "rb.build_conversion_preview": preview,
+                        "prepare_batch": {"return_value": (prepared, [])},
                         "execute_prepared": {
                             "create": True,
                             "side_effect": execute_side_effect,
                         },
-                        "converter_manifest.save_manifest": None,
-                        "rb.convert_unique": None,
-                        "rb.apply_xml": None,
-                        "rb.write_import_xml": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
@@ -93,12 +81,8 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
             ), patch.object(
                 ConverterApp, "_show_conversion_preview", create=True
             ), patch.object(ConverterApp, "_show_done_dialog"):
-                prepare = mocks["rb.prepare"]
+                prepare = mocks["prepare_batch"]
                 execute = mocks["execute_prepared"]
-                save_manifest = mocks["converter_manifest.save_manifest"]
-                convert_unique = mocks["rb.convert_unique"]
-                apply_xml = mocks["rb.apply_xml"]
-                write_xml = mocks["rb.write_import_xml"]
 
                 root = tk.Tk()
                 root.withdraw()
@@ -116,8 +100,6 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
                 prepare_count = prepare.call_count
                 self.assertEqual(prepare_count, 1)
                 execute.assert_not_called()
-                save_manifest.assert_not_called()
-                convert_unique.assert_not_called()
 
                 prepared_items = list(prepared.items)
                 confirm_conversion_preview(app)
@@ -130,10 +112,6 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
                 execute.assert_called_once()
                 self.assertEqual(list(execute.call_args.args[0].items), prepared_items)
                 self.assertEqual(planned_action_calls, ["transcode"])
-                save_manifest.assert_not_called()
-                convert_unique.assert_not_called()
-                apply_xml.assert_not_called()
-                write_xml.assert_not_called()
                 self.assertIsNone(app._prepared_conversion)
                 self.assertFalse(app._busy)
         except tk.TclError:
@@ -155,7 +133,6 @@ class ConversionPreviewDialogTests(unittest.TestCase):
         import tkinter.ttk as ttk
         from rb_converter_gui import ConverterApp
 
-        plan = mock_convert_plan(n_unique=1)
         preview = rb.ConversionPreview(
             selected=3,
             resolved=3,
@@ -192,6 +169,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                 ),
             ],
         )
+        prepared = replace(mock_prepared_conversion(n_unique=3), preview=preview)
 
         def find_toplevel(parent, title: str):
             for child in parent.winfo_children():
@@ -219,11 +197,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     startup_patches(),
                     {
                         "save_preferences": None,
-                        "rb.prepare": {"return_value": (plan, [])},
-                        "rb.share_output_root": None,
-                        "rb.collect_batch_unique": plan.unique,
-                        "rb.share_cover_caches": None,
-                        "rb.build_conversion_preview": preview,
+                        "prepare_batch": {"return_value": (prepared, [])},
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
@@ -371,7 +345,6 @@ class ConversionPreviewDialogTests(unittest.TestCase):
         from types import SimpleNamespace
         from rb_converter_gui import ConverterApp
 
-        plan = mock_convert_plan(n_unique=1)
         preview = rb.ConversionPreview(
             selected=1,
             resolved=1,
@@ -390,6 +363,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                 ),
             ],
         )
+        prepared = replace(mock_prepared_conversion(n_unique=1), preview=preview)
 
         def find_toplevel(parent, title: str):
             for child in parent.winfo_children():
@@ -435,11 +409,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     startup_patches(),
                     {
                         "save_preferences": None,
-                        "rb.prepare": {"return_value": (plan, [])},
-                        "rb.share_output_root": None,
-                        "rb.collect_batch_unique": plan.unique,
-                        "rb.share_cover_caches": None,
-                        "rb.build_conversion_preview": preview,
+                        "prepare_batch": {"return_value": (prepared, [])},
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )

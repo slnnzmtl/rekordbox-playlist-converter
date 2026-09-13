@@ -37,8 +37,7 @@ class VersionDisplayTests(unittest.TestCase):
         try:
             with app_patches(
                 check_for_update=UpdateCheckResult(kind="up_to_date"),
-                **{"rb.discover_xml_candidates": []},
-            ):
+                            ):
                 root = tk.Tk()
                 root.withdraw()
                 ConverterApp(root, documents_accessible=False)

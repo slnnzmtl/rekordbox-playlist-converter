@@ -35,7 +35,7 @@ def convert_unique(
 ) -> ConvertStats:
     """Encode/copy/reuse unique planned tracks; wait in-flight on cancel."""
     stats = ConvertStats()
-    plan.playlist_dir.mkdir(parents=True, exist_ok=True)
+    plan.media_dir.mkdir(parents=True, exist_ok=True)
     items = list(items) if items is not None else plan.unique
     bar = Progress(len(items), progress, on_progress=on_progress)
     completed = 0
@@ -70,14 +70,14 @@ def convert_unique(
             return
         try:
             converter_manifest.ensure_dest_path_under_wav_dir(
-                plan.wav_dir, item.dest_path
+                plan.library_dir, item.dest_path
             )
             if is_aiff:
                 plan_module.write_aiff_output(
                     item.source_path,
                     item.dest_path,
                     item.source_el,
-                    passthrough=item.copy_wav,
+                    passthrough=item.passthrough,
                     codec=item.codec,
                     bit_depth=item.bit_depth,
                     sample_rate=item.sample_rate,
@@ -86,14 +86,14 @@ def convert_unique(
                     cover_lock=cover_lock,
                 )
                 with stats_lock:
-                    if item.copy_wav:
+                    if item.passthrough:
                         stats.copied += 1
                     else:
                         stats.converted += 1
                 mark_succeeded(item)
-                finish("copy" if item.copy_wav else "convert", name)
+                finish("copy" if item.passthrough else "convert", name)
                 return
-            if item.copy_wav:
+            if item.passthrough:
                 copy_wav_atomic(
                     item.source_path, item.dest_path, cancel_event=cancel_event
                 )
@@ -154,7 +154,7 @@ def execute_prepared(
     Encode cancel waits in-flight; successes still receive apply_xml + write.
     Hosts map cancel vs errors vs ok from the returned stats and cancel_event.
     """
-    converter_manifest.save_manifest(prepared.manifest, prepared.wav_dir)
+    converter_manifest.save_manifest(prepared.manifest, prepared.library_dir)
     plans = prepared.plans
     stats = convert_unique(
         plans[0],

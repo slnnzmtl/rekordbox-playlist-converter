@@ -40,8 +40,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(
                 [
@@ -162,8 +161,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
             manifest = converter_manifest.empty_manifest()
             plan_a, errors_a = rb.prepare(
@@ -251,7 +249,7 @@ class XmlFixtureTests(XmlFixtureBase):
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             cdj_wav, "is_cdj_safe_wav", return_value=False
-        ), patch.object(rb.sys.stdin, "isatty", return_value=True), patch.object(
+        ), patch.object(sys.stdin, "isatty", return_value=True), patch.object(
             rb, "prompt_wizard", return_value=wizard
         ):
             self.assertEqual(rb.main([]), 0)
@@ -311,7 +309,7 @@ class XmlFixtureTests(XmlFixtureBase):
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             cdj_wav, "is_cdj_safe_wav", return_value=False
-        ), patch.object(rb.sys.stdin, "isatty", return_value=True), patch.object(
+        ), patch.object(sys.stdin, "isatty", return_value=True), patch.object(
             rb, "prompt_wizard", return_value=wizard
         ), patch.object(xml_output, "atomic_write_xml", side_effect=spy_write):
             self.assertEqual(rb.main([]), 0)
@@ -565,8 +563,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-            rb, "is_cdj_safe_wav", return_value=False
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ), patch("sys.stdout", io.StringIO()):
             rc = rb.main(
                 [
@@ -649,7 +646,7 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(flac_items[0].codec, "pcm_s24le")
         self.assertEqual(flac_items[0].bit_depth, 24)
         self.assertEqual(flac_items[0].sample_rate, 44100)
-        self.assertFalse(flac_items[0].copy_wav)
+        self.assertFalse(flac_items[0].passthrough)
         self.assertEqual(plan.max_bit_depth, 24)
         self.assertEqual(plan.max_sample_rate, 48000)
 

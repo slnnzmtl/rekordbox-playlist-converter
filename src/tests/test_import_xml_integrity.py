@@ -14,6 +14,8 @@ if str(_SRC) not in sys.path:
 
 import ffmpeg_tools
 import rb_playlist_to_wav as rb
+from rekordbox_xml import skeleton_from
+from cli_error import CancelledError, CliError
 import convert.plan
 import xml_output
 
@@ -114,7 +116,7 @@ class ValidateImportXmlUnitTests(unittest.TestCase):
         ET.SubElement(
             source, "PRODUCT", {"Name": "rekordbox", "Version": "7.0.4", "Company": "X"}
         )
-        out = rb.skeleton_from(source)
+        out = skeleton_from(source)
         self.assertEqual(out.get("Version"), "1.0.0")
         product = out.find("PRODUCT")
         assert product is not None
@@ -124,7 +126,7 @@ class ValidateImportXmlUnitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad.xml"
             root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
-            with self.assertRaises(rb.CliError) as ctx:
+            with self.assertRaises(CliError) as ctx:
                 xml_output.write_import_xml(root, path)
             self.assertIn("integrity", str(ctx.exception).lower())
             self.assertFalse(path.exists())
@@ -302,7 +304,7 @@ class OutputFormatSourceOfTruthTests(unittest.TestCase):
             dest_location=rb.encode_location(dest),
             dest_name=dest.name,
             codec="pcm_s24be",
-            copy_wav=False,
+            passthrough=False,
             noop=False,
             output_format="aiff",
         )
@@ -319,7 +321,7 @@ class OutputFormatSourceOfTruthTests(unittest.TestCase):
             dest_location=rb.encode_location(dest),
             dest_name=dest.name,
             codec="pcm_s24be",
-            copy_wav=False,
+            passthrough=False,
             noop=False,
             output_format="AIFF",
         )

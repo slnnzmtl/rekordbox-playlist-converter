@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import urllib.request
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 GITHUB_OWNER = "slnnzmtl"
@@ -23,23 +24,41 @@ class ReleaseInfo:
     release_notes: str = ""
 
 
+class UpdateCheckKind(str, Enum):
+    UPDATE_AVAILABLE = "update_available"
+    UP_TO_DATE = "up_to_date"
+    ERROR = "error"
+
+
 @dataclass(frozen=True)
 class UpdateCheckResult:
-    kind: str
+    kind: UpdateCheckKind
     release: ReleaseInfo | None = None
     message: str = ""
 
+    @classmethod
+    def update_available(cls, release: ReleaseInfo) -> UpdateCheckResult:
+        return cls(kind=UpdateCheckKind.UPDATE_AVAILABLE, release=release)
+
+    @classmethod
+    def up_to_date(cls) -> UpdateCheckResult:
+        return cls(kind=UpdateCheckKind.UP_TO_DATE)
+
+    @classmethod
+    def error(cls, message: str) -> UpdateCheckResult:
+        return cls(kind=UpdateCheckKind.ERROR, message=message)
+
     @property
     def is_update_available(self) -> bool:
-        return self.kind == "update_available"
+        return self.kind == UpdateCheckKind.UPDATE_AVAILABLE
 
     @property
     def is_up_to_date(self) -> bool:
-        return self.kind == "up_to_date"
+        return self.kind == UpdateCheckKind.UP_TO_DATE
 
     @property
     def is_error(self) -> bool:
-        return self.kind == "error"
+        return self.kind == UpdateCheckKind.ERROR
 
 
 def _first_paragraph(body: str) -> str:
@@ -103,7 +122,7 @@ def check_for_update(current_version: str, timeout: float = 10.0) -> UpdateCheck
     try:
         release = fetch_latest_release(timeout=timeout)
     except Exception as exc:  # noqa: BLE001 — surface as user-facing error on manual check
-        return UpdateCheckResult(kind="error", message=str(exc))
+        return UpdateCheckResult.error(str(exc))
     if is_newer(current_version, release.version):
-        return UpdateCheckResult(kind="update_available", release=release)
-    return UpdateCheckResult(kind="up_to_date")
+        return UpdateCheckResult.update_available(release)
+    return UpdateCheckResult.up_to_date()

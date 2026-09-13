@@ -48,7 +48,6 @@ def startup_patches(
     output: Any = None,
     preferences: dict[str, Any] | None = None,
     check_for_update: Any = None,
-    discover_xml_candidates: list[Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
     """Build the common ConverterApp startup patch dict for :func:`app_patches`."""
@@ -64,9 +63,6 @@ def startup_patches(
             wav_dir if wav_dir is not None else DEFAULT_WAV_DIR,
             output if output is not None else DEFAULT_OUTPUT,
         ),
-        "rb.discover_xml_candidates": discover_xml_candidates
-        if discover_xml_candidates is not None
-        else [],
     }
     result.update(extra)
     return result
@@ -163,11 +159,12 @@ def run_inline_thread(target=None, **_kwargs):
 
 
 def seed_track_selection(app, folder="ROOT", name="Test", key="1"):
+    from gui.types import TrackLeafRef
     """Paint one selected leaf so Convert can proceed without loading a real XML."""
     import tkinter as tk
 
     leaf = app.tracklist_tree.insert("", tk.END, text="seed")
-    app._tracklist_iids[leaf] = (folder, name, key)
+    app._tracklist_iids[leaf] = TrackLeafRef(folder=folder, name=name, key=key)
     app.tracklist_tree.selection_set(leaf)
     return leaf
 
@@ -233,7 +230,7 @@ def mock_convert_plan(*, n_unique: int = 2):
             sample_rate=48000,
             duration_seconds=1.0,
             noop=False,
-            copy_wav=False,
+            passthrough=False,
             output_format="wav",
         )
         for i in range(n_unique)
@@ -241,10 +238,10 @@ def mock_convert_plan(*, n_unique: int = 2):
     return SimpleNamespace(
         warnings=[],
         tracks=list(unique),
-        playlist_dir=Path("/tmp/WAV"),
+        media_dir=Path("/tmp/WAV"),
         unique=unique,
         wav_playlist_name="Test [WAV]",
-        wav_dir=Path("/tmp"),
+        library_dir=Path("/tmp"),
         output_root=object(),
         output=Path("/tmp/out.xml"),
         output_format="wav",
@@ -254,13 +251,31 @@ def mock_convert_plan(*, n_unique: int = 2):
 
 def empty_conversion_preview(*, selected: int = 0):
     """Minimal preview for GUI tests that stub threading.Thread (pool-hostile)."""
-    import rb_playlist_to_wav as rb
+    from convert.models import ConversionPreview
 
-    return rb.ConversionPreview(
+    return ConversionPreview(
         selected=selected,
         resolved=selected,
         unique_outputs=selected,
         duplicates=0,
         missing=0,
         items=[],
+    )
+
+
+def mock_prepared_conversion(*, n_unique: int = 2):
+    """PreparedConversion for GUI tests that stub prepare_batch."""
+    from convert.models import PreparedConversion
+    import converter_manifest
+
+    plan = mock_convert_plan(n_unique=n_unique)
+    preview = empty_conversion_preview(selected=n_unique)
+    return PreparedConversion(
+        plans=[plan],
+        items=list(plan.unique),
+        manifest=converter_manifest.empty_manifest(),
+        preview=preview,
+        library_dir=plan.library_dir,
+        output=plan.output,
+        skipped=[],
     )

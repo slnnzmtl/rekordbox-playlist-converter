@@ -14,6 +14,7 @@ if str(_SRC) not in sys.path:
 if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
+from cli_error import CliError
 from gui_tk import app_patches, mark_output_folder_valid, run_inline_thread, startup_patches, tk_available
 from gui_xml_fixtures import TRACKLIST_XML, write_xml
 
@@ -142,7 +143,6 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        import rb_playlist_to_wav as rb
 
         root = None
         try:
@@ -151,8 +151,8 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 root, app = self._make_app(source)
                 with app_patches(
                     **{
-                        "rb.load_dj_playlists": {
-                            "side_effect": rb.CliError("Invalid XML: broken")
+                        "load_dj_playlists": {
+                            "side_effect": CliError("Invalid XML: broken")
                         }
                     }
                 ):
@@ -209,7 +209,6 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        import rb_playlist_to_wav as rb
 
         root = None
         try:
@@ -227,7 +226,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     [preview.item(g, "text") for g in groups],
                     ["Same (1 tracks)", "Same (1 tracks)"],
                 )
-                with self.assertRaises(rb.CliError) as ctx:
+                with self.assertRaises(CliError) as ctx:
                     app._selected_playlists()
                 self.assertIn("same name", str(ctx.exception))
         except tk.TclError:
@@ -256,12 +255,12 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
                 with app_patches(
                     {
-                        "rb.prepare": None,
+                        "prepare_batch": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                         "messagebox.showerror": None,
                     }
                 ) as mocks:
-                    prepare = mocks["rb.prepare"]
+                    prepare = mocks["prepare_batch"]
                     showerror = mocks["messagebox.showerror"]
                     mark_output_folder_valid(app)
                     app._start_convert()
@@ -341,7 +340,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
                 with app_patches(
                     {
-                        "rb.prepare": {"side_effect": fake_prepare},
+                        "prepare_batch": {"side_effect": fake_prepare},
                         "threading.Thread": {"side_effect": run_inline_thread},
                         "messagebox.showerror": None,
                     }
@@ -350,12 +349,12 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     app._start_convert()
                     root.update()
 
-                self.assertEqual(len(prepare_calls), 2)
-                roots = [kwargs.get("source_root") for _args, kwargs in prepare_calls]
-                self.assertIsNotNone(roots[0])
-                self.assertIs(roots[0], roots[1])
-                names = [args[1] for args, _kwargs in prepare_calls]
-                self.assertEqual(sorted(names), ["Dark forest", "Morning"])
+                self.assertEqual(len(prepare_calls), 1)
+                args, kwargs = prepare_calls[0]
+                self.assertIsNotNone(kwargs.get("source_root"))
+                playlist_refs = args[1]
+                names = sorted(name for _folder, name in playlist_refs)
+                self.assertEqual(names, ["Dark forest", "Morning"])
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -395,7 +394,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
                 with app_patches(
                     {
-                        "rb.prepare": {"side_effect": fake_prepare},
+                        "prepare_batch": {"side_effect": fake_prepare},
                         "threading.Thread": {"side_effect": run_inline_thread},
                         "messagebox.showerror": None,
                     }
@@ -406,19 +405,22 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
                 self.assertEqual(len(prepare_calls), 1)
                 args, kwargs = prepare_calls[0]
-                self.assertEqual(args[1], "Dark forest")
-                self.assertEqual(set(kwargs.get("track_keys") or ()), {"1", "2"})
+                self.assertEqual(args[1], [("", "Dark forest")])
+                self.assertEqual(
+                    set(kwargs.get("track_keys_by_playlist", {}).get(("", "Dark forest"), [])),
+                    {"1", "2"},
+                )
 
                 preview.selection_remove(*preview.selection())
                 preview.event_generate("<<TreeviewSelect>>")
                 prepare_calls.clear()
                 with app_patches(
                     {
-                        "rb.prepare": {"side_effect": fake_prepare},
+                        "prepare_batch": {"side_effect": fake_prepare},
                         "messagebox.showerror": None,
                     }
                 ) as mocks:
-                    prepare = mocks["rb.prepare"]
+                    prepare = mocks["prepare_batch"]
                     showerror = mocks["messagebox.showerror"]
                     mark_output_folder_valid(app)
                     app._start_convert()

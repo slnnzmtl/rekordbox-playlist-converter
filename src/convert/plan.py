@@ -196,7 +196,7 @@ def build_plan(
                 dest_location=dest_location,
                 dest_name=dest_name,
                 codec=None,
-                copy_wav=False,
+                passthrough=False,
                 noop=False,
                 output_format=output_format,
             )
@@ -263,7 +263,7 @@ def build_plan(
             _record_error(str(exc))
             _finish_progress(item)
             return
-        item.copy_wav = is_copy
+        item.passthrough = is_copy
         item.codec = None if is_copy else codec
         item.bit_depth = bits
         item.sample_rate = rate
@@ -308,8 +308,8 @@ def build_plan(
     plan = Plan(
         playlist_name=playlist_name,
         wav_playlist_name=wav_playlist_name,
-        wav_dir=wav_dir_abs,
-        playlist_dir=format_media_dir(wav_dir_abs, output_format),
+        library_dir=wav_dir_abs,
+        media_dir=format_media_dir(wav_dir_abs, output_format),
         output=output,
         tracks=planned,
         unique=unique,

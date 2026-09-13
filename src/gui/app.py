@@ -17,6 +17,7 @@ from gui.convert_flow import ConvertFlowMixin
 from gui.layout import SearchPlaceholder, active_display_bounds, fit_window_geometry
 from gui.playlists import PlaylistsMixin
 from gui.shell import ShellMixin
+from gui.types import PlaylistEntry, TrackLeafRef
 from version import __version__
 
 
@@ -38,7 +39,7 @@ class ConverterApp(ConvertFlowMixin, PlaylistsMixin, ShellMixin):
         self.logo_image = self._apply_window_icon()
 
         self.xml_var = tk.StringVar()
-        self.wav_dir_var = tk.StringVar()
+        self.library_dir_var = tk.StringVar()
         self.output_var = tk.StringVar()
         # Start with home fallback so the window can appear before Documents TCC.
         saved_prefs = runtime.load_preferences()
@@ -48,7 +49,7 @@ class ConverterApp(ConvertFlowMixin, PlaylistsMixin, ShellMixin):
             default_import_xml=constants.FALLBACK_OUTPUT,
             documents_accessible=False,
         )
-        self.wav_dir_var.set(str(startup_wav))
+        self.library_dir_var.set(str(startup_wav))
         self._sync_import_xml_display()
         self.format_var = tk.StringVar(
             value=coerce_output_format(saved_prefs.get("output_format", "wav"))
@@ -70,7 +71,7 @@ class ConverterApp(ConvertFlowMixin, PlaylistsMixin, ShellMixin):
         self._busy = False
         self._cancel_event = runtime.threading.Event()
         self._prepared_conversion: PreparedConversion | None = None
-        self._write_prepared: PreparedConversion | None = None
+        self._confirm_prepared: PreparedConversion | None = None
         self._preview_dialog: tk.Toplevel | None = None
         self._usage_window: tk.Toplevel | None = None
         self._update_modal_shown = False
@@ -82,12 +83,10 @@ class ConverterApp(ConvertFlowMixin, PlaylistsMixin, ShellMixin):
         self._documents_accessible = False
         self._source_root = None
         self._collection_indexes_cache: tuple[dict, dict] | None = None
-        # (kind, folder, name, track_count, node) for every node in the XML walk
-        self._playlist_entries: list[tuple[str, str, str, int, object]] = []
+        self._playlist_entries: list[PlaylistEntry] = []
         # iid -> (kind, folder, name) for rows currently in the tree
         self._playlist_iids: dict[str, tuple[str, str, str]] = {}
-        # leaf iid -> (folder, name, key); group iids are absent
-        self._tracklist_iids: dict[str, tuple[str, str, str]] = {}
+        self._tracklist_iids: dict[str, TrackLeafRef] = {}
         self._tracklist_paths: dict[str, Path] = {}
         # (folder, name) -> open state for tracklist playlist groups
         self._tracklist_group_open: dict[tuple[str, str], bool] = {}
@@ -123,7 +122,7 @@ class ConverterApp(ConvertFlowMixin, PlaylistsMixin, ShellMixin):
                 "_track_search_after_id", self._refresh_tracklist_preview
             ),
         )
-        self.wav_dir_var.trace_add(
+        self.library_dir_var.trace_add(
             "write",
             lambda *_: self._on_wav_dir_changed(),
         )

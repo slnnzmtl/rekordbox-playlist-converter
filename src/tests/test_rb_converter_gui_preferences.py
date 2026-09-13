@@ -161,7 +161,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
             self.assertFalse(hasattr(app, "_browse_output"))
             self.assertEqual(str(app.import_xml_entry.cget("state")), "disabled")
             self.assertEqual(str(app.import_xml_entry.cget("cursor")), "hand2")
-            app.wav_dir_var.set("/tmp/lib-a")
+            app.library_dir_var.set("/tmp/lib-a")
             expected = str(Path("/tmp/lib-a") / "rekordbox-import.xml")
             self.assertEqual(app.output_var.get(), expected)
             app._copy_import_xml_path()
@@ -211,7 +211,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
-                app.wav_dir_var.set("/tmp/lib-a")
+                app.library_dir_var.set("/tmp/lib-a")
                 self.assertEqual(
                     app._resolved_output_paths()[1],
                     Path("/tmp/lib-a") / "rekordbox-import.xml",
@@ -220,7 +220,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                     app.output_var.get(),
                     str(Path("/tmp/lib-a") / "rekordbox-import.xml"),
                 )
-                app.wav_dir_var.set("/tmp/lib-b")
+                app.library_dir_var.set("/tmp/lib-b")
                 self.assertEqual(
                     app._resolved_output_paths()[1],
                     Path("/tmp/lib-b") / "rekordbox-import.xml",
@@ -262,7 +262,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
                 app.xml_var.set("/tmp/test.xml")
-                app.wav_dir_var.set("/tmp/typed-wav")
+                app.library_dir_var.set("/tmp/typed-wav")
                 app.format_var.set("aiff")
                 app.bit_depth_var.set("24")
                 app.sample_rate_var.set("48000")
@@ -304,14 +304,14 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                     ),
                     {
                         "save_preferences": None,
-                        "rb.prepare": {"return_value": (None, ["stop"])},
+                        "prepare_batch": {"return_value": (None, ["stop"])},
                         "threading.Thread": None,
                     },
                 )
             ) as mocks, patch.object(
                 ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
             ):
-                prepare = mocks["rb.prepare"]
+                prepare = mocks["prepare_batch"]
                 thread_cls = mocks["threading.Thread"]
 
                 def capture_start():
@@ -368,7 +368,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
                 app._browse_wav_dir()
-                self.assertEqual(app.wav_dir_var.get(), "/tmp/chosen-wav")
+                self.assertEqual(app.library_dir_var.get(), "/tmp/chosen-wav")
                 self.assertIn("Couldn’t save preferences", app.status_var.get())
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -404,7 +404,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
                 app.xml_var.set("/tmp/test.xml")
-                app.wav_dir_var.set("/tmp/typed-wav")
+                app.library_dir_var.set("/tmp/typed-wav")
                 mark_output_folder_valid(app)
                 seed_track_selection(app)
                 app._start_convert()

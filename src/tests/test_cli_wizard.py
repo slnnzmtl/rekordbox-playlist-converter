@@ -15,13 +15,15 @@ for _p in (_SRC, _TESTS):
 
 import ffmpeg_tools
 import rb_playlist_to_wav as rb
+from cli_error import CancelledError, CliError
+import convert.format_policy
 import convert.plan
 from convert_fixtures import write_flac
 
 
 class WizardHelperTests(unittest.TestCase):
     def test_main_requires_flags_when_non_tty(self) -> None:
-        with patch.object(rb.sys.stdin, "isatty", return_value=False):
+        with patch.object(sys.stdin, "isatty", return_value=False):
             rc = rb.main([])
         self.assertEqual(rc, 2)
 
@@ -196,7 +198,7 @@ class PlanQualityFieldsTests(unittest.TestCase):
             )
 
             def boom(*_a: object, **_k: object) -> tuple[str, bool, int, int]:
-                raise rb.CancelledError("conversion cancelled")
+                raise CancelledError("conversion cancelled")
 
             with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
                 ffmpeg_tools,
@@ -213,7 +215,7 @@ class PlanQualityFieldsTests(unittest.TestCase):
                     ]
                 },
             ), patch.object(convert.plan, "classify_source", side_effect=boom):
-                with self.assertRaises(rb.CancelledError):
+                with self.assertRaises(CancelledError):
                     rb.prepare(
                         xml_path,
                         "P",

@@ -42,7 +42,7 @@ class GuiLibraryValidationTests(unittest.TestCase):
                     root = tk.Tk()
                     root.withdraw()
                     app = ConverterApp(root, documents_accessible=False)
-                    app.wav_dir_var.set(str(legacy))
+                    app.library_dir_var.set(str(legacy))
                     after_id = app._wav_dir_validate_after_id
                     if after_id is not None:
                         app.root.after_cancel(after_id)
@@ -64,7 +64,7 @@ class GuiLibraryValidationTests(unittest.TestCase):
 
                     empty = Path(tmp) / "empty-lib"
                     empty.mkdir()
-                    app.wav_dir_var.set(str(empty))
+                    app.library_dir_var.set(str(empty))
                     after_id = app._wav_dir_validate_after_id
                     if after_id is not None:
                         app.root.after_cancel(after_id)
@@ -88,7 +88,7 @@ class GuiLibraryValidationTests(unittest.TestCase):
 
     def test_done_dialog_reveal_actions_target_library_and_xml(self) -> None:
         """Given a successful convert dialog: When shown: Then Reveal audio folder
-        opens the WAV or AIFF playlist_dir, and Reveal import XML opens the
+        opens the WAV or AIFF media_dir, and Reveal import XML opens the
         generated XML."""
         if not tk_available():
             self.skipTest("_tkinter not available")
