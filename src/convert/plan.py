@@ -46,18 +46,23 @@ CONVERT_WORKERS_MAX = 4
 
 
 def default_convert_workers() -> int:
-    """Worker count from cpu_count, at least 1, at most 4."""
+    """Worker count from cpu_count, at least CONVERT_WORKERS_MIN, at most 4."""
     n = os.cpu_count() or 4
     return max(CONVERT_WORKERS_MIN, min(n, CONVERT_WORKERS_MAX))
 
 
 def convert_worker_count(n_items: int, *, workers: int | None = None) -> int:
-    """Clamp requested or default workers to 1..4 and to the number of items."""
+    """Clamp workers to 1..CONVERT_WORKERS_MAX and to the number of items.
+
+    An omitted ``workers`` uses ``default_convert_workers()`` (floor
+    ``CONVERT_WORKERS_MIN``). An explicit count is not raised to that floor,
+    so tests and single-track runs can pass ``workers=1``.
+    """
     base = default_convert_workers() if workers is None else int(workers)
-    capped = max(CONVERT_WORKERS_MIN, min(base, CONVERT_WORKERS_MAX))
+    capped = max(1, min(base, CONVERT_WORKERS_MAX))
     if n_items <= 0:
-        return CONVERT_WORKERS_MIN
-    return max(CONVERT_WORKERS_MIN, min(capped, n_items))
+        return 1
+    return max(1, min(capped, n_items))
 
 
 def cached_cover_jpeg(

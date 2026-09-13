@@ -45,7 +45,10 @@ class BindWraplengthTests(unittest.TestCase):
         import tkinter as tk
         from tkinter import ttk
 
-        root = tk.Tk()
+        try:
+            root = tk.Tk()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
         try:
             root.geometry("600x200")
             container = ttk.Frame(root)
