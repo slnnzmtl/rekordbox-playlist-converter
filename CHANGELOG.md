@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Internal refactor (pass 2): `ConverterApp` lives in `gui/app.py` with
+  `gui/shell.py` / `gui/playlists.py` / `gui/convert_flow.py` mixins; patched
+  names are looked up on `gui.runtime` (`gui_tk.GUI_MODULE`). Helpers/constants
+  live in `gui/helpers.py` and `gui/constants.py`. `rb_converter_gui.py` remains
+  the TCC / PyInstaller entry (~60 lines) and re-exports public names for tests.
 - Internal refactor (pass 1): oversized convert/CLI/GUI tests split into flat
   `test_*.py` modules; shared fixtures in `convert_fixtures.py` and GUI patch stacks
   in `gui_tk.app_patches` (`GUI_MODULE` constant). Leaf GUI builders live in

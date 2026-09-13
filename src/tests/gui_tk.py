@@ -6,7 +6,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 from unittest.mock import Mock, patch
 
-GUI_MODULE = "rb_converter_gui"  # pass 2 changes only this
+GUI_MODULE = "gui.runtime"  # patched namespace for ConverterApp mixins
 
 
 def _patch_target(suffix: str) -> str:

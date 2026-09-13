@@ -15,6 +15,7 @@ if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
 from gui_tk import app_patches, mark_output_folder_valid, startup_patches, tk_available
+from gui_xml_fixtures import TRACKLIST_XML, write_xml
 
 
 def _flush_debounced(app, attr: str, callback) -> None:
@@ -75,42 +76,6 @@ DUP_NAME_XML = """\
 </DJ_PLAYLISTS>
 """
 
-TRACKLIST_XML = """\
-<?xml version="1.0" encoding="UTF-8"?>
-<DJ_PLAYLISTS Version="1.0.0">
-  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
-  <COLLECTION Entries="3">
-    <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
-           Location="file://localhost/Users/me/music/Bestial.flac"
-           Kind="FLAC File" SampleRate="44100"/>
-    <TRACK TrackID="2" Name="Revelation" Artist="Shogan"
-           Location="file://localhost/Users/me/music/Revelation.aiff"
-           Kind="AIFF File" SampleRate="48000"/>
-    <TRACK TrackID="3" Name="NoLoc" Artist="Ghost" Kind="WAV File"/>
-  </COLLECTION>
-  <PLAYLISTS>
-    <NODE Type="0" Name="ROOT" Count="2">
-      <NODE Name="Dark forest" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="1"/>
-        <TRACK Key="2"/>
-        <TRACK Key="999"/>
-      </NODE>
-      <NODE Name="Morning" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="1"/>
-        <TRACK Key="3"/>
-      </NODE>
-    </NODE>
-  </PLAYLISTS>
-</DJ_PLAYLISTS>
-"""
-
-
-def _write_xml(directory: Path, text: str) -> Path:
-    path = directory / "rekordbox.xml"
-    path.write_text(text, encoding="utf-8")
-    return path
-
-
 class GuiPlaylistExplorerTests(unittest.TestCase):
     def _make_app(self, source: Path):
         import tkinter as tk
@@ -133,7 +98,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), NESTED_XML)
+                source = write_xml(Path(tmp), NESTED_XML)
                 root, app = self._make_app(source)
 
                 tree = app.playlist_tree
@@ -162,7 +127,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), NESTED_XML)
+                source = write_xml(Path(tmp), NESTED_XML)
                 root, app = self._make_app(source)
                 missing = Path(tmp) / "gone.xml"
                 app.xml_var.set(str(missing))
@@ -185,7 +150,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), NESTED_XML)
+                source = write_xml(Path(tmp), NESTED_XML)
                 root, app = self._make_app(source)
                 with app_patches(
                     **{
@@ -214,7 +179,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), NESTED_XML)
+                source = write_xml(Path(tmp), NESTED_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 folder_iid = tree.get_children("")[1]
@@ -252,7 +217,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), DUP_NAME_XML)
+                source = write_xml(Path(tmp), DUP_NAME_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 one = tree.get_children("")[0]
@@ -283,7 +248,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), DUP_NAME_XML)
+                source = write_xml(Path(tmp), DUP_NAME_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 one = tree.get_children("")[0]
@@ -336,7 +301,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), NESTED_XML)
+                source = write_xml(Path(tmp), NESTED_XML)
                 root, app = self._make_app(source)
                 app.search_var.set("nested")
                 _flush_playlist_search_debounce(app)
@@ -366,7 +331,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                source = write_xml(Path(tmp), TRACKLIST_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 dark, morning = tree.get_children("")
@@ -437,7 +402,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                source = write_xml(Path(tmp), TRACKLIST_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 dark, morning = tree.get_children("")

@@ -1,7 +1,7 @@
 """Dialog widget builders for Simple Rekordbox Converter.
 
 Callers keep thin ConverterApp._show_* methods so patch.object seams stay valid.
-Pass open_in_finder / other namespace-bound callables in from rb_converter_gui.
+Pass open_in_finder / other namespace-bound callables from gui.runtime (via app mixins).
 """
 
 from __future__ import annotations

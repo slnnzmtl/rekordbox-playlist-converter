@@ -17,6 +17,7 @@ if str(_TESTS) not in sys.path:
 from test_preview_bit_depth import _flac_with_bit_depth
 
 from gui_tk import app_patches, mark_output_folder_valid, startup_patches, tk_available
+from gui_xml_fixtures import TRACKLIST_XML, write_xml
 
 
 def _flush_debounced(app, attr: str, callback) -> None:
@@ -30,42 +31,6 @@ def _flush_debounced(app, attr: str, callback) -> None:
 
 def _flush_track_search_debounce(app) -> None:
     _flush_debounced(app, "_track_search_after_id", app._refresh_tracklist_preview)
-
-
-TRACKLIST_XML = """\
-<?xml version="1.0" encoding="UTF-8"?>
-<DJ_PLAYLISTS Version="1.0.0">
-  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
-  <COLLECTION Entries="3">
-    <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
-           Location="file://localhost/Users/me/music/Bestial.flac"
-           Kind="FLAC File" SampleRate="44100"/>
-    <TRACK TrackID="2" Name="Revelation" Artist="Shogan"
-           Location="file://localhost/Users/me/music/Revelation.aiff"
-           Kind="AIFF File" SampleRate="48000"/>
-    <TRACK TrackID="3" Name="NoLoc" Artist="Ghost" Kind="WAV File"/>
-  </COLLECTION>
-  <PLAYLISTS>
-    <NODE Type="0" Name="ROOT" Count="2">
-      <NODE Name="Dark forest" Type="1" KeyType="0" Entries="3">
-        <TRACK Key="1"/>
-        <TRACK Key="2"/>
-        <TRACK Key="999"/>
-      </NODE>
-      <NODE Name="Morning" Type="1" KeyType="0" Entries="2">
-        <TRACK Key="1"/>
-        <TRACK Key="3"/>
-      </NODE>
-    </NODE>
-  </PLAYLISTS>
-</DJ_PLAYLISTS>
-"""
-
-
-def _write_xml(directory: Path, text: str) -> Path:
-    path = directory / "rekordbox.xml"
-    path.write_text(text, encoding="utf-8")
-    return path
 
 
 class GuiTracklistTests(unittest.TestCase):
@@ -90,7 +55,7 @@ class GuiTracklistTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                source = write_xml(Path(tmp), TRACKLIST_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 dark, morning = tree.get_children("")
@@ -166,7 +131,7 @@ class GuiTracklistTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                source = write_xml(Path(tmp), TRACKLIST_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 dark, morning = tree.get_children("")
@@ -221,7 +186,7 @@ class GuiTracklistTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                source = write_xml(Path(tmp), TRACKLIST_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 dark, morning = tree.get_children("")
@@ -281,7 +246,7 @@ class GuiTracklistTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), TRACKLIST_XML)
+                source = write_xml(Path(tmp), TRACKLIST_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 dark, morning = tree.get_children("")
@@ -367,7 +332,7 @@ class GuiTracklistTests(unittest.TestCase):
   </PLAYLISTS>
 </DJ_PLAYLISTS>
 """
-                source = _write_xml(base, xml)
+                source = write_xml(base, xml)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 crate = tree.get_children("")[0]
@@ -456,7 +421,7 @@ class GuiTracklistTests(unittest.TestCase):
   </PLAYLISTS>
 </DJ_PLAYLISTS>
 """
-                source = _write_xml(base, xml)
+                source = write_xml(base, xml)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 with app_patches(
@@ -521,7 +486,7 @@ class GuiTracklistTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), MIXED_XML)
+                source = write_xml(Path(tmp), MIXED_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 mixed = tree.get_children("")[0]
@@ -626,7 +591,7 @@ class GuiTracklistTests(unittest.TestCase):
         root = None
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                source = _write_xml(Path(tmp), SORT_XML)
+                source = write_xml(Path(tmp), SORT_XML)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 crate, solo = tree.get_children("")
@@ -752,7 +717,7 @@ class GuiTracklistTests(unittest.TestCase):
   </PLAYLISTS>
 </DJ_PLAYLISTS>
 """
-                source = _write_xml(base, xml)
+                source = write_xml(base, xml)
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 crate = tree.get_children("")[0]
