@@ -1024,11 +1024,11 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
 
 
 class ConversionPreviewDialogTests(unittest.TestCase):
-    def test_preview_modal_table_grab_and_disabled_controls(self) -> None:
+    def test_preview_modal_table_and_disabled_controls(self) -> None:
         """Given prepare finishes: When the preview opens: Then the modal shows
-        a unique-output table (file / action / quality / size), grabs focus,
-        disables editing controls, hides Convert behind the dialog, and Back
-        (same path as Escape/close) discards the prepared payload."""
+        a unique-output table (file / action / quality / size), does not take
+        a Tk grab, disables editing controls, hides Convert behind the dialog,
+        and Back (same path as Escape/close) discards the prepared payload."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
@@ -1168,7 +1168,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
 
                 dlg = find_toplevel(root, "Conversion preview")
                 self.assertIsNotNone(dlg)
-                self.assertEqual(dlg.grab_current(), dlg)
+                self.assertIn(dlg.grab_current(), (None, ""))
 
                 table = find_treeview(dlg)
                 self.assertIsNotNone(table)
@@ -1242,6 +1242,25 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                 self.assertEqual(str(app.cancel_btn.cget("state")), "normal")
                 self.assertTrue(dlg.bind("<Escape>"))
 
+                def find_convert_btn(widget):
+                    try:
+                        if (
+                            isinstance(widget, ttk.Button)
+                            and str(widget.cget("text")) == "Convert"
+                        ):
+                            return widget
+                    except tk.TclError:
+                        pass
+                    for child in widget.winfo_children():
+                        found = find_convert_btn(child)
+                        if found is not None:
+                            return found
+                    return None
+
+                preview_convert = find_convert_btn(dlg)
+                self.assertIsNotNone(preview_convert)
+                self.assertEqual(str(preview_convert.cget("state")), "normal")
+
                 def click_back(widget) -> bool:
                     try:
                         if (
@@ -1262,6 +1281,168 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                 self.assertIsNone(app._prepared_conversion)
                 self.assertFalse(app._busy)
                 self.assertIsNone(find_toplevel(root, "Conversion preview"))
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_preview_disables_convert_when_output_space_insufficient(self) -> None:
+        """Given write size above free space: When the preview opens: Then an
+        issue message is shown and Convert is disabled."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import tkinter.ttk as ttk
+        from contextlib import ExitStack
+        from types import SimpleNamespace
+        from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
+
+        plan = _mock_convert_plan(n_unique=1)
+        preview = rb.ConversionPreview(
+            selected=1,
+            resolved=1,
+            unique_outputs=1,
+            duplicates=0,
+            missing=0,
+            items=[
+                rb.ConversionPreviewItem(
+                    relative_dest="WAV/A - One.wav",
+                    action="transcode",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=50_000_000,
+                    size_display="≈ 47.7 MB",
+                    source_display="one.flac",
+                ),
+            ],
+        )
+
+        def run_inline(target=None, **_kwargs):
+            class _T:
+                def start(self_inner):
+                    target()
+
+            return _T()
+
+        def find_toplevel(parent, title: str):
+            for child in parent.winfo_children():
+                if isinstance(child, tk.Toplevel):
+                    try:
+                        if child.title() == title:
+                            return child
+                    except tk.TclError:
+                        continue
+            return None
+
+        def find_label_with_text(widget, needle: str):
+            try:
+                if isinstance(widget, ttk.Label) and needle in str(widget.cget("text")):
+                    return widget
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                found = find_label_with_text(child, needle)
+                if found is not None:
+                    return found
+            return None
+
+        def find_convert_btn(widget):
+            try:
+                if (
+                    isinstance(widget, ttk.Button)
+                    and str(widget.cget("text")) == "Convert"
+                ):
+                    return widget
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                found = find_convert_btn(child)
+                if found is not None:
+                    return found
+            return None
+
+        root = None
+        try:
+            with ExitStack() as stack:
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.check_for_update",
+                        return_value=UpdateCheckResult(kind="up_to_date"),
+                    )
+                )
+                stack.enter_context(
+                    patch("rb_converter_gui.load_preferences", return_value={})
+                )
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.resolve_startup_paths",
+                        return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.rb.discover_xml_candidates",
+                        return_value=[],
+                    )
+                )
+                stack.enter_context(patch("rb_converter_gui.save_preferences"))
+                stack.enter_context(
+                    patch.object(
+                        ConverterApp,
+                        "_selected_playlists",
+                        return_value=[("ROOT", "Test")],
+                    )
+                )
+                stack.enter_context(
+                    patch("rb_converter_gui.rb.prepare", return_value=(plan, []))
+                )
+                stack.enter_context(patch("rb_converter_gui.rb.share_output_root"))
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.rb.collect_batch_unique",
+                        return_value=plan.unique,
+                    )
+                )
+                stack.enter_context(patch("rb_converter_gui.rb.share_cover_caches"))
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.rb.build_conversion_preview",
+                        return_value=preview,
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        "convert_plan.shutil.disk_usage",
+                        return_value=SimpleNamespace(free=1_000_000),
+                    )
+                )
+                stack.enter_context(
+                    patch(
+                        "rb_converter_gui.threading.Thread",
+                        side_effect=run_inline,
+                    )
+                )
+
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app.xml_var.set("/tmp/test.xml")
+                _seed_track_selection(app)
+                _mark_output_folder_valid(app)
+                app._start_convert()
+                _pump_ui(root)
+
+                dlg = find_toplevel(root, "Conversion preview")
+                self.assertIsNotNone(dlg)
+                issue = find_label_with_text(
+                    dlg, "Not enough free space in the output folder"
+                )
+                self.assertIsNotNone(issue)
+                convert_btn = find_convert_btn(dlg)
+                self.assertIsNotNone(convert_btn)
+                self.assertEqual(str(convert_btn.cget("state")), "disabled")
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

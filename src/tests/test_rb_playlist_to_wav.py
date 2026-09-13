@@ -2945,6 +2945,92 @@ class ConversionPreviewTests(unittest.TestCase):
                 self.assertTrue(it.size_display.startswith("≈ "))
                 self.assertTrue(it.size_display.endswith(" MB"))
 
+    def test_preview_write_bytes_sums_copy_and_transcode_ignores_reuse_and_unknown(
+        self,
+    ) -> None:
+        """Given preview rows: When summing write bytes: Then only copy/transcode
+        with known sizes count."""
+        preview = rb.ConversionPreview(
+            selected=4,
+            resolved=4,
+            unique_outputs=4,
+            duplicates=0,
+            missing=0,
+            items=[
+                rb.ConversionPreviewItem(
+                    relative_dest="a.wav",
+                    action="reuse",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=9_000_000,
+                    size_display="8.6 MB",
+                ),
+                rb.ConversionPreviewItem(
+                    relative_dest="b.wav",
+                    action="copy",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=1000,
+                    size_display="≈ 0.0 MB",
+                ),
+                rb.ConversionPreviewItem(
+                    relative_dest="c.wav",
+                    action="transcode",
+                    bit_depth=24,
+                    sample_rate=48000,
+                    size_bytes=2500,
+                    size_display="≈ 0.0 MB",
+                ),
+                rb.ConversionPreviewItem(
+                    relative_dest="d.wav",
+                    action="transcode",
+                    bit_depth=24,
+                    sample_rate=48000,
+                    size_bytes=None,
+                    size_display="—",
+                ),
+            ],
+        )
+        self.assertEqual(rb.preview_write_bytes(preview), 3500)
+
+    def test_insufficient_output_space_message_when_free_below_required(
+        self,
+    ) -> None:
+        """Given required bytes above free space: When checking: Then a clear
+        message; enough free or probe failure: Then None."""
+        from types import SimpleNamespace
+
+        path = Path("/tmp")
+        msg = rb.insufficient_output_space_message(
+            path,
+            5_000_000,
+            disk_usage=lambda _p: SimpleNamespace(free=1_000_000),
+        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertIn("Not enough free space in the output folder", msg)
+        self.assertIn("needed", msg)
+        self.assertIn("available", msg)
+        self.assertIn("MB", msg)
+
+        self.assertIsNone(
+            rb.insufficient_output_space_message(
+                path,
+                5_000_000,
+                disk_usage=lambda _p: SimpleNamespace(free=10_000_000),
+            )
+        )
+        self.assertIsNone(
+            rb.insufficient_output_space_message(path, 0, disk_usage=lambda _p: None)
+        )
+        self.assertIsNone(
+            rb.insufficient_output_space_message(
+                path,
+                5_000_000,
+                disk_usage=lambda _p: (_ for _ in ()).throw(OSError("boom")),
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

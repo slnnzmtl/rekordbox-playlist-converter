@@ -355,6 +355,62 @@ def build_conversion_preview(
     )
 
 
+def preview_write_bytes(preview: ConversionPreview) -> int:
+    """Bytes that copy/transcode will write; reuse needs no extra space."""
+    total = 0
+    for item in preview.items:
+        if item.action == "reuse":
+            continue
+        if item.size_bytes is None:
+            continue
+        total += item.size_bytes
+    return total
+
+
+def _disk_usage_path(path: Path) -> Path:
+    """Nearest existing ancestor suitable for shutil.disk_usage."""
+    candidate = path.expanduser()
+    try:
+        candidate = candidate.resolve(strict=False)
+    except OSError:
+        pass
+    while True:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            pass
+        parent = candidate.parent
+        if parent == candidate:
+            return candidate
+        candidate = parent
+
+
+def insufficient_output_space_message(
+    path: Path,
+    required_bytes: int,
+    *,
+    disk_usage: Callable[[str | Path], object] | None = None,
+) -> str | None:
+    """Return an issue message when free space on path is below required_bytes."""
+    if required_bytes <= 0:
+        return None
+    probe = disk_usage if disk_usage is not None else shutil.disk_usage
+    try:
+        usage = probe(_disk_usage_path(path))
+        free = int(getattr(usage, "free"))
+    except (OSError, TypeError, ValueError, AttributeError):
+        return None
+    if free >= required_bytes:
+        return None
+    needed = _format_size_mb(required_bytes, approximate=True)
+    available = _format_size_mb(free)
+    return (
+        "Not enough free space in the output folder. "
+        f"About {needed.removeprefix('≈ ')} needed, {available} available."
+    )
+
+
 def convert_unique(
     plan: Plan,
     force: bool,

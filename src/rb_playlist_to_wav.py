@@ -115,6 +115,8 @@ collect_batch_unique = convert_plan.collect_batch_unique
 share_cover_caches = convert_plan.share_cover_caches
 planned_action = convert_plan.planned_action
 build_conversion_preview = convert_plan.build_conversion_preview
+preview_write_bytes = convert_plan.preview_write_bytes
+insufficient_output_space_message = convert_plan.insufficient_output_space_message
 convert_unique = convert_plan.convert_unique
 
 # Re-exports from xml_output for callers.
@@ -399,15 +401,24 @@ def run_convert_batch(
         print_conversion_preview(plans, preview)
         return 0
 
+    items = convert_plan.collect_batch_unique(plans)
+    convert_plan.share_cover_caches(plans)
+    preview = convert_plan.build_conversion_preview(plans, items, force=force)
+    space_issue = convert_plan.insufficient_output_space_message(
+        wav_dir,
+        convert_plan.preview_write_bytes(preview),
+    )
+    if space_issue is not None:
+        print(space_issue, file=sys.stderr)
+        return 1
+
     try:
         converter_manifest.save_manifest(manifest, wav_dir)
     except OSError as exc:
         print(f"cannot write converter manifest: {exc}", file=sys.stderr)
         return 1
 
-    items = convert_plan.collect_batch_unique(plans)
     host = plans[0]
-    convert_plan.share_cover_caches(plans)
     try:
         stats = convert_plan.convert_unique(
             host,

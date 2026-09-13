@@ -1973,7 +1973,6 @@ class ConverterApp:
         dlg = tk.Toplevel(self.root)
         self._preview_dialog = dlg
         dlg.title("Conversion preview")
-        dlg.transient(self.root)
         dlg.geometry("960x540")
         dlg.minsize(960, 540)
         dlg.resizable(True, True)
@@ -2038,8 +2037,23 @@ class ConverterApp:
                 values=(action, quality, item.size_display),
             )
 
+        space_issue = rb.insufficient_output_space_message(
+            prepared.wav_dir,
+            rb.preview_write_bytes(preview),
+        )
+        issue_row = 2
+        btn_row = 2
+        if space_issue:
+            ttk.Label(
+                frm,
+                text=space_issue,
+                foreground="#a40000",
+                wraplength=930,
+            ).grid(row=issue_row, column=0, sticky="w", pady=(8, 0))
+            btn_row = 3
+
         btns = ttk.Frame(frm)
-        btns.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+        btns.grid(row=btn_row, column=0, sticky="ew", pady=(12, 0))
         btns.columnconfigure(0, weight=1)
 
         def on_back() -> None:
@@ -2051,15 +2065,14 @@ class ConverterApp:
         ttk.Button(
             btns, text="Back", command=on_back, width=ACTION_BUTTON_WIDTH
         ).grid(row=0, column=0, sticky="w")
-        ttk.Button(
+        convert_btn = ttk.Button(
             btns, text="Convert", command=on_convert, width=ACTION_BUTTON_WIDTH
-        ).grid(row=0, column=1, sticky="e")
+        )
+        convert_btn.grid(row=0, column=1, sticky="e")
+        if space_issue:
+            convert_btn.configure(state=tk.DISABLED)
         dlg.protocol("WM_DELETE_WINDOW", on_back)
         dlg.bind("<Escape>", lambda _e: on_back())
-        try:
-            dlg.grab_set()
-        except tk.TclError:
-            pass
         self._place_dialog_over_app(dlg)
         self.status_var.set("Review conversion…")
         self._animate_progress_to(0, snap=True)
@@ -2090,6 +2103,13 @@ class ConverterApp:
     def _confirm_prepared_conversion(self) -> None:
         prepared = self._prepared_conversion
         if prepared is None:
+            return
+        space_issue = rb.insufficient_output_space_message(
+            prepared.wav_dir,
+            rb.preview_write_bytes(prepared.preview),
+        )
+        if space_issue:
+            messagebox.showerror("Not enough space", space_issue)
             return
         self._close_preview_dialog()
         self._prepared_conversion = None
