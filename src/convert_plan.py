@@ -19,8 +19,11 @@ from typing import Callable
 import converter_manifest
 import ffmpeg_tools
 from cdj_aiff import (
+    _is_canonical_aiff_from_info,
     _is_canonical_aiff_output,
+    _info_is_cdj_safe_aiff,
     _normalize_aiff_audio_chunks,
+    _parse_aiff_audio,
     extract_cover_jpeg,
     is_cdj_safe_aiff,
     write_aiff_id3,
@@ -233,8 +236,17 @@ def planned_action(
     is_aiff = item.dest_path.suffix.lower() == ".aiff"
     if not force:
         if is_aiff:
-            if is_cdj_safe_aiff(
-                item.dest_path,
+            # One dest parse: gate cover extract, then canonical ID3/cover check.
+            try:
+                dest_info = (
+                    _parse_aiff_audio(item.dest_path)
+                    if item.dest_path.is_file()
+                    else None
+                )
+            except CliError:
+                dest_info = None
+            if dest_info is not None and _info_is_cdj_safe_aiff(
+                dest_info,
                 bit_depth=item.bit_depth,
                 sample_rate=item.sample_rate,
             ):
@@ -244,8 +256,9 @@ def planned_action(
                     lock=cover_lock,
                     cancel_event=cancel_event,
                 )
-                if _is_canonical_aiff_output(
+                if _is_canonical_aiff_from_info(
                     item.dest_path,
+                    dest_info,
                     item.source_el,
                     cover,
                     bit_depth=item.bit_depth,
@@ -261,13 +274,6 @@ def planned_action(
     if item.copy_wav:
         return "copy"
     return "transcode"
-
-
-def _plan_for_preview_item(plans: list[Plan], item: PlannedTrack) -> Plan:
-    for plan in plans:
-        if item in plan.unique or item in plan.tracks:
-            return plan
-    return plans[0]
 
 
 def _format_size_mb(nbytes: int, *, approximate: bool = False) -> str:
@@ -318,33 +324,84 @@ def build_conversion_preview(
     unique_outputs = len(items)
     duplicates = resolved - unique_outputs
     wav_dir = plans[0].wav_dir
-    preview_items: list[ConversionPreviewItem] = []
     total = len(items)
-    for index, item in enumerate(items):
+    if total == 0:
+        return ConversionPreview(
+            selected=selected,
+            resolved=resolved,
+            unique_outputs=unique_outputs,
+            duplicates=duplicates,
+            missing=missing,
+            items=[],
+        )
+
+    plan_by_item: dict[int, Plan] = {}
+    for plan in plans:
+        for item in plan.unique:
+            plan_by_item.setdefault(id(item), plan)
+
+    results: list[ConversionPreviewItem | None] = [None] * total
+    cover_lock = threading.Lock()
+    progress_lock = threading.Lock()
+    completed = 0
+
+    def classify_one(index: int, item: PlannedTrack) -> ConversionPreviewItem:
         if cancel_event is not None and cancel_event.is_set():
             raise CancelledError("conversion cancelled during preview")
-        plan = _plan_for_preview_item(plans, item)
+        plan = plan_by_item.get(id(item), plans[0])
         action = planned_action(
-            plan, item, force, cancel_event=cancel_event
+            plan,
+            item,
+            force,
+            cover_lock=cover_lock,
+            cancel_event=cancel_event,
         )
         try:
             relative_dest = item.dest_path.relative_to(wav_dir).as_posix()
         except ValueError:
             relative_dest = item.dest_path.name
         size_bytes, size_display = _preview_size(item, action)
-        preview_items.append(
-            ConversionPreviewItem(
-                relative_dest=relative_dest,
-                action=action,
-                bit_depth=item.bit_depth,
-                sample_rate=item.sample_rate,
-                size_bytes=size_bytes,
-                size_display=size_display,
-                source_display=item.source_path.name,
-            )
+        return ConversionPreviewItem(
+            relative_dest=relative_dest,
+            action=action,
+            bit_depth=item.bit_depth,
+            sample_rate=item.sample_rate,
+            size_bytes=size_bytes,
+            size_display=size_display,
+            source_display=item.source_path.name,
         )
-        if on_progress is not None:
-            on_progress(index + 1, total, "preview", item.dest_name)
+
+    workers = convert_worker_count(total)
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures = {
+            pool.submit(classify_one, index, item): index
+            for index, item in enumerate(items)
+        }
+        for fut in as_completed(futures):
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            index = futures[fut]
+            try:
+                results[index] = fut.result()
+            except CancelledError:
+                if cancel_event is not None:
+                    cancel_event.set()
+                break
+            with progress_lock:
+                completed += 1
+                done = completed
+            if on_progress is not None:
+                on_progress(done, total, "preview", items[index].dest_name)
+    finally:
+        cancelled = cancel_event is not None and cancel_event.is_set()
+        pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
+    if cancel_event is not None and cancel_event.is_set():
+        raise CancelledError("conversion cancelled during preview")
+
+    preview_items = [item for item in results if item is not None]
+    if len(preview_items) != total:
+        raise CancelledError("conversion cancelled during preview")
     return ConversionPreview(
         selected=selected,
         resolved=resolved,

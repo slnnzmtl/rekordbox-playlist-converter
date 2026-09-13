@@ -147,6 +147,30 @@ class CdjSafeWavTests(unittest.TestCase):
     def test_missing_file_is_not_safe(self) -> None:
         self.assertFalse(rb.is_cdj_safe_wav(Path("/no/such/file.wav")))
 
+    def test_parse_wav_info_does_not_read_data_payload(self) -> None:
+        """Given a multi-MB CDJ-safe WAV: When parse_wav_info / is_cdj_safe_wav
+        run: Then only headers and fmt are read (not the PCM data chunk)."""
+        from counting_open import patch_counting_open
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large.wav"
+            # ~2 MiB PCM payload; streaming parse must not load it all.
+            write_pcm_wav(path, frames=512 * 1024)
+            self.assertGreater(path.stat().st_size, 1_000_000)
+
+            bytes_read = {"n": 0}
+            open_patch, read_bytes_patch = patch_counting_open(path, bytes_read)
+            with open_patch, read_bytes_patch:
+                info = rb.parse_wav_info(path)
+                self.assertEqual(info.chunk_ids, ("fmt ", "data"))
+                self.assertTrue(
+                    rb.is_cdj_safe_wav(path, bit_depth=16, sample_rate=44100)
+                )
+
+            # Header (12) + two chunk headers (16) + fmt payload (16) ≈ 44;
+            # allow seek/EOF probes but stay far below the PCM size.
+            self.assertLess(bytes_read["n"], 256)
+
 
 class CdjSafeConvertTests(unittest.TestCase):
     def test_ffmpeg_converts_extensible_48k24_to_cdj_safe(self) -> None:

@@ -112,6 +112,18 @@ def _mock_convert_plan(*, n_unique: int = 2):
     )
 
 
+def _empty_conversion_preview(*, selected: int = 0) -> rb.ConversionPreview:
+    """Minimal preview for GUI tests that stub threading.Thread (pool-hostile)."""
+    return rb.ConversionPreview(
+        selected=selected,
+        resolved=selected,
+        unique_outputs=selected,
+        duplicates=0,
+        missing=0,
+        items=[],
+    )
+
+
 class TotalSuccessfulConversionsTests(unittest.TestCase):
     def test_total_successful_conversions(self) -> None:
         self.assertEqual(
@@ -335,6 +347,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 "rb_converter_gui.rb.share_output_root"
             ), patch(
                 "rb_converter_gui.converter_manifest.save_manifest"
+            ), patch(
+                "rb_converter_gui.rb.build_conversion_preview",
+                return_value=_empty_conversion_preview(selected=2),
             ), patch.object(
                 ConverterApp, "_show_conversion_preview"
             ), patch(
@@ -418,6 +433,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 "rb_converter_gui.rb.share_output_root"
             ), patch(
                 "rb_converter_gui.converter_manifest.save_manifest"
+            ), patch(
+                "rb_converter_gui.rb.build_conversion_preview",
+                return_value=_empty_conversion_preview(selected=2),
             ), patch.object(
                 ConverterApp, "_show_conversion_preview"
             ), patch(
@@ -513,6 +531,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 "rb_converter_gui.rb.share_output_root"
             ), patch(
                 "rb_converter_gui.converter_manifest.save_manifest"
+            ), patch(
+                "rb_converter_gui.rb.build_conversion_preview",
+                return_value=_empty_conversion_preview(selected=2),
             ), patch.object(
                 ConverterApp, "_show_conversion_preview"
             ), patch(
@@ -781,6 +802,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 "rb_converter_gui.rb.share_output_root"
             ), patch(
                 "rb_converter_gui.converter_manifest.save_manifest"
+            ), patch(
+                "rb_converter_gui.rb.build_conversion_preview",
+                return_value=_empty_conversion_preview(selected=1),
             ), patch.object(
                 ConverterApp, "_show_conversion_preview"
             ), patch(

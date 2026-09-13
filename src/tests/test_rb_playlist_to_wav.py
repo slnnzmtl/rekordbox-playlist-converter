@@ -2788,12 +2788,79 @@ class ConversionPreviewTests(unittest.TestCase):
 
             with patch.object(
                 convert_plan, "planned_action", side_effect=action_side_effect
-            ):
+            ), patch.object(convert_plan, "CONVERT_WORKERS", 1):
                 with self.assertRaises(rb.CancelledError):
                     rb.build_conversion_preview(
                         [plan], items, force=False, cancel_event=cancel
                     )
             self.assertEqual(calls, ["out0.aiff"])
+
+    def test_build_conversion_preview_classifies_concurrently(self) -> None:
+        """Given CONVERT_WORKERS>1: When build_conversion_preview runs:
+        Then at least two planned_action calls overlap."""
+        import threading
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            items: list[rb.PlannedTrack] = []
+            for i in range(3):
+                src = root / f"src{i}.flac"
+                src.write_bytes(b"fLaC")
+                dest = root / "WAV" / f"out{i}.wav"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                items.append(
+                    rb.PlannedTrack(
+                        source_el=el,
+                        source_path=src,
+                        dest_path=dest,
+                        dest_location=rb.encode_location(dest),
+                        dest_name=dest.name,
+                        codec="pcm_s24le",
+                        copy_wav=False,
+                        noop=False,
+                        bit_depth=24,
+                        sample_rate=48000,
+                    )
+                )
+            plan = self._plan_with(items[0])
+            plan.tracks = items
+            plan.unique = items
+
+            barrier = threading.Barrier(2)
+            lock = threading.Lock()
+            barrier_slots = 0
+            overlapped = threading.Event()
+
+            def action_with_overlap(plan_arg, item, force, **_kwargs):
+                nonlocal barrier_slots
+                join = False
+                with lock:
+                    if barrier_slots < 2:
+                        barrier_slots += 1
+                        join = True
+                if join:
+                    try:
+                        barrier.wait(timeout=1.0)
+                        overlapped.set()
+                    except threading.BrokenBarrierError:
+                        pass
+                return "transcode"
+
+            with patch.object(
+                convert_plan, "planned_action", side_effect=action_with_overlap
+            ), patch.object(convert_plan, "CONVERT_WORKERS", 2):
+                preview = rb.build_conversion_preview([plan], items, force=False)
+            self.assertTrue(
+                overlapped.is_set(),
+                "expected at least two planned_action calls to overlap "
+                "under CONVERT_WORKERS>1",
+            )
+            self.assertEqual(len(preview.items), 3)
+            self.assertEqual(
+                [p.relative_dest for p in preview.items],
+                [item.dest_path.relative_to(root).as_posix() for item in items],
+            )
 
     def test_build_conversion_preview_reports_progress(self) -> None:
         """Given unique items: When build_conversion_preview runs with
@@ -2829,9 +2896,10 @@ class ConversionPreviewTests(unittest.TestCase):
             def on_progress(current: int, total: int, action: str, name: str) -> None:
                 progress_calls.append((current, total, action, name))
 
-            preview = rb.build_conversion_preview(
-                [plan], items, force=False, on_progress=on_progress
-            )
+            with patch.object(convert_plan, "CONVERT_WORKERS", 1):
+                preview = rb.build_conversion_preview(
+                    [plan], items, force=False, on_progress=on_progress
+                )
             self.assertEqual(len(preview.items), 2)
             self.assertEqual(
                 progress_calls,
