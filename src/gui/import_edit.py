@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tkinter as tk
-from pathlib import Path
 
 from gui import dialogs as gui_dialogs
 from gui import runtime
@@ -18,7 +17,7 @@ from import_edit import (
 
 class ImportEditMixin:
     def _import_edit_active(self) -> bool:
-        return getattr(self, "_import_edit_draft", None) is not None
+        return self._import_edit_draft is not None
 
     def _update_import_edit_button(self) -> None:
         if not hasattr(self, "import_edit_btn"):
@@ -89,7 +88,7 @@ class ImportEditMixin:
         try:
             draft = runtime.load_import_edit_draft(wav_dir)
         except runtime.CliError as exc:
-            runtime.messagebox.showerror("Cannot edit Import XML", str(exc))
+            self._show_edit_error("Cannot edit Import XML", exc)
             return
         self._import_edit_selection_snapshot = self._selected_playlists(
             unique_names=False
@@ -108,7 +107,8 @@ class ImportEditMixin:
         if not self._import_edit_active():
             return
         if discard and self._import_edit_draft and self._import_edit_draft.dirty:
-            if not runtime.messagebox.askyesno(
+            if not runtime.ask_centered_yesno(
+                self.root,
                 "Discard changes?",
                 "Discard unsaved Import XML edits?",
             ):
@@ -118,7 +118,7 @@ class ImportEditMixin:
         title = self.root.title()
         self.root.title(title.replace(" — Editing Import XML", ""))
         if self._source_root is not None:
-            wanted = list(getattr(self, "_import_edit_selection_snapshot", ()) or ())
+            wanted = list(self._import_edit_selection_snapshot or ())
             self._paint_playlist_tree(self._source_root, select=wanted)
         else:
             self.playlist_tree.delete(*self.playlist_tree.get_children())
@@ -146,7 +146,7 @@ class ImportEditMixin:
         )
 
     def _save_import_edit(self) -> None:
-        draft = getattr(self, "_import_edit_draft", None)
+        draft = self._import_edit_draft
         if draft is None or not draft.dirty:
             return
         rows = preview_save(draft)
@@ -164,9 +164,10 @@ class ImportEditMixin:
         try:
             runtime.save_import_edit_draft(draft)
         except runtime.CliError as exc:
-            runtime.messagebox.showerror("Save failed", str(exc))
+            self._show_edit_error("Save failed", exc)
             return
-        runtime.messagebox.showinfo(
+        runtime.show_centered_message(
+            self.root,
             "Saved",
             "Import XML and converter manifest were updated.",
         )
@@ -175,21 +176,22 @@ class ImportEditMixin:
     def _cancel_import_edit(self) -> None:
         self._leave_import_edit_mode(discard=True)
 
+    def _show_edit_error(self, title: str, exc: BaseException) -> None:
+        runtime.show_centered_message(self.root, title, str(exc))
+
+    def _refresh_after_edit(self, select: list[tuple[str, str]]) -> None:
+        draft = self._import_edit_draft
+        if draft is None:
+            return
+        self._paint_playlist_tree(draft.root, select=select)
+        self._sync_import_edit_chrome()
+
     def _confirm_discard_if_editing(self) -> bool:
         """Return True if it is OK to proceed (not editing, or discard confirmed)."""
-        draft = getattr(self, "_import_edit_draft", None)
-        if draft is None:
+        if not self._import_edit_active():
             return True
-        if not draft.dirty:
-            self._leave_import_edit_mode(discard=False)
-            return True
-        if runtime.messagebox.askyesno(
-            "Discard changes?",
-            "Discard unsaved Import XML edits?",
-        ):
-            self._leave_import_edit_mode(discard=False)
-            return True
-        return False
+        self._leave_import_edit_mode(discard=True)
+        return not self._import_edit_active()
 
     def _on_playlist_context_menu(self, event: tk.Event) -> None:
         if not self._import_edit_active():
@@ -201,8 +203,10 @@ class ImportEditMixin:
         if meta is None or meta[0] != "playlist":
             return
         self.playlist_tree.selection_set(row)
-        menu = tk.Menu(self.root, tearoff=0)
         folder, name = meta[1], meta[2]
+        if self._playlist_is_virtual(folder, name):
+            return
+        menu = tk.Menu(self.root, tearoff=0)
 
         def do_remove() -> None:
             self._edit_remove_playlist(folder, name)
@@ -222,10 +226,12 @@ class ImportEditMixin:
         if row not in set(self.tracklist_tree.selection()):
             self.tracklist_tree.selection_set(row)
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(
-            label="Remove track from playlist",
-            command=self._edit_remove_selected_tracks_from_playlist,
-        )
+        refs = self._selected_track_leaf_refs()
+        if any(not self._playlist_is_virtual(ref.folder, ref.name) for ref in refs):
+            menu.add_command(
+                label="Remove track from playlist",
+                command=self._edit_remove_selected_tracks_from_playlist,
+            )
         menu.add_command(
             label="Remove track from collection and move to Trash",
             command=self._edit_remove_selected_tracks_from_collection,
@@ -247,13 +253,14 @@ class ImportEditMixin:
         draft: ImportEditDraft | None = self._import_edit_draft
         if draft is None:
             return
+        if self._playlist_is_virtual(folder, name):
+            return
         try:
             remove_playlist(draft, folder=folder, name=name)
         except runtime.CliError as exc:
-            runtime.messagebox.showerror("Cannot remove playlist", str(exc))
+            self._show_edit_error("Cannot remove playlist", exc)
             return
-        self._paint_playlist_tree(draft.root, select=[])
-        self._sync_import_edit_chrome()
+        self._refresh_after_edit([])
 
     def _edit_remove_track_from_playlist(
         self, folder: str, name: str, track_id: str
@@ -261,15 +268,16 @@ class ImportEditMixin:
         draft = self._import_edit_draft
         if draft is None:
             return
+        if self._playlist_is_virtual(folder, name):
+            return
         try:
             remove_track_from_playlist(
                 draft, folder=folder, name=name, track_id=track_id
             )
         except runtime.CliError as exc:
-            runtime.messagebox.showerror("Cannot remove track", str(exc))
+            self._show_edit_error("Cannot remove track", exc)
             return
-        self._paint_playlist_tree(draft.root, select=[(folder, name)])
-        self._sync_import_edit_chrome()
+        self._refresh_after_edit([(folder, name)])
 
     def _edit_remove_track_from_collection(self, track_id: str) -> None:
         draft = self._import_edit_draft
@@ -279,16 +287,19 @@ class ImportEditMixin:
         try:
             remove_track_from_collection(draft, track_id=track_id)
         except runtime.CliError as exc:
-            runtime.messagebox.showerror("Cannot remove track", str(exc))
+            self._show_edit_error("Cannot remove track", exc)
             return
-        self._paint_playlist_tree(draft.root, select=keep)
-        self._sync_import_edit_chrome()
+        self._refresh_after_edit(keep)
 
     def _edit_remove_selected_tracks_from_playlist(self) -> None:
         draft = self._import_edit_draft
         if draft is None:
             return
-        refs = self._selected_track_leaf_refs()
+        refs = [
+            ref
+            for ref in self._selected_track_leaf_refs()
+            if not self._playlist_is_virtual(ref.folder, ref.name)
+        ]
         if not refs:
             return
         last_err: runtime.CliError | None = None
@@ -308,10 +319,9 @@ class ImportEditMixin:
                 seen.add(pair)
                 keep.append(pair)
         if not removed and last_err is not None:
-            runtime.messagebox.showerror("Cannot remove track", str(last_err))
+            self._show_edit_error("Cannot remove track", last_err)
             return
-        self._paint_playlist_tree(draft.root, select=keep)
-        self._sync_import_edit_chrome()
+        self._refresh_after_edit(keep)
 
     def _edit_remove_selected_tracks_from_collection(self) -> None:
         draft = self._import_edit_draft
@@ -336,10 +346,9 @@ class ImportEditMixin:
             except runtime.CliError as exc:
                 last_err = exc
         if not removed and last_err is not None:
-            runtime.messagebox.showerror("Cannot remove track", str(last_err))
+            self._show_edit_error("Cannot remove track", last_err)
             return
-        self._paint_playlist_tree(draft.root, select=keep)
-        self._sync_import_edit_chrome()
+        self._refresh_after_edit(keep)
 
     def _bind_import_edit_window_guards(self) -> None:
         self.root.protocol("WM_DELETE_WINDOW", self._on_import_edit_close)

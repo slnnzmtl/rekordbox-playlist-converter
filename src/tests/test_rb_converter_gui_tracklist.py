@@ -19,6 +19,7 @@ from test_preview_bit_depth import _flac_with_bit_depth
 from gui_tk import app_patches, mark_output_folder_valid, run_inline_thread, startup_patches, tk_available
 from gui_xml_fixtures import TRACKLIST_XML, write_xml
 from rekordbox_xml import encode_location
+from gui.tracklist import track_preview_row
 
 
 def _flush_debounced(app, attr: str, callback) -> None:
@@ -31,6 +32,24 @@ def _flush_debounced(app, attr: str, callback) -> None:
 
 def _flush_track_search_debounce(app) -> None:
     _flush_debounced(app, "_track_search_after_id", app._refresh_tracklist_preview)
+
+
+class TrackPreviewLabelTests(unittest.TestCase):
+    def test_preview_label_omits_location_suffix(self) -> None:
+        """Given a TRACK with a .flac Location: When building the preview
+        row: Then the label is artist - title without the extension."""
+        track = {
+            "Artist": "ABSL",
+            "Name": "Bestial",
+            "Location": "file://localhost/Users/me/music/Bestial.flac",
+            "Kind": "FLAC File",
+            "SampleRate": "44100",
+        }
+        label, fmt, _depth, rate = track_preview_row(track)
+        self.assertEqual(label, "ABSL - Bestial")
+        self.assertEqual(fmt, "FLAC")
+        self.assertEqual(rate, "44100")
+
 
 class GuiTracklistTests(unittest.TestCase):
     def _make_app(self, source: Path):
@@ -68,8 +87,8 @@ class GuiTracklistTests(unittest.TestCase):
                 self.assertEqual(
                     [preview.item(r, "text") for r in leaves],
                     [
-                        "ABSL - Bestial.flac",
-                        "Shogan - Revelation.aiff",
+                        "ABSL - Bestial",
+                        "Shogan - Revelation",
                         "(missing track)",
                     ],
                 )
@@ -236,7 +255,7 @@ class GuiTracklistTests(unittest.TestCase):
                 root.destroy()
 
     def test_track_search_filters_listed_rows_and_clears(self) -> None:
-        """Track search matches preview labels; clear restores the listed set."""
+        """Track search matches labels, format, and filename; clear restores."""
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -260,11 +279,21 @@ class GuiTracklistTests(unittest.TestCase):
                 leaves = preview.get_children(groups[0])
                 self.assertEqual(
                     [preview.item(r, "text") for r in leaves],
-                    ["Shogan - Revelation.aiff"],
+                    ["Shogan - Revelation"],
                 )
                 self.assertEqual(
                     app.status_var.get(),
                     "1 unique tracks from 1 playlist",
+                )
+
+                app.track_search_var.set("aiff")
+                _flush_track_search_debounce(app)
+                groups = preview.get_children("")
+                self.assertEqual(len(groups), 1)
+                leaves = preview.get_children(groups[0])
+                self.assertEqual(
+                    [preview.item(r, "text") for r in leaves],
+                    ["Shogan - Revelation"],
                 )
 
                 app.track_search_var.set("")
@@ -471,7 +500,7 @@ class GuiTracklistTests(unittest.TestCase):
                 leaves = preview.get_children(groups[0])
                 self.assertEqual(
                     [preview.item(r, "text") for r in leaves],
-                    ["ABSL - Bestial.flac", "(missing track)"],
+                    ["ABSL - Bestial", "(missing track)"],
                 )
 
                 preview.selection_set(*leaves)
@@ -487,7 +516,7 @@ class GuiTracklistTests(unittest.TestCase):
                     {
                         "prepare_batch": {"side_effect": fake_prepare},
                         "threading.Thread": {"side_effect": run_inline_thread},
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                     }
                 ):
                     mark_output_folder_valid(app)
@@ -563,9 +592,9 @@ class GuiTracklistTests(unittest.TestCase):
                 self.assertEqual(
                     [preview.item(r, "text") for r in crate_leaves],
                     [
-                        "Z - Zebra.flac",
-                        "A - Alpha.aiff",
-                        "M - Mid.wav",
+                        "Z - Zebra",
+                        "A - Alpha",
+                        "M - Mid",
                     ],
                 )
 
@@ -575,15 +604,15 @@ class GuiTracklistTests(unittest.TestCase):
                 self.assertEqual(
                     [preview.item(r, "text") for r in crate_leaves],
                     [
-                        "A - Alpha.aiff",
-                        "M - Mid.wav",
-                        "Z - Zebra.flac",
+                        "A - Alpha",
+                        "M - Mid",
+                        "Z - Zebra",
                     ],
                 )
                 solo_leaves = list(preview.get_children(groups[1]))
                 self.assertEqual(
                     [preview.item(r, "text") for r in solo_leaves],
-                    ["O - Only.flac"],
+                    ["O - Only"],
                 )
 
                 preview.tk.call(cmd)
@@ -591,9 +620,9 @@ class GuiTracklistTests(unittest.TestCase):
                 self.assertEqual(
                     [preview.item(r, "text") for r in crate_leaves],
                     [
-                        "Z - Zebra.flac",
-                        "M - Mid.wav",
-                        "A - Alpha.aiff",
+                        "Z - Zebra",
+                        "M - Mid",
+                        "A - Alpha",
                     ],
                 )
 
@@ -604,7 +633,7 @@ class GuiTracklistTests(unittest.TestCase):
                 leaves = list(preview.get_children(groups[0]))
                 self.assertEqual(
                     [preview.item(r, "text") for r in leaves],
-                    ["A - Alpha.aiff"],
+                    ["A - Alpha"],
                 )
 
                 app.track_search_var.set("")
@@ -614,9 +643,9 @@ class GuiTracklistTests(unittest.TestCase):
                 self.assertEqual(
                     [preview.item(r, "text") for r in crate_leaves],
                     [
-                        "Z - Zebra.flac",
-                        "M - Mid.wav",
-                        "A - Alpha.aiff",
+                        "Z - Zebra",
+                        "M - Mid",
+                        "A - Alpha",
                     ],
                 )
         except tk.TclError:
@@ -682,8 +711,51 @@ class GuiTracklistTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         [preview.item(r, "text") for r in leaves],
-                        ["S - Shallow.flac", "D - Deep.flac"],
+                        ["S - Shallow", "D - Deep"],
                     )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_tracklist_hover_shows_decoded_file_path(self) -> None:
+        """Given a listed track with a Location: When hovering the row:
+        Then a tooltip shows the decoded file path."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                source = write_xml(Path(tmp), TRACKLIST_XML)
+                root, app = self._make_app(source)
+                tree = app.playlist_tree
+                dark = tree.get_children("")[0]
+                tree.selection_set(dark)
+                tree.event_generate("<<TreeviewSelect>>")
+                preview = app.tracklist_tree
+                group = preview.get_children("")[0]
+                leaf = preview.get_children(group)[0]
+                with patch.object(preview, "identify_row", return_value=leaf):
+                    preview.event_generate("<Motion>", x=10, y=10)
+                root.update_idletasks()
+                texts: list[str] = []
+
+                def collect(widget: tk.Misc) -> None:
+                    for child in widget.winfo_children():
+                        if isinstance(child, tk.Toplevel):
+                            for inner in child.winfo_children():
+                                try:
+                                    texts.append(str(inner.cget("text")))
+                                except tk.TclError:
+                                    continue
+                        collect(child)
+
+                collect(root)
+                self.assertIn("/Users/me/music/Bestial.flac", texts)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

@@ -63,12 +63,37 @@ class PlaylistsMixin:
             self._playlist_entries.append(
                 PlaylistEntry.from_walk(kind, folder, name, count, node)
             )
+        existing_unknown = any(
+            kind == "playlist"
+            and folder == ""
+            and name == runtime.UNKNOWN_PLAYLIST_NAME
+            for kind, folder, name, _node in nodes
+        )
+        orphan_ids = runtime.unreferenced_collection_track_ids(root)
+        if orphan_ids and not existing_unknown:
+            unknown_node = runtime.unknown_playlist_node(orphan_ids)
+            unknown_count = runtime.playlist_preview_track_count(
+                unknown_node,
+                by_id,
+                by_location,
+                supported_ext=runtime.SUPPORTED_LOSSLESS_EXT,
+            )
+            self._playlist_entries.append(
+                PlaylistEntry.from_walk(
+                    "playlist",
+                    "",
+                    runtime.UNKNOWN_PLAYLIST_NAME,
+                    unknown_count,
+                    unknown_node,
+                    virtual=True,
+                )
+            )
         self._apply_playlist_filter()
         self._select_playlist_rows(keep)
         self._refresh_tracklist_preview()
 
     def _load_playlists(self) -> None:
-        if getattr(self, "_import_edit_active", lambda: False)():
+        if self._import_edit_active():
             return
         self.playlist_tree.delete(*self.playlist_tree.get_children())
         self._playlist_entries = []
@@ -307,15 +332,29 @@ class PlaylistsMixin:
         playlist_word = "playlist" if painted == 1 else "playlists"
         return f"{len(unique_keys)} unique tracks from {painted} {playlist_word}"
 
-    def _playlist_node(self, folder: str, name: str):
+    def _tracklist_hover_path(self, iid: str) -> str | None:
+        path = self._tracklist_paths.get(iid)
+        if path is None:
+            return None
+        return str(path)
+
+    def _playlist_entry(self, folder: str, name: str):
         for entry in self._playlist_entries:
             if (
                 entry.kind == PlaylistNodeKind.PLAYLIST
                 and entry.folder == folder
                 and entry.name == name
             ):
-                return entry.node
+                return entry
         return None
+
+    def _playlist_node(self, folder: str, name: str):
+        entry = self._playlist_entry(folder, name)
+        return None if entry is None else entry.node
+
+    def _playlist_is_virtual(self, folder: str, name: str) -> bool:
+        entry = self._playlist_entry(folder, name)
+        return False if entry is None else entry.virtual
 
     @staticmethod
     def _track_preview_row(track) -> tuple[str, str, str, str]:
@@ -323,9 +362,7 @@ class PlaylistsMixin:
 
         Bit depth is always — here; file headers are filled asynchronously.
         """
-        return gui_tracklist.track_preview_row(
-            track, decode_location=runtime.decode_location
-        )
+        return gui_tracklist.track_preview_row(track)
 
     def _sync_scan_indicator(self) -> None:
         if self._busy or not self._preview_scan_active:
@@ -368,7 +405,7 @@ class PlaylistsMixin:
         painted = 0
         paths: list[Path] = []
         seen_paths: set[Path] = set()
-        editing = getattr(self, "_import_edit_active", lambda: False)()
+        editing = self._import_edit_active()
         for folder, name in selected:
             node = self._playlist_node(folder, name)
             if node is None:
@@ -390,7 +427,9 @@ class PlaylistsMixin:
                     missing = track is None or path is None or not path.is_file()
                     if missing and not label.startswith("! "):
                         label = f"! {label}"
-                if query and query not in label.casefold():
+                if query and query not in gui_tracklist.track_search_haystack(
+                    label, fmt, path
+                ):
                     continue
                 if not runtime.track_included_in_playlist_preview(
                     track, supported_ext=runtime.SUPPORTED_LOSSLESS_EXT

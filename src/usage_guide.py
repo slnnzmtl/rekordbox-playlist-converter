@@ -43,10 +43,11 @@ export.
    sort within each playlist group. Format and rate come from the
    export; bit depth is read from FLAC, ALAC (M4A), WAV, or AIFF file headers
    when the file is on disk, otherwise — (Scanning bit depth… appears beside the
-   unique-tracks status line while that runs). Track rows start selected; hold ⌃ to
+   unique-tracks status line while that runs). Hover a track row to see its
+   file path. Track rows start selected; hold ⌃ to
    refine which tracks to convert (across playlists). Playlist search filters
    the left tree; track search filters the current tracklist (artist / title /
-   filename).
+   filename / format).
 3. Confirm the output folder. Defaults are ~/Documents/rekordbox-converter when
    Documents access is allowed, or ~/rekordbox-converter if you decline that
    request; Browse… can prompt again when you open Documents. Import XML is
@@ -92,7 +93,8 @@ Editing a generated library (GUI):
   converter manifest, an Edit button appears beside Import XML.
 • Edit mode loads that Import XML (not your Rekordbox source export). Remove
   playlists or tracks from the right-click menus. Shift/Command-click to select
-  several tracks, then right-click to remove them together. Missing tracks show
+  several tracks, then right-click to remove them together. Tracks left in the
+  collection with no playlist appear under Unknown. Missing tracks show
   a ! prefix.
 • Changes stay in a draft until Save. Save shows a preview of pending removals
   (remove from playlist vs move to Trash), then updates the Import XML and

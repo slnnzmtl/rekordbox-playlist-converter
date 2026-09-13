@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import subprocess
 import sys
 import tkinter as tk
@@ -157,19 +158,47 @@ def make_dialog(
     return dlg, frm
 
 
-def place_dialog_over_parent(dlg: tk.Toplevel, parent: tk.Misc) -> None:
-    """Center *dlg* over *parent* after layout."""
+def _toplevel_intended_size(dlg: tk.Toplevel) -> tuple[int, int]:
+    """Width/height to use when centering; prefer mapped size, else geometry."""
     dlg.update_idletasks()
-    dlg.geometry(
-        center_over_window_geometry(
-            parent.winfo_rootx(),
-            parent.winfo_rooty(),
-            max(parent.winfo_width(), 1),
-            max(parent.winfo_height(), 1),
-            max(dlg.winfo_reqwidth(), dlg.winfo_width(), 1),
-            max(dlg.winfo_reqheight(), dlg.winfo_height(), 1),
+    w, h = dlg.winfo_width(), dlg.winfo_height()
+    if w > 1 and h > 1:
+        return w, h
+    geom = dlg.wm_geometry()
+    wh = geom.split("+", 1)[0].split("-", 1)[0]
+    parts = wh.split("x")
+    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+        gw, gh = int(parts[0]), int(parts[1])
+        if gw > 1 and gh > 1:
+            return gw, gh
+    return max(dlg.winfo_reqwidth(), 1), max(dlg.winfo_reqheight(), 1)
+
+
+def place_dialog_over_parent(dlg: tk.Toplevel, parent: tk.Misc) -> None:
+    """Center *dlg* over *parent* after layout, keeping an explicit size."""
+
+    def _apply(_event: object | None = None) -> None:
+        try:
+            if not dlg.winfo_exists() or not parent.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        parent.update_idletasks()
+        child_w, child_h = _toplevel_intended_size(dlg)
+        dlg.geometry(
+            f"{child_w}x{child_h}"
+            + center_over_window_geometry(
+                parent.winfo_rootx(),
+                parent.winfo_rooty(),
+                max(parent.winfo_width(), 1),
+                max(parent.winfo_height(), 1),
+                child_w,
+                child_h,
+            )
         )
-    )
+
+    _apply()
+    dlg.after_idle(_apply)
 
 
 def tree_with_yscroll(
@@ -265,6 +294,57 @@ class HoverTooltip:
         if self._tip is not None:
             self._tip.destroy()
             self._tip = None
+
+
+class RowHoverTooltip:
+    """Motion tooltip for a Treeview row; text comes from *text_for_iid*."""
+
+    def __init__(
+        self,
+        tree: ttk.Treeview,
+        text_for_iid: Callable[[str], str | None],
+    ) -> None:
+        self.tree = tree
+        self.text_for_iid = text_for_iid
+        self._tip: tk.Toplevel | None = None
+        self._iid: str | None = None
+        tree.bind("<Motion>", self._on_motion, add="+")
+        tree.bind("<Leave>", self._hide, add="+")
+
+    def _on_motion(self, event: object) -> None:
+        y = getattr(event, "y", None)
+        if y is None:
+            return
+        iid = self.tree.identify_row(y)
+        text = self.text_for_iid(iid) if iid else None
+        if not text:
+            self._iid = None
+            self._hide()
+            return
+        if iid == self._iid and self._tip is not None:
+            return
+        self._hide()
+        self._iid = iid
+        x = self.tree.winfo_rootx() + int(getattr(event, "x", 0)) + 16
+        y_root = self.tree.winfo_rooty() + int(y) + 20
+        tip = tk.Toplevel(self.tree)
+        tip.wm_overrideredirect(True)
+        tip.wm_geometry(f"+{x}+{y_root}")
+        ttk.Label(
+            tip,
+            text=text,
+            relief=tk.SOLID,
+            borderwidth=1,
+            padding=(6, 3),
+            wraplength=480,
+        ).pack()
+        self._tip = tip
+
+    def _hide(self, _event: object = None) -> None:
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
+        self._iid = None
 
 
 class SearchPlaceholder:

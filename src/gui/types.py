@@ -19,6 +19,7 @@ class PlaylistEntry:
     name: str
     count: int
     node: ET.Element
+    virtual: bool = False
 
     @classmethod
     def from_walk(
@@ -28,6 +29,8 @@ class PlaylistEntry:
         name: str,
         count: int,
         node: ET.Element,
+        *,
+        virtual: bool = False,
     ) -> PlaylistEntry:
         return cls(
             kind=PlaylistNodeKind(kind),
@@ -35,6 +38,7 @@ class PlaylistEntry:
             name=name,
             count=count,
             node=node,
+            virtual=virtual,
         )
 
 

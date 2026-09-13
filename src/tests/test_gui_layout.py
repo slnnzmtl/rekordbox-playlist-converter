@@ -18,6 +18,7 @@ from gui.layout import (
     bind_wraplength,
     center_over_window_geometry,
     fit_window_geometry,
+    place_dialog_over_parent,
 )
 
 
@@ -34,6 +35,45 @@ class CenterOverWindowGeometryTests(unittest.TestCase):
         # Parent not at (0,0); child 500x200 over 1120x720 at +400+240.
         geom = center_over_window_geometry(400, 240, 1120, 720, 500, 200)
         self.assertEqual(geom, "+710+500")
+
+
+class PlaceDialogOverParentTests(unittest.TestCase):
+    def test_place_dialog_over_parent_centers_explicit_size(self) -> None:
+        """Given a parent at a known origin: When placing a 400x200 dialog:
+        Then it is centered on that parent, not on a 1x1 unmapped size."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+
+        root = None
+        dlg = None
+        try:
+            root = tk.Tk()
+            root.geometry("800x600+100+80")
+            root.update_idletasks()
+            root.update()
+            dlg = tk.Toplevel(root)
+            dlg.geometry("400x200")
+            place_dialog_over_parent(dlg, root)
+            root.update_idletasks()
+            root.update()
+            expected = "400x200" + center_over_window_geometry(
+                root.winfo_rootx(),
+                root.winfo_rooty(),
+                root.winfo_width(),
+                root.winfo_height(),
+                400,
+                200,
+            )
+            self.assertEqual(dlg.geometry(), expected)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if dlg is not None:
+                dlg.destroy()
+            if root is not None:
+                root.destroy()
 
 
 class BindWraplengthTests(unittest.TestCase):

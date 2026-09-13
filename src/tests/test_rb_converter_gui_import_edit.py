@@ -32,9 +32,8 @@ def _patches(wav_dir=None, **extra):
         startup_patches(wav_dir=wav_dir) if wav_dir is not None else startup_patches(),
         {
             "threading.Thread": {"side_effect": run_inline_thread},
-            "messagebox.showerror": None,
-            "messagebox.showinfo": None,
-            "messagebox.askyesno": {"return_value": True},
+            "show_centered_message": None,
+            "ask_centered_yesno": {"return_value": True},
         },
         extra,
     )
@@ -279,7 +278,7 @@ class GuiImportEditModeTests(unittest.TestCase):
                 app._load_playlists()
                 app._enter_import_edit_mode()
                 app._start_convert()
-                mocks["messagebox.showerror"].assert_called()
+                mocks["show_centered_message"].assert_called()
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -303,7 +302,7 @@ class GuiImportEditModeTests(unittest.TestCase):
                 mark_output_folder_valid(app)
                 # Force button path even without files.
                 app._enter_import_edit_mode()
-                mocks["messagebox.showerror"].assert_called()
+                mocks["show_centered_message"].assert_called()
                 self.assertFalse(app._import_edit_active())
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -377,7 +376,7 @@ class GuiImportEditMenusTests(unittest.TestCase):
         tk_root = None
         captured: list = []
         try:
-            with app_patches(**_patches(wav_dir=library)), patch.object(
+            with app_patches(**_patches(wav_dir=library)) as mocks, patch.object(
                 ConverterApp,
                 "_confirm_edit_preview",
                 side_effect=lambda **kw: captured.append(kw) or True,
@@ -396,6 +395,9 @@ class GuiImportEditMenusTests(unittest.TestCase):
                 rows = captured[0]["rows"]
                 self.assertEqual(rows[0].track, "Artist - Track")
                 self.assertEqual(rows[0].action, "Move to Trash")
+                mocks["show_centered_message"].assert_called()
+                info_kw = mocks["show_centered_message"].call_args
+                self.assertEqual(info_kw.kwargs.get("title") or info_kw[0][1], "Saved")
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -434,6 +436,51 @@ class GuiImportEditMenusTests(unittest.TestCase):
                     if e.kind.value == "playlist"
                 ]
                 self.assertIn("Night Set [WAV]", names)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if tk_root is not None:
+                tk_root.destroy()
+
+    def test_remove_last_playlist_ref_lists_track_under_unknown(self) -> None:
+        """Given the only playlist Key is removed: When the tree rebuilds:
+        Then Unknown lists the collection track."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        library = _seed_library(self.root_dir)
+        tk_root = None
+        try:
+            with app_patches(**_patches(wav_dir=library)):
+                tk_root = tk.Tk()
+                tk_root.withdraw()
+                app = ConverterApp(tk_root, documents_accessible=False)
+                mark_output_folder_valid(app)
+                app._enter_import_edit_mode()
+                app._edit_remove_track_from_playlist(
+                    "", "Night Set [WAV]", "1"
+                )
+                names = [
+                    e.name
+                    for e in app._playlist_entries
+                    if e.kind.value == "playlist"
+                ]
+                self.assertIn("Unknown", names)
+                unknown_iid = None
+                for iid, meta in app._playlist_iids.items():
+                    if meta[0] == "playlist" and meta[2] == "Unknown":
+                        unknown_iid = iid
+                        break
+                self.assertIsNotNone(unknown_iid)
+                app.playlist_tree.selection_set(unknown_iid)
+                app._refresh_tracklist_preview()
+                labels = [
+                    app.tracklist_tree.item(iid, "text")
+                    for iid in app._tracklist_iids
+                ]
+                self.assertIn("Artist - Track", labels)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

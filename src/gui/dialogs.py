@@ -131,15 +131,13 @@ def show_conversion_preview_dialog(
     on_convert: Callable[[], None],
     place_over: Callable[[tk.Toplevel], None],
 ) -> tk.Toplevel:
-    """Conversion preview table; caller owns Back/Convert semantics.
-
-    Built without make_dialog so there is no transient/grab (matches prior UX).
-    """
+    """Conversion preview table; caller owns Back/Convert semantics."""
     dlg = tk.Toplevel(parent)
     dlg.title("Conversion preview")
     dlg.geometry("960x540")
     dlg.minsize(960, 540)
     dlg.resizable(True, True)
+    dlg.transient(parent)
 
     frm = ttk.Frame(dlg, padding=16)
     frm.grid(row=0, column=0, sticky="nsew")
@@ -353,6 +351,58 @@ def show_list_dialog(
     place_over(dlg)
     if wait:
         dlg.wait_window()
+
+
+def _centered_message_shell(
+    parent: tk.Tk, title: str, message: str
+) -> tuple[tk.Toplevel, ttk.Frame]:
+    dlg, frm = make_dialog(parent, title, grab=True, resizable=False)
+    msg_label = ttk.Label(frm, text=message, justify=tk.LEFT)
+    msg_label.grid(row=0, column=0, sticky="w")
+    bind_wraplength(msg_label, frm, inset=32)
+    btns = ttk.Frame(frm)
+    btns.grid(row=1, column=0, sticky="e", pady=(16, 0))
+    return dlg, btns
+
+
+def show_centered_message(parent: tk.Tk, title: str, message: str) -> None:
+    """Centered OK dialog (replaces macOS system alerts)."""
+    dlg, btns = _centered_message_shell(parent, title, message)
+
+    def close() -> None:
+        dlg.destroy()
+
+    ttk.Button(btns, text="OK", command=close).pack(side=tk.RIGHT)
+    dlg.bind("<Return>", lambda _e: close())
+    dlg.bind("<Escape>", lambda _e: close())
+    dlg.protocol("WM_DELETE_WINDOW", close)
+    place_dialog_over_parent(dlg, parent)
+    dlg.wait_window()
+
+
+def ask_centered_yesno(parent: tk.Tk, title: str, message: str) -> bool:
+    """Centered Yes/No dialog (replaces macOS system askyesno)."""
+    result = False
+    dlg, btns = _centered_message_shell(parent, title, message)
+
+    def on_no() -> None:
+        nonlocal result
+        result = False
+        dlg.destroy()
+
+    def on_yes() -> None:
+        nonlocal result
+        result = True
+        dlg.destroy()
+
+    ttk.Button(btns, text="No", command=on_no).pack(side=tk.LEFT, padx=(0, 8))
+    ttk.Button(btns, text="Yes", command=on_yes).pack(side=tk.LEFT)
+    dlg.bind("<Return>", lambda _e: on_yes())
+    dlg.bind("<Escape>", lambda _e: on_no())
+    dlg.protocol("WM_DELETE_WINDOW", on_no)
+    place_dialog_over_parent(dlg, parent)
+    dlg.wait_window()
+    return result
 
 
 def show_done_dialog(

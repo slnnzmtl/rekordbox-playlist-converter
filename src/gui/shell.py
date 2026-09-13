@@ -26,6 +26,7 @@ from gui.helpers import app_window_icon_path, progress_action_status_hint
 from gui.layout import (
     ACTION_BUTTON_WIDTH,
     HoverTooltip,
+    RowHoverTooltip,
     bind_wraplength,
     path_row,
     place_dialog_over_parent,
@@ -189,6 +190,9 @@ class ShellMixin:
 
         panes.add(left, weight=1)
         panes.add(right, weight=1)
+        self._tracklist_path_tooltip = RowHoverTooltip(
+            self.tracklist_tree, self._tracklist_hover_path
+        )
         self._refresh_tracklist_preview()
 
         _, self.wav_dir_entry, wav_btns = path_row(
@@ -460,7 +464,7 @@ class ShellMixin:
         return str(Path.home())
 
     def _browse_xml(self) -> None:
-        if self._busy or getattr(self, "_import_edit_active", lambda: False)():
+        if self._busy or self._import_edit_active():
             return
         current = self.xml_var.get().strip()
         preferred = Path(current).expanduser().parent if current else None
@@ -474,16 +478,18 @@ class ShellMixin:
             self._persist_output_preferences(include_source_xml=True)
 
     def _refresh_xml(self) -> None:
-        if self._busy or getattr(self, "_import_edit_active", lambda: False)():
+        if self._busy or self._import_edit_active():
             return
         xml_s = self.xml_var.get().strip()
         if not xml_s:
-            runtime.messagebox.showerror("Missing XML", "Choose a Rekordbox XML export.")
+            runtime.show_centered_message(
+                self.root, "Missing XML", "Choose a Rekordbox XML export."
+            )
             return
         self._load_playlists()
 
     def _browse_wav_dir(self) -> None:
-        if self._busy or getattr(self, "_import_edit_active", lambda: False)():
+        if self._busy or self._import_edit_active():
             return
         current = self.library_dir_var.get().strip()
         path = runtime.filedialog.askdirectory(
@@ -509,13 +515,13 @@ class ShellMixin:
         setattr(self, attr, self.root.after(constants.SEARCH_DEBOUNCE_MS, fire))
 
     def _set_busy(self, busy: bool) -> None:
-        if busy and getattr(self, "_import_edit_active", lambda: False)():
+        if busy and self._import_edit_active():
             return
         self._busy = busy
         edit_state = tk.DISABLED if busy else tk.NORMAL
         combo_state = "disabled" if busy else "readonly"
         tree_state = ("disabled",) if busy else ("!disabled",)
-        if getattr(self, "_import_edit_active", lambda: False)():
+        if self._import_edit_active():
             # Edit mode owns chrome locking; only toggle cancel/progress.
             if busy:
                 self._cancel_cancelled_clear()
@@ -566,7 +572,7 @@ class ShellMixin:
     def _update_convert_enabled(self) -> None:
         if self._busy:
             return
-        if getattr(self, "_import_edit_active", lambda: False)():
+        if self._import_edit_active():
             self.convert_btn.configure(state=tk.DISABLED)
             return
         enabled = self._wav_dir_valid and not self._wav_dir_checking
@@ -647,7 +653,7 @@ class ShellMixin:
     def _set_idle_status(self, unique_summary: str | None = None) -> None:
         if self._busy:
             return
-        if getattr(self, "_import_edit_active", lambda: False)():
+        if self._import_edit_active():
             if unique_summary:
                 self.status_var.set(unique_summary)
             else:
@@ -757,14 +763,16 @@ class ShellMixin:
     ) -> None:
         if result.is_error:
             if manual:
-                runtime.messagebox.showerror(
+                runtime.show_centered_message(
+                    self.root,
                     "Update check failed",
                     f"Could not check for updates:\n\n{result.message}",
                 )
             return
         if result.is_up_to_date:
             if manual:
-                runtime.messagebox.showinfo(
+                runtime.show_centered_message(
+                    self.root,
                     "No updates",
                     f"Simple Rekordbox Converter {__version__} is up to date.",
                 )

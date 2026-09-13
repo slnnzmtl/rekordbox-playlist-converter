@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- GUI **Unknown** playlist lists collection tracks that are not in any playlist.
+- GUI tracklist shows artist and title without a file-extension suffix;
+  track search still matches format and filename.
+- GUI tracklist hover shows each track’s file path.
 - GUI **Edit** mode for a generated Import XML: multi-select tracks, remove
   playlists or tracks from the draft, Save confirms pending actions then updates
   XML/manifest and moves owned audio to Trash, Cancel discards. Source Rekordbox

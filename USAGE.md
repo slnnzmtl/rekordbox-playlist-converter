@@ -72,7 +72,7 @@ CLI `--dry-run` prints the same conversion plan the GUI Convert preview shows (a
 
 ### Edit a generated Import XML (GUI)
 
-When the output folder already contains `rekordbox-import.xml` and `.rekordbox-converter-manifest.json`, an **Edit** button appears beside the Import XML path. Edit mode browses that generated library (your Rekordbox source XML stays unchanged). Right-click a playlist or track to remove it; Shift/Command-click to select several tracks, then right-click to remove them together. Missing tracks are marked with `!`. Edits stay in a draft until **Save** — Save shows a preview table of pending removals (remove from playlist vs move to Trash) — or **Cancel**. Convert and folder browsing are locked while editing.
+When the output folder already contains `rekordbox-import.xml` and `.rekordbox-converter-manifest.json`, an **Edit** button appears beside the Import XML path. Edit mode browses that generated library (your Rekordbox source XML stays unchanged). Right-click a playlist or track to remove it; Shift/Command-click to select several tracks, then right-click to remove them together. Tracks that remain in the collection after they leave every playlist appear under **Unknown**. Missing tracks are marked with `!`. Edits stay in a draft until **Save** — Save shows a preview table of pending removals (remove from playlist vs move to Trash) — or **Cancel**. Convert and folder browsing are locked while editing.
 
 ### Same thing with options (optional)
 

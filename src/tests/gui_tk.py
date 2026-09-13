@@ -63,6 +63,8 @@ def startup_patches(
             wav_dir if wav_dir is not None else DEFAULT_WAV_DIR,
             output if output is not None else DEFAULT_OUTPUT,
         ),
+        "show_centered_message": None,
+        "ask_centered_yesno": {"return_value": True},
     }
     result.update(extra)
     return result
