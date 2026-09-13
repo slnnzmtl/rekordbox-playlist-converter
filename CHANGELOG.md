@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Internal refactor: GUI layout helpers live in `gui/layout.py` and dialog builders in
+  `gui/dialogs.py`; encode/copy bodies live in `convert/encode.py` behind `convert_plan`.
+  Status and dialog labels wrap with window size.
 - GUI Cancel after encode writes Import XML from tracks already in the success
   set, then finishes Cancelled (re-run Convert to finish the rest).
 - Format-flat layout: converted files live under `WAV|AIFF/<artist> - <track>` (no Album or quality directories). Import XML remains `<output>/rekordbox-import.xml`.

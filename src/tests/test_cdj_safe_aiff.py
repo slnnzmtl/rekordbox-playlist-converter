@@ -15,6 +15,7 @@ if str(_SRC) not in sys.path:
 
 import rb_playlist_to_wav as rb
 import convert_plan
+from convert import encode
 import xml_output
 import ffmpeg_tools
 
@@ -626,7 +627,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             src.write_bytes(b"flac")
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             normalize_calls: list[tuple[Path, Path]] = []
-            real_norm = convert_plan._normalize_aiff_audio_chunks
+            real_norm = encode._normalize_aiff_audio_chunks
 
             def tracking_norm(source: Path, out: Path) -> None:
                 normalize_calls.append((source, out))
@@ -642,11 +643,11 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 write_pcm_aiff(out, bits=16, sample_rate_bytes=RATE_44100)
 
             with mock.patch.object(
-                convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg
+                encode, "run_ffmpeg", side_effect=fake_ffmpeg
             ), mock.patch.object(
-                convert_plan, "extract_cover_jpeg", return_value=None
+                encode, "extract_cover_jpeg", return_value=None
             ), mock.patch.object(
-                convert_plan, "_normalize_aiff_audio_chunks", side_effect=tracking_norm
+                encode, "_normalize_aiff_audio_chunks", side_effect=tracking_norm
             ):
                 rb.write_aiff_output(
                     src,

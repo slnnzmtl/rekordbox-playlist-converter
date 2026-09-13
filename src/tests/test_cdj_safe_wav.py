@@ -15,6 +15,7 @@ if str(_SRC) not in sys.path:
 
 import rb_playlist_to_wav as rb
 import convert_plan
+from convert import encode
 import ffmpeg_tools
 
 
@@ -295,20 +296,20 @@ class RunFfmpegRewriteGateTests(unittest.TestCase):
                     return self.returncode
 
             rewrite_calls: list[tuple[Path, Path]] = []
-            real_rewrite = convert_plan._rewrite_wav_pcm
+            real_rewrite = encode._rewrite_wav_pcm
 
             def tracking_rewrite(source: Path, out: Path) -> None:
                 rewrite_calls.append((source, out))
                 real_rewrite(source, out)
 
             with mock.patch.object(
-                convert_plan.subprocess, "Popen", FakeProc
+                encode.subprocess, "Popen", FakeProc
             ), mock.patch.object(
                 ffmpeg_tools, "tool_path", return_value="/bin/ffmpeg"
             ), mock.patch.object(
                 ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
             ), mock.patch.object(
-                convert_plan, "_rewrite_wav_pcm", side_effect=tracking_rewrite
+                encode, "_rewrite_wav_pcm", side_effect=tracking_rewrite
             ):
                 convert_plan.run_ffmpeg(
                     src, dest, "pcm_s16le", force=True, sample_rate=44100, bit_depth=16

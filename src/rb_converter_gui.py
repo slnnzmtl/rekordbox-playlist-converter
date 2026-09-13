@@ -34,10 +34,22 @@ import webbrowser
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import rb_playlist_to_wav as rb
 import converter_manifest
+from gui.layout import (
+    ACTION_BUTTON_WIDTH,
+    HoverTooltip,
+    SearchPlaceholder,
+    active_display_bounds,
+    bind_wraplength,
+    fit_window_geometry,
+    path_row,
+    place_dialog_over_parent,
+    tree_with_yscroll,
+)
+from gui import dialogs as gui_dialogs
 from preview_bit_depth import (
     cached_preview_bit_depth,
     peek_cached_preview_bit_depth,
@@ -73,7 +85,6 @@ BIT_DEPTH_LABELS = {"16": "16-bit", "24": "24-bit"}
 SAMPLE_RATE_LABELS = {"44100": "44.1 kHz", "48000": "48 kHz"}
 BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items()}
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
-ACTION_BUTTON_WIDTH = 9
 CANCELLED_STATUS_CLEAR_MS = 3000
 PREVIEW_ACTION_LABELS = {
     "reuse": "Reuse existing",
@@ -98,41 +109,6 @@ WAV_DIR_VALIDATE_DEBOUNCE_MS = 300
 # One probe worker; apply this many depths per UI callback so Tk can paint.
 PREVIEW_BIT_DEPTH_BATCH = 24
 PREVIEW_BIT_DEPTH_YIELD_S = 0.02
-
-
-class _HoverTooltip:
-    """Minimal Tk Enter/Leave balloon (no third-party tooltip library)."""
-
-    def __init__(self, widget: tk.Widget, text: str) -> None:
-        self.widget = widget
-        self.text = text
-        self._tip: tk.Toplevel | None = None
-        widget.bind("<Enter>", self._show, add="+")
-        widget.bind("<Leave>", self._hide, add="+")
-
-    def _show(self, _event: object = None) -> None:
-        if self._tip is not None or not self.text:
-            return
-        x = self.widget.winfo_rootx() + 16
-        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 4
-        tip = tk.Toplevel(self.widget)
-        tip.wm_overrideredirect(True)
-        tip.wm_geometry(f"+{x}+{y}")
-        label = ttk.Label(
-            tip,
-            text=self.text,
-            relief=tk.SOLID,
-            borderwidth=1,
-            padding=(6, 3),
-            wraplength=320,
-        )
-        label.pack()
-        self._tip = tip
-
-    def _hide(self, _event: object = None) -> None:
-        if self._tip is not None:
-            self._tip.destroy()
-            self._tip = None
 
 
 def _bundled_asset(name: str) -> Path:
@@ -170,89 +146,6 @@ def progress_action_status_hint(
     return f"{action.capitalize()} ({current}/{total}) {name}…"
 
 
-def fit_window_geometry(
-    width: int,
-    height: int,
-    left: int,
-    top: int,
-    right: int,
-    bottom: int,
-) -> str:
-    """Return WxH+X+Y centered and fully inside the given display rect."""
-    avail_w = max(1, right - left)
-    avail_h = max(1, bottom - top)
-    w = min(width, avail_w)
-    h = min(height, avail_h)
-    x = left + (avail_w - w) // 2
-    y = top + (avail_h - h) // 2
-    return f"{w}x{h}+{x}+{y}"
-
-
-def center_over_window_geometry(
-    parent_x: int,
-    parent_y: int,
-    parent_w: int,
-    parent_h: int,
-    child_w: int,
-    child_h: int,
-) -> str:
-    """Return +X+Y that centers a child window over its parent."""
-    x = parent_x + (parent_w - child_w) // 2
-    y = parent_y + (parent_h - child_h) // 2
-    return f"+{x}+{y}"
-
-
-def _active_display_bounds() -> tuple[int, int, int, int] | None:
-    """Usable bounds of the display under the pointer (Tk left, top, right, bottom)."""
-    if sys.platform != "darwin":
-        return None
-    script = (
-        "ObjC.import('AppKit');\n"
-        "var screens = $.NSScreen.screens;\n"
-        "var primary = screens.objectAtIndex(0);\n"
-        "var ph = primary.frame.size.height;\n"
-        "var mouse = $.NSEvent.mouseLocation;\n"
-        "var chosen = primary;\n"
-        "for (var i = 0; i < screens.count; i++) {\n"
-        "  var s = screens.objectAtIndex(i);\n"
-        "  var f = s.frame;\n"
-        "  if (mouse.x >= f.origin.x && mouse.x <= f.origin.x + f.size.width &&\n"
-        "      mouse.y >= f.origin.y && mouse.y <= f.origin.y + f.size.height) {\n"
-        "    chosen = s;\n"
-        "    break;\n"
-        "  }\n"
-        "}\n"
-        "var vf = chosen.visibleFrame;\n"
-        "var tkL = Math.round(vf.origin.x);\n"
-        "var tkT = Math.round(ph - vf.origin.y - vf.size.height);\n"
-        "var tkR = Math.round(tkL + vf.size.width);\n"
-        "var tkB = Math.round(tkT + vf.size.height);\n"
-        "tkL + ',' + tkT + ',' + tkR + ',' + tkB;\n"
-    )
-    try:
-        proc = subprocess.run(
-            ["osascript", "-l", "JavaScript", "-e", script],
-            capture_output=True,
-            text=True,
-            timeout=2,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if proc.returncode != 0:
-        return None
-    parts = (proc.stdout or "").strip().split(",")
-    if len(parts) != 4:
-        return None
-    try:
-        left, top, right, bottom = (int(p.strip()) for p in parts)
-    except ValueError:
-        return None
-    if right <= left or bottom <= top:
-        return None
-    return left, top, right, bottom
-
-
 def open_in_finder(path: Path) -> None:
     """Reveal a folder or select a file in Finder (macOS) / file browser."""
     if path.is_dir():
@@ -268,39 +161,6 @@ def open_in_finder(path: Path) -> None:
         subprocess.run(["open", str(parent)], check=False)
 
 
-class _SearchPlaceholder:
-    """Grey hint text for a StringVar; query ignores the hint itself."""
-
-    def __init__(self, var: tk.StringVar, text: str) -> None:
-        self.var = var
-        self.text = text
-        self.showing = False
-
-    def show(self) -> None:
-        self.showing = True
-        self.var.set(self.text)
-
-    def clear(self) -> None:
-        if not self.showing:
-            return
-        self.showing = False
-        self.var.set("")
-
-    def query(self) -> str:
-        raw = self.var.get()
-        if self.showing and raw == self.text:
-            return ""
-        self.showing = False
-        return raw.strip()
-
-    def bind(self, entry: ttk.Entry) -> None:
-        entry.bind("<FocusIn>", lambda _e: self.clear())
-        entry.bind(
-            "<FocusOut>",
-            lambda _e: self.show() if not self.var.get().strip() else None,
-        )
-
-
 class ConverterApp:
     def __init__(
         self,
@@ -311,7 +171,7 @@ class ConverterApp:
         self.root = root
         root.title(f"Simple Rekordbox Converter {__version__}")
         root.minsize(560, 480)
-        bounds = _active_display_bounds()
+        bounds = active_display_bounds()
         if bounds is not None:
             root.geometry(fit_window_geometry(1120, 720, *bounds))
         else:
@@ -345,8 +205,8 @@ class ConverterApp:
         self.sample_rate_var = tk.StringVar(value=saved_rate)
         self.search_var = tk.StringVar()
         self.track_search_var = tk.StringVar()
-        self._playlist_search = _SearchPlaceholder(self.search_var, SEARCH_PLACEHOLDER)
-        self._track_search = _SearchPlaceholder(
+        self._playlist_search = SearchPlaceholder(self.search_var, SEARCH_PLACEHOLDER)
+        self._track_search = SearchPlaceholder(
             self.track_search_var, TRACK_SEARCH_PLACEHOLDER
         )
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
@@ -479,74 +339,14 @@ class ConverterApp:
             self._show_xml_choice_modal(paths)
 
     def _show_xml_choice_modal(self, paths: list[Path]) -> None:
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Choose Rekordbox XML")
-        dlg.transient(self.root)
-        dlg.grab_set()
-        dlg.resizable(True, True)
-
-        frm = ttk.Frame(dlg, padding=16)
-        frm.grid(row=0, column=0, sticky="nsew")
-        dlg.columnconfigure(0, weight=1)
-        dlg.rowconfigure(0, weight=1)
-        frm.columnconfigure(0, weight=1)
-        frm.rowconfigure(1, weight=1)
-
-        ttk.Label(
-            frm,
-            text="Several Rekordbox XML files were found. Choose one to load:",
-            wraplength=480,
-        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
-
-        list_frame = ttk.Frame(frm)
-        list_frame.grid(row=1, column=0, sticky="nsew")
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
-        listbox = tk.Listbox(list_frame, height=min(8, max(3, len(paths))), width=72)
-        scroll = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=listbox.yview)
-        listbox.configure(yscrollcommand=scroll.set)
-        listbox.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
-        for path in paths:
-            listbox.insert(tk.END, str(path))
-        listbox.selection_set(0)
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=2, column=0, sticky="e", pady=(12, 0))
-
-        def close() -> None:
-            dlg.destroy()
-
-        def open_selected() -> None:
-            selection = listbox.curselection()
-            if not selection:
-                return
-            chosen = paths[int(selection[0])]
+        def on_open(chosen: Path) -> None:
             self._adopt_source_xml(chosen)
             self._persist_output_preferences(include_source_xml=True)
-            close()
 
-        ttk.Button(btns, text="Cancel", command=close).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btns, text="Open", command=open_selected).pack(side=tk.LEFT)
-        listbox.bind("<Double-Button-1>", lambda _e: open_selected())
-        dlg.bind("<Return>", lambda _e: open_selected())
-        dlg.bind("<Escape>", lambda _e: close())
-        dlg.protocol("WM_DELETE_WINDOW", close)
-        self._place_dialog_over_app(dlg)
-        dlg.wait_window()
+        gui_dialogs.show_xml_choice_dialog(self.root, paths, on_open=on_open)
 
     def _place_dialog_over_app(self, dlg: tk.Toplevel) -> None:
-        dlg.update_idletasks()
-        dlg.geometry(
-            center_over_window_geometry(
-                self.root.winfo_rootx(),
-                self.root.winfo_rooty(),
-                max(self.root.winfo_width(), 1),
-                max(self.root.winfo_height(), 1),
-                max(dlg.winfo_reqwidth(), dlg.winfo_width(), 1),
-                max(dlg.winfo_reqheight(), dlg.winfo_height(), 1),
-            )
-        )
+        place_dialog_over_parent(dlg, self.root)
 
     def _apply_documents_access(self, override: bool | None) -> None:
         if override is None:
@@ -590,11 +390,9 @@ class ConverterApp:
         frm.columnconfigure(1, weight=1)
         frm.rowconfigure(1, weight=1)
 
-        ttk.Label(frm, text="Rekordbox XML").grid(row=0, column=0, sticky="w", **pad)
-        self.xml_entry = ttk.Entry(frm, textvariable=self.xml_var)
-        self.xml_entry.grid(row=0, column=1, sticky="ew", **pad)
-        xml_btns = ttk.Frame(frm)
-        xml_btns.grid(row=0, column=2, sticky="e", **pad)
+        _, self.xml_entry, xml_btns = path_row(
+            frm, row=0, label="Rekordbox XML", textvariable=self.xml_var, pad=pad
+        )
         self.xml_browse_btn = ttk.Button(
             xml_btns,
             text="Browse…",
@@ -623,16 +421,9 @@ class ConverterApp:
         self.search_entry = ttk.Entry(left, textvariable=self.search_var)
         self.search_entry.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         self._playlist_search.bind(self.search_entry)
-        self.playlist_tree = ttk.Treeview(
-            left,
-            show="tree",
-            selectmode="extended",
-            height=12,
+        self.playlist_tree, scroll = tree_with_yscroll(
+            left, show="tree", selectmode="extended", height=12
         )
-        scroll = ttk.Scrollbar(
-            left, orient=tk.VERTICAL, command=self.playlist_tree.yview
-        )
-        self.playlist_tree.configure(yscrollcommand=scroll.set)
         self.playlist_tree.grid(row=1, column=0, sticky="nsew")
         scroll.grid(row=1, column=1, sticky="ns")
         self.playlist_tree.bind("<<TreeviewSelect>>", self._on_playlist_select, add="+")
@@ -644,7 +435,7 @@ class ConverterApp:
         self.track_search_entry = ttk.Entry(right, textvariable=self.track_search_var)
         self.track_search_entry.grid(row=0, column=0, sticky="ew", pady=(0, 4))
         self._track_search.bind(self.track_search_entry)
-        self.tracklist_tree = ttk.Treeview(
+        self.tracklist_tree, track_scroll = tree_with_yscroll(
             right,
             columns=("format", "bit_depth", "sample_rate"),
             show="tree headings",
@@ -685,10 +476,6 @@ class ConverterApp:
             background=TRACKLIST_HEADER_SELECTED_BG,
             foreground=TRACKLIST_HEADER_SELECTED_FG,
         )
-        track_scroll = ttk.Scrollbar(
-            right, orient=tk.VERTICAL, command=self.tracklist_tree.yview
-        )
-        self.tracklist_tree.configure(yscrollcommand=track_scroll.set)
         self.tracklist_tree.grid(row=1, column=0, sticky="nsew")
         track_scroll.grid(row=1, column=1, sticky="ns")
         self.tracklist_tree.bind(
@@ -706,36 +493,39 @@ class ConverterApp:
         panes.add(right, weight=1)
         self._refresh_tracklist_preview()
 
-        ttk.Label(frm, text="Output folder").grid(row=2, column=0, sticky="w", **pad)
-        self.wav_dir_entry = ttk.Entry(frm, textvariable=self.wav_dir_var)
-        self.wav_dir_entry.grid(row=2, column=1, sticky="ew", **pad)
+        _, self.wav_dir_entry, wav_btns = path_row(
+            frm, row=2, label="Output folder", textvariable=self.wav_dir_var, pad=pad
+        )
         self.wav_dir_browse_btn = ttk.Button(
-            frm,
+            wav_btns,
             text="Browse…",
             width=ACTION_BUTTON_WIDTH,
             command=self._browse_wav_dir,
         )
-        self.wav_dir_browse_btn.grid(row=2, column=2, sticky="e", **pad)
+        self.wav_dir_browse_btn.pack(side=tk.LEFT)
         self.wav_dir_error_label = ttk.Label(
             frm,
             textvariable=self.wav_dir_error_var,
             foreground="#a40000",
-            wraplength=720,
         )
+        bind_wraplength(self.wav_dir_error_label, frm, inset=24)
         # Row 3 is used only while validation has a message (grid_remove otherwise).
 
-        import_xml_label = ttk.Label(frm, text="Import XML")
-        import_xml_label.grid(row=4, column=0, sticky="w", **pad)
+        import_xml_label, self.import_xml_entry, _import_btns = path_row(
+            frm,
+            row=4,
+            label="Import XML",
+            textvariable=self.output_var,
+            pad=pad,
+            entry_state="disabled",
+            entry_cursor="hand2",
+        )
         import_xml_label.configure(cursor="hand2")
         import_xml_label.bind("<Button-1>", self._copy_import_xml_path, add="+")
-        self.import_xml_entry = ttk.Entry(
-            frm, textvariable=self.output_var, state="disabled", cursor="hand2"
-        )
-        self.import_xml_entry.grid(row=4, column=1, sticky="ew", **pad)
         self.import_xml_entry.bind(
             "<Button-1>", self._copy_import_xml_path, add="+"
         )
-        _HoverTooltip(self.import_xml_entry, "Click to copy the Import XML path")
+        HoverTooltip(self.import_xml_entry, "Click to copy the Import XML path")
 
         ttk.Label(frm, text="Format").grid(row=5, column=0, sticky="w", **pad)
         format_opts = ttk.Frame(frm)
@@ -773,7 +563,7 @@ class ConverterApp:
         self.bit_depth_combo.bind(
             "<<ComboboxSelected>>", self._on_bit_depth_selected, add="+"
         )
-        _HoverTooltip(self.bit_depth_combo, BIT_DEPTH_24_TOOLTIP)
+        HoverTooltip(self.bit_depth_combo, BIT_DEPTH_24_TOOLTIP)
         self.sample_rate_combo = ttk.Combobox(
             quality,
             values=list(SAMPLE_RATE_LABELS.values()),
@@ -787,7 +577,7 @@ class ConverterApp:
         self.sample_rate_combo.bind(
             "<<ComboboxSelected>>", self._on_sample_rate_selected, add="+"
         )
-        _HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
+        HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
 
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
         self.progress.grid(row=7, column=0, columnspan=2, sticky="ew", **pad)
@@ -811,9 +601,10 @@ class ConverterApp:
 
         status_row = ttk.Frame(frm)
         status_row.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
-        ttk.Label(status_row, textvariable=self.status_var, wraplength=1000).pack(
-            side=tk.LEFT
-        )
+        status_row.columnconfigure(0, weight=1)
+        status_label = ttk.Label(status_row, textvariable=self.status_var)
+        status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        bind_wraplength(status_label, status_row, inset=12)
         ttk.Label(status_row, textvariable=self.scan_status_var).pack(
             side=tk.LEFT, padx=(12, 0)
         )
@@ -866,43 +657,15 @@ class ConverterApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def _show_usage_guide(self) -> None:
-        if self._usage_window is not None and self._usage_window.winfo_exists():
-            self._usage_window.lift()
-            self._usage_window.focus_force()
-            return
-
-        dlg = tk.Toplevel(self.root)
-        self._usage_window = dlg
-        dlg.title("How to use")
-        dlg.transient(self.root)
-        dlg.geometry("640x520")
-        dlg.minsize(480, 360)
-
-        frm = ttk.Frame(dlg, padding=12)
-        frm.grid(row=0, column=0, sticky="nsew")
-        dlg.columnconfigure(0, weight=1)
-        dlg.rowconfigure(0, weight=1)
-        frm.columnconfigure(0, weight=1)
-        frm.rowconfigure(0, weight=1)
-
-        text = scrolledtext.ScrolledText(
-            frm, wrap=tk.WORD, width=72, height=28, font=("Menlo", 11)
-        )
-        text.grid(row=0, column=0, sticky="nsew")
-        text.insert("1.0", USAGE_GUIDE.strip() + "\n")
-        text.configure(state=tk.DISABLED)
-
-        def close() -> None:
+        def on_closed() -> None:
             self._usage_window = None
-            dlg.destroy()
 
-        btns = ttk.Frame(frm)
-        btns.grid(row=1, column=0, sticky="e", pady=(12, 0))
-        ttk.Button(btns, text="Close", command=close).pack(side=tk.RIGHT)
-        dlg.bind("<Escape>", lambda _e: close())
-        dlg.protocol("WM_DELETE_WINDOW", close)
-        self._place_dialog_over_app(dlg)
-        dlg.focus_force()
+        self._usage_window = gui_dialogs.show_usage_guide_dialog(
+            self.root,
+            USAGE_GUIDE,
+            existing=self._usage_window,
+            on_closed=on_closed,
+        )
 
     def _on_browser_panes_configure(self, event: object = None) -> None:
         if self._browser_sash_set:
@@ -1970,20 +1733,6 @@ class ConverterApp:
         """Modal unique-output preview; Convert continues, Back/Escape discard."""
         self._close_preview_dialog()
         preview = prepared.preview
-        dlg = tk.Toplevel(self.root)
-        self._preview_dialog = dlg
-        dlg.title("Conversion preview")
-        dlg.geometry("960x540")
-        dlg.minsize(960, 540)
-        dlg.resizable(True, True)
-
-        frm = ttk.Frame(dlg, padding=16)
-        frm.grid(row=0, column=0, sticky="nsew")
-        dlg.columnconfigure(0, weight=1)
-        dlg.rowconfigure(0, weight=1)
-        frm.columnconfigure(0, weight=1)
-        frm.rowconfigure(1, weight=1)
-
         summary = (
             f"{preview.unique_outputs} unique output file(s) · "
             f"{preview.selected} selected · "
@@ -1991,89 +1740,22 @@ class ConverterApp:
             f"{preview.duplicates} duplicate(s) · "
             f"{preview.missing} missing"
         )
-        ttk.Label(frm, text=summary, wraplength=930).grid(
-            row=0, column=0, sticky="w", pady=(0, 8)
-        )
-
-        table_frame = ttk.Frame(frm)
-        table_frame.grid(row=1, column=0, sticky="nsew")
-        table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
-
-        columns = ("action", "quality", "size")
-        table = ttk.Treeview(
-            table_frame,
-            columns=columns,
-            show="tree headings",
-            selectmode="browse",
-            height=18,
-        )
-        table.heading("#0", text="Input file", anchor="w")
-        table.heading("action", text="Action", anchor="w")
-        table.heading("quality", text="Quality", anchor="w")
-        table.heading("size", text="Size", anchor="e")
-        table.column("#0", width=400, stretch=True, minwidth=160)
-        table.column("action", width=110, stretch=False, anchor="w")
-        table.column("quality", width=150, stretch=False, anchor="w")
-        table.column("size", width=130, stretch=False, minwidth=120, anchor="e")
-        yscroll = ttk.Scrollbar(
-            table_frame, orient=tk.VERTICAL, command=table.yview
-        )
-        table.configure(yscrollcommand=yscroll.set)
-        table.grid(row=0, column=0, sticky="nsew")
-        yscroll.grid(row=0, column=1, sticky="ns")
-
-        for item in preview.items:
-            action = PREVIEW_ACTION_LABELS.get(item.action, item.action)
-            depth = BIT_DEPTH_LABELS.get(str(item.bit_depth), f"{item.bit_depth}-bit")
-            rate = SAMPLE_RATE_LABELS.get(
-                str(item.sample_rate), f"{item.sample_rate} Hz"
-            )
-            quality = f"{depth} / {rate}"
-            table.insert(
-                "",
-                tk.END,
-                text=item.source_display,
-                values=(action, quality, item.size_display),
-            )
-
         space_issue = rb.insufficient_output_space_message(
             prepared.wav_dir,
             rb.preview_write_bytes(preview),
         )
-        issue_row = 2
-        btn_row = 2
-        if space_issue:
-            ttk.Label(
-                frm,
-                text=space_issue,
-                foreground="#a40000",
-                wraplength=930,
-            ).grid(row=issue_row, column=0, sticky="w", pady=(8, 0))
-            btn_row = 3
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=btn_row, column=0, sticky="ew", pady=(12, 0))
-        btns.columnconfigure(0, weight=1)
-
-        def on_back() -> None:
-            self._discard_prepared_conversion()
-
-        def on_convert() -> None:
-            self._confirm_prepared_conversion()
-
-        ttk.Button(
-            btns, text="Back", command=on_back, width=ACTION_BUTTON_WIDTH
-        ).grid(row=0, column=0, sticky="w")
-        convert_btn = ttk.Button(
-            btns, text="Convert", command=on_convert, width=ACTION_BUTTON_WIDTH
+        self._preview_dialog = gui_dialogs.show_conversion_preview_dialog(
+            self.root,
+            summary=summary,
+            items=preview.items,
+            action_labels=PREVIEW_ACTION_LABELS,
+            bit_depth_labels=BIT_DEPTH_LABELS,
+            sample_rate_labels=SAMPLE_RATE_LABELS,
+            space_issue=space_issue,
+            on_back=self._discard_prepared_conversion,
+            on_convert=self._confirm_prepared_conversion,
+            place_over=self._place_dialog_over_app,
         )
-        convert_btn.grid(row=0, column=1, sticky="e")
-        if space_issue:
-            convert_btn.configure(state=tk.DISABLED)
-        dlg.protocol("WM_DELETE_WINDOW", on_back)
-        dlg.bind("<Escape>", lambda _e: on_back())
-        self._place_dialog_over_app(dlg)
         self.status_var.set("Review conversion…")
         self._animate_progress_to(0, snap=True)
 
@@ -2315,60 +1997,15 @@ class ConverterApp:
         summary: str | None = None,
         wait: bool = True,
     ) -> None:
-        dlg = tk.Toplevel(self.root)
-        dlg.title(title)
-        dlg.transient(self.root)
-        dlg.grab_set()
-        dlg.resizable(True, True)
-
-        frm = ttk.Frame(dlg, padding=16)
-        frm.grid(row=0, column=0, sticky="nsew")
-        dlg.columnconfigure(0, weight=1)
-        dlg.rowconfigure(0, weight=1)
-        frm.columnconfigure(0, weight=1)
-        frm.rowconfigure(2 if summary else 1, weight=1)
-
-        row = 0
-        if summary:
-            ttk.Label(frm, text=summary, justify=tk.LEFT, wraplength=520).grid(
-                row=row, column=0, sticky="w", pady=(0, 8)
-            )
-            row += 1
-
-        ttk.Label(frm, text=intro, wraplength=520).grid(
-            row=row, column=0, sticky="w", pady=(0, 8)
+        gui_dialogs.show_list_dialog(
+            self.root,
+            title,
+            intro,
+            lines,
+            summary=summary,
+            wait=wait,
+            place_over=self._place_dialog_over_app,
         )
-        row += 1
-
-        list_frame = ttk.Frame(frm)
-        list_frame.grid(row=row, column=0, sticky="nsew")
-        list_frame.columnconfigure(0, weight=1)
-        list_frame.rowconfigure(0, weight=1)
-        listbox = tk.Listbox(
-            list_frame, height=min(12, max(4, len(lines))), width=72
-        )
-        scroll = ttk.Scrollbar(
-            list_frame, orient=tk.VERTICAL, command=listbox.yview
-        )
-        listbox.configure(yscrollcommand=scroll.set)
-        listbox.grid(row=0, column=0, sticky="nsew")
-        scroll.grid(row=0, column=1, sticky="ns")
-        for line in lines:
-            listbox.insert(tk.END, line)
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=row + 1, column=0, sticky="e", pady=(12, 0))
-
-        def close() -> None:
-            dlg.destroy()
-
-        ttk.Button(btns, text="OK", command=close).pack(side=tk.RIGHT)
-        dlg.bind("<Return>", lambda _e: close())
-        dlg.bind("<Escape>", lambda _e: close())
-        dlg.protocol("WM_DELETE_WINDOW", close)
-        self._place_dialog_over_app(dlg)
-        if wait:
-            dlg.wait_window()
 
     def _show_done_dialog(
         self,
@@ -2376,54 +2013,15 @@ class ConverterApp:
         open_dir: Path | None,
         import_xml: Path | None = None,
     ) -> None:
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Done")
-        dlg.transient(self.root)
-        dlg.grab_set()
-        dlg.resizable(False, False)
-
-        frm = ttk.Frame(dlg, padding=16)
-        frm.grid(row=0, column=0, sticky="nsew")
-        ttk.Label(frm, text=message, justify=tk.LEFT, wraplength=480).grid(
-            row=0, column=0, columnspan=2, sticky="w"
+        gui_dialogs.show_done_dialog(
+            self.root,
+            message,
+            open_dir=open_dir,
+            import_xml=import_xml,
+            reveal=open_in_finder,
+            on_open_guide=self._show_usage_guide,
+            place_over=self._place_dialog_over_app,
         )
-        btns = ttk.Frame(frm)
-        btns.grid(row=1, column=0, columnspan=2, sticky="e", pady=(16, 0))
-
-        def close() -> None:
-            dlg.destroy()
-
-        def reveal_library() -> None:
-            if open_dir is not None:
-                open_in_finder(open_dir)
-            close()
-
-        def reveal_import_xml() -> None:
-            if import_xml is not None:
-                open_in_finder(import_xml)
-            close()
-
-        def open_guide() -> None:
-            close()
-            self._show_usage_guide()
-
-        if open_dir is not None:
-            ttk.Button(
-                btns, text="Reveal audio folder", command=reveal_library
-            ).pack(side=tk.LEFT, padx=(0, 8))
-        if import_xml is not None:
-            ttk.Button(
-                btns, text="Reveal import XML", command=reveal_import_xml
-            ).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btns, text="Open usage guide", command=open_guide).pack(
-            side=tk.LEFT, padx=(0, 8)
-        )
-        ttk.Button(btns, text="OK", command=close).pack(side=tk.LEFT)
-        dlg.bind("<Return>", lambda _e: close())
-        dlg.bind("<Escape>", lambda _e: close())
-        dlg.protocol("WM_DELETE_WINDOW", close)
-        self._place_dialog_over_app(dlg)
-        dlg.wait_window()
 
     def _start_update_check(self, *, manual: bool) -> None:
         if self._update_check_running:
@@ -2468,42 +2066,15 @@ class ConverterApp:
                 self._show_update_available(result.release)
 
     def _show_update_available(self, release: ReleaseInfo) -> None:
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Update available")
-        dlg.transient(self.root)
-        dlg.grab_set()
-        dlg.resizable(False, False)
-
-        frm = ttk.Frame(dlg, padding=16)
-        frm.grid(row=0, column=0, sticky="nsew")
-
-        message = (
-            f"A new version is available.\n\n"
-            f"Current version: {__version__}\n"
-            f"Latest version: {release.version}"
+        gui_dialogs.show_update_available_dialog(
+            self.root,
+            current_version=__version__,
+            latest_version=release.version,
+            release_notes=release.release_notes or "",
+            html_url=release.html_url,
+            open_url=webbrowser.open,
+            place_over=self._place_dialog_over_app,
         )
-        if release.release_notes:
-            message += f"\n\n{release.release_notes}"
-        ttk.Label(frm, text=message, justify=tk.LEFT, wraplength=480).grid(
-            row=0, column=0, columnspan=2, sticky="w"
-        )
-
-        btns = ttk.Frame(frm)
-        btns.grid(row=1, column=0, columnspan=2, sticky="e", pady=(16, 0))
-
-        def close() -> None:
-            dlg.destroy()
-
-        def view_release() -> None:
-            webbrowser.open(release.html_url)
-            close()
-
-        ttk.Button(btns, text="Later", command=close).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btns, text="View release", command=view_release).pack(side=tk.LEFT)
-        dlg.bind("<Escape>", lambda _e: close())
-        dlg.protocol("WM_DELETE_WINDOW", close)
-        self._place_dialog_over_app(dlg)
-        dlg.wait_window()
 
 
 def main() -> int:

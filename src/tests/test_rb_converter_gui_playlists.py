@@ -17,17 +17,7 @@ if str(_TESTS) not in sys.path:
 from test_preview_bit_depth import _flac_with_bit_depth
 
 from update_check import UpdateCheckResult
-
-
-def _mark_output_folder_valid(app) -> None:
-    after_id = getattr(app, "_wav_dir_validate_after_id", None)
-    if after_id is not None:
-        app.root.after_cancel(after_id)
-        app._wav_dir_validate_after_id = None
-    app._wav_dir_checking = False
-    app._wav_dir_valid = True
-    app._set_wav_dir_error("")
-    app._update_convert_enabled()
+from gui_tk import mark_output_folder_valid, pump_ui, tk_available
 
 
 def _flush_debounced(app, attr: str, callback) -> None:
@@ -122,14 +112,6 @@ TRACKLIST_XML = """\
 """
 
 
-def _tk_available() -> bool:
-    try:
-        import _tkinter  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
 def _write_xml(directory: Path, text: str) -> Path:
     path = directory / "rekordbox.xml"
     path.write_text(text, encoding="utf-8")
@@ -157,7 +139,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
         return root, app
 
     def test_load_playlists_paints_folder_tree(self) -> None:
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -186,7 +168,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 root.destroy()
 
     def test_load_playlists_keeps_missing_xml_status(self) -> None:
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -208,7 +190,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 root.destroy()
 
     def test_load_playlists_keeps_cli_error_status(self) -> None:
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -234,7 +216,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
     def test_folders_do_not_select_playlists(self) -> None:
         """Folders never contribute playlists: click expands only; programmatic
         folder selection is ignored; folder+child keeps only the playlist."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -272,7 +254,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 root.destroy()
 
     def test_selected_playlists_rejects_same_leaf_name(self) -> None:
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -304,7 +286,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 root.destroy()
 
     def test_convert_rejects_same_name_when_both_have_tracks(self) -> None:
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -339,7 +321,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ) as prepare, patch(
                     "rb_converter_gui.threading.Thread", side_effect=run_inline
                 ), patch("rb_converter_gui.messagebox.showerror") as showerror:
-                    _mark_output_folder_valid(app)
+                    mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()
 
@@ -353,7 +335,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 root.destroy()
 
     def test_search_keeps_ancestors_of_matches(self) -> None:
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -380,7 +362,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 root.destroy()
 
     def test_tracklist_preview_shows_rows_unique_total_and_empty(self) -> None:
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -455,7 +437,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
     def test_tracklist_group_open_state_persists_across_selection(self) -> None:
         """Arrow click collapses without selecting; collapsed groups stay closed
         when another playlist is added; after full deselect, reselect expands."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -511,7 +493,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
     def test_tracklist_selection_follows_leaves_and_group_header(self) -> None:
         """Listed leaves start selected; header remaps to leaves; header tag
         tracks whether any of that group's tracks are selected."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -572,7 +554,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
     def test_convert_worker_passes_shared_source_root_for_two_playlists(self) -> None:
         """Given two playlists: When _convert_worker runs: Then prepare gets the
         same source_root for each playlist (one shared XML parse)."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -623,7 +605,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ), patch(
                     "rb_converter_gui.threading.Thread", side_effect=run_inline
                 ), patch("rb_converter_gui.messagebox.showerror"):
-                    _mark_output_folder_valid(app)
+                    mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()
 
@@ -641,7 +623,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
     def test_convert_passes_selected_track_keys_to_prepare(self) -> None:
         """Deselected (including missing) Keys are not prepared; empty errors."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -688,7 +670,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ), patch(
                     "rb_converter_gui.threading.Thread", side_effect=run_inline
                 ), patch("rb_converter_gui.messagebox.showerror"):
-                    _mark_output_folder_valid(app)
+                    mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()  # _finish_error while showerror is patched
 
@@ -705,7 +687,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ) as prepare, patch(
                     "rb_converter_gui.messagebox.showerror"
                 ) as showerror:
-                    _mark_output_folder_valid(app)
+                    mark_output_folder_valid(app)
                     app._start_convert()
                     prepare.assert_not_called()
                     showerror.assert_called()
@@ -718,7 +700,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
     def test_track_search_filters_listed_rows_and_clears(self) -> None:
         """Track search matches preview labels; clear restores the listed set."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -768,7 +750,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
     def test_tracklist_bit_depth_from_on_disk_file(self) -> None:
         """Bit depth paints as — then fills async; flush after(0) to apply."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -857,7 +839,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
     def test_tracklist_bit_depth_cache_clears_on_xml_refresh(self) -> None:
         """XML reload drops the session cache; first paint is — again."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -929,7 +911,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
     def test_tracklist_hides_unsupported_formats_keeps_missing(self) -> None:
         """Path rows outside SUPPORTED_LOSSLESS_EXT are hidden; missing stays."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -1010,7 +992,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 ), patch(
                     "rb_converter_gui.threading.Thread", side_effect=run_inline
                 ), patch("rb_converter_gui.messagebox.showerror"):
-                    _mark_output_folder_valid(app)
+                    mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()
 
@@ -1028,7 +1010,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
     def test_tracklist_heading_sorts_within_groups(self) -> None:
         """Heading clicks sort leaves inside each group; reverse; survives search."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
@@ -1145,7 +1127,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
 
     def test_tracklist_bit_depth_sort_reorders_after_fill(self) -> None:
         """Sorting by bit depth re-applies after async header fill."""
-        if not _tk_available():
+        if not tk_available():
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
