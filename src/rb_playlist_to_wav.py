@@ -17,13 +17,6 @@ import ffmpeg_tools
 import xml_output
 from cdj_aiff import (
     AIFF_SAFE_BIT_DEPTHS,
-    _AiffAudioInfo,
-    _extract_id3_chunk,
-    _is_canonical_aiff_output,
-    _normalize_aiff_audio_chunks,
-    _parse_aiff_audio,
-    _read_id3_frames,
-    _ssnd_pcm_bytes,
     build_id3v23_tag,
     expected_id3_text_from_track,
     extract_cover_jpeg,
@@ -35,17 +28,18 @@ from cdj_wav import (
     CDJ_SAFE_CHUNK_IDS,
     WAVE_FORMAT_PCM,
     WavInfo,
-    _rewrite_wav_pcm,
     is_cdj_safe_wav,
     parse_wav_info,
 )
 from cli_error import CancelledError, CliError
+from convert.models import PreparedConversion
 from gui_preferences import import_xml_path
 from rekordbox_xml import (
     XML_CANDIDATE_RELATIVE,
     collection_indexes,
     decode_location,
     discover_xml_candidates,
+    duplicate_playlist_name_error,
     encode_location,
     find_playlists_by_name,
     iter_playlist_nodes,
@@ -364,46 +358,33 @@ def run_convert_batch(
             print(str(exc), file=sys.stderr)
             return 1
 
-    try:
-        manifest = converter_manifest.load_manifest(wav_dir)
-    except CliError as exc:
-        print(str(exc), file=sys.stderr)
+    prepared, errors = prepare_batch(
+        xml_path,
+        playlist_refs,
+        wav_dir,
+        output,
+        output_format=output_format,
+        max_bit_depth=max_bit_depth,
+        max_sample_rate=max_sample_rate,
+        force=force,
+        source_root=source_root,
+    )
+    if errors:
+        print_errors(errors)
         return 1
+    assert prepared is not None
+    if prepared.skipped:
+        print_warnings(prepared.skipped)
 
-    plans: list[Plan] = []
-    for folder, name in playlist_refs:
-        plan, errors = prepare(
-            xml_path,
-            name,
-            wav_dir,
-            output,
-            playlist_folder=folder,
-            output_format=output_format,
-            max_bit_depth=max_bit_depth,
-            max_sample_rate=max_sample_rate,
-            source_root=source_root,
-            manifest=manifest,
-        )
-        if errors:
-            print_errors(errors)
-            return 1
-        assert plan is not None
-        if plan.warnings:
-            print_warnings(plan.warnings)
-        plans.append(plan)
-
-    xml_output.share_output_root(plans)
+    plans = prepared.plans
+    items = prepared.items
+    manifest = prepared.manifest
+    preview = prepared.preview
 
     if dry_run:
-        items = convert_plan.collect_batch_unique(plans)
-        convert_plan.share_cover_caches(plans)
-        preview = convert_plan.build_conversion_preview(plans, items, force=force)
         print_conversion_preview(plans, preview)
         return 0
 
-    items = convert_plan.collect_batch_unique(plans)
-    convert_plan.share_cover_caches(plans)
-    preview = convert_plan.build_conversion_preview(plans, items, force=force)
     space_issue = convert_plan.insufficient_output_space_message(
         wav_dir,
         convert_plan.preview_write_bytes(preview),
@@ -615,6 +596,109 @@ def prepare(
     )
     errors.extend(plan_errors)
     return plan, errors
+
+
+def prepare_batch(
+    xml_path: Path,
+    playlist_refs: list[tuple[str | None, str]],
+    wav_dir: Path,
+    output: Path,
+    *,
+    output_format: str = "wav",
+    max_bit_depth: int = 24,
+    max_sample_rate: int = 48000,
+    force: bool = False,
+    track_keys_by_playlist: dict[tuple[str | None, str], Collection[str]] | None = None,
+    on_progress: Callable[[int, int, str, str], None] | None = None,
+    cancel_event: threading.Event | None = None,
+    source_root: ET.Element | None = None,
+    manifest: converter_manifest.ConverterManifest | None = None,
+    on_playlist_preparing: Callable[[str, int, int], None] | None = None,
+) -> tuple[PreparedConversion | None, list[str]]:
+    """Prepare playlists, share root/covers, collect unique items, build preview.
+
+    Uses module-level prepare / share_* / collect_* / build_conversion_preview so
+    GUI tests that patch rb.* still bind the same seams.
+    """
+    if cancel_event is not None and cancel_event.is_set():
+        raise CancelledError("conversion cancelled")
+
+    # Callers that want one shared parse must pass source_root; prepare() loads
+    # per playlist when it is None (keeps GUI tests that mock prepare working).
+    if manifest is None:
+        try:
+            manifest = converter_manifest.load_manifest(wav_dir)
+        except CliError as exc:
+            return None, [str(exc)]
+
+    plans: list[Plan] = []
+    skipped: list[str] = []
+    total = len(playlist_refs)
+    for i, (folder, name) in enumerate(playlist_refs):
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("conversion cancelled")
+        if on_playlist_preparing is not None:
+            on_playlist_preparing(name, i, total)
+        track_keys = None
+        if track_keys_by_playlist is not None:
+            track_keys = track_keys_by_playlist[(folder, name)]
+        plan, errors = prepare(
+            xml_path,
+            name,
+            wav_dir,
+            output,
+            playlist_folder=folder,
+            output_format=output_format,
+            max_bit_depth=max_bit_depth,
+            max_sample_rate=max_sample_rate,
+            track_keys=track_keys,
+            on_progress=on_progress,
+            cancel_event=cancel_event,
+            source_root=source_root,
+            manifest=manifest,
+        )
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("conversion cancelled")
+        if errors:
+            return None, errors
+        assert plan is not None
+        # Reuse the first plan's source tree for later playlists when the caller
+        # did not pass a shared root (same as a successful prepare parse).
+        if source_root is None:
+            plan_root = getattr(plan, "source_root", None)
+            if plan_root is not None:
+                source_root = plan_root
+        plans.append(plan)
+        skipped.extend(plan.warnings)
+
+    share_output_root(plans)
+    items = collect_batch_unique(plans)
+    share_cover_caches(plans)
+    if cancel_event is not None and cancel_event.is_set():
+        raise CancelledError("conversion cancelled")
+
+    preview = build_conversion_preview(
+        plans,
+        items,
+        force=force,
+        cancel_event=cancel_event,
+        on_progress=on_progress,
+    )
+    if cancel_event is not None and cancel_event.is_set():
+        raise CancelledError("conversion cancelled")
+
+    return (
+        PreparedConversion(
+            plans=plans,
+            items=items,
+            manifest=manifest,
+            preview=preview,
+            wav_dir=wav_dir,
+            output=output,
+            skipped=skipped,
+        ),
+        [],
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

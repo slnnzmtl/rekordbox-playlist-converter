@@ -20,6 +20,7 @@ if FIND_REKORDBOX_XML_FLAG in sys.argv:
 
 import tkinter as tk
 
+from convert.models import PreparedConversion
 from gui.app import ConverterApp
 from gui.constants import (
     DEFAULT_OUTPUT,
@@ -28,7 +29,6 @@ from gui.constants import (
     FALLBACK_WAV_DIR,
 )
 from gui.helpers import (
-    PreparedConversion,
     app_logo_path,
     app_window_icon_path,
     progress_action_status_hint,

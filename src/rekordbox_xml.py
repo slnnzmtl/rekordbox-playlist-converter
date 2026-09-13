@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import unicodedata
 import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import quote, unquote
@@ -220,6 +221,15 @@ def discover_xml_candidates(
     return found
 
 
+def duplicate_playlist_name_error(names: list[str]) -> str | None:
+    """Error when two selected playlists share a leaf name; else None."""
+    dupes = sorted({n for n, c in Counter(names).items() if c > 1})
+    if not dupes:
+        return None
+    listed = ", ".join(dupes)
+    return f"cannot select multiple playlists with the same name: {listed}"
+
+
 def parse_playlist_selection(
     text: str,
     entries: list[tuple[str, str, ET.Element]],
@@ -261,12 +271,9 @@ def parse_playlist_selection(
         seen_idx.add(i)
         unique_chosen.append(entry)
     names = [name for _f, name, _n in unique_chosen]
-    dupes = {n for n in names if names.count(n) > 1}
-    if dupes:
-        listed = ", ".join(sorted(dupes))
-        return [], [
-            f"cannot select multiple playlists with the same name: {listed}"
-        ]
+    dupe_error = duplicate_playlist_name_error(names)
+    if dupe_error is not None:
+        return [], [dupe_error]
     return unique_chosen, []
 
 

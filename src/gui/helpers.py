@@ -3,24 +3,9 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 from gui import constants
-from gui import runtime
-
-
-@dataclass
-class PreparedConversion:
-    """In-memory prepare result held until the user confirms or discards."""
-
-    plans: list
-    items: list
-    manifest: runtime.converter_manifest.ConverterManifest
-    preview: runtime.rb.ConversionPreview
-    wav_dir: Path
-    output: Path
-    skipped: list[str]
 
 
 def _bundled_asset(name: str) -> Path:

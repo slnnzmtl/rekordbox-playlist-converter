@@ -16,6 +16,7 @@ if str(_SRC) not in sys.path:
 import rb_playlist_to_wav as rb
 import convert_plan
 from convert import encode
+import cdj_aiff
 import xml_output
 import ffmpeg_tools
 
@@ -98,7 +99,7 @@ class CdjSafeAiffTests(unittest.TestCase):
             body += b"SSND" + struct.pack(">I", len(ssnd)) + ssnd
             form = b"AIFF" + body
             path.write_bytes(b"FORM" + struct.pack(">I", len(form)) + form)
-            self.assertEqual(rb._ssnd_pcm_bytes(path), pcm)
+            self.assertEqual(cdj_aiff._ssnd_pcm_bytes(path), pcm)
 
     def test_parse_rejects_ssnd_shorter_than_frames_after_offset(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -115,7 +116,7 @@ class CdjSafeAiffTests(unittest.TestCase):
             form = b"AIFF" + body
             path.write_bytes(b"FORM" + struct.pack(">I", len(form)) + form)
             with self.assertRaises(rb.CliError) as ctx:
-                rb._parse_aiff_audio(path)
+                cdj_aiff._parse_aiff_audio(path)
             self.assertIn("SSND payload shorter", str(ctx.exception))
 
     def test_safe_16_44100_and_24_48000_stereo(self) -> None:
@@ -342,25 +343,21 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             write_pcm_aiff(dest)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             rb.write_aiff_id3(dest, el, None)
-            real_parse = rb._parse_aiff_audio
+            real_parse = cdj_aiff._parse_aiff_audio
             calls = {"n": 0}
 
             def counting_parse(path: Path):
                 calls["n"] += 1
                 return real_parse(path)
 
-            with mock.patch.object(rb, "_parse_aiff_audio", side_effect=counting_parse):
-                # Patch the name used inside cdj_aiff / convert_plan facades.
-                import cdj_aiff
-
-                with mock.patch.object(
-                    cdj_aiff, "_parse_aiff_audio", side_effect=counting_parse
-                ):
-                    self.assertTrue(
-                        rb._is_canonical_aiff_output(
-                            dest, el, None, bit_depth=16, sample_rate=44100
-                        )
+            with mock.patch.object(
+                cdj_aiff, "_parse_aiff_audio", side_effect=counting_parse
+            ):
+                self.assertTrue(
+                    cdj_aiff._is_canonical_aiff_output(
+                        dest, el, None, bit_depth=16, sample_rate=44100
                     )
+                )
             self.assertEqual(calls["n"], 1)
 
     def test_extract_id3_chunk_does_not_read_ssnd_payload(self) -> None:
@@ -382,11 +379,11 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             bytes_read = {"n": 0}
             open_patch, read_bytes_patch = patch_counting_open(path, bytes_read)
             with open_patch, read_bytes_patch:
-                tag = rb._extract_id3_chunk(path)
+                tag = cdj_aiff._extract_id3_chunk(path)
 
             self.assertIsNotNone(tag)
             assert tag is not None
-            text, cover = rb._read_id3_frames(tag)
+            text, cover = cdj_aiff._read_id3_frames(tag)
             self.assertEqual(text.get("TIT2"), "Song")
             self.assertIsNone(cover)
             # Headers + COMM + ID3 tag only; far below SSND size.
@@ -413,13 +410,13 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 rb.is_cdj_safe_aiff(dest, bit_depth=16, sample_rate=44100)
             )
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff._is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
-            tag = rb._extract_id3_chunk(dest)
+            tag = cdj_aiff._extract_id3_chunk(dest)
             assert tag is not None
-            text, cover = rb._read_id3_frames(tag)
+            text, cover = cdj_aiff._read_id3_frames(tag)
             self.assertEqual(text.get("TIT2"), "Пісня")
             self.assertEqual(text.get("TPE1"), "Артист")
             self.assertIsNone(cover)
@@ -431,16 +428,16 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             root = Path(tmp)
             src = root / "safe.aiff"
             write_pcm_aiff(src, extra_chunks=[(b"NAME", b"x\x00")])
-            before = rb._ssnd_pcm_bytes(src)
+            before = cdj_aiff._ssnd_pcm_bytes(src)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             dest = root / "out.aiff"
             rb.write_aiff_output(
                 src, dest, el, passthrough=True, codec=None,
                 bit_depth=16, sample_rate=44100,
             )
-            self.assertEqual(rb._ssnd_pcm_bytes(dest), before)
+            self.assertEqual(cdj_aiff._ssnd_pcm_bytes(dest), before)
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff._is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
@@ -520,12 +517,12 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             rb.write_aiff_id3(dest, el, None)
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff._is_canonical_aiff_output(
                     dest, el, None, bit_depth=24, sample_rate=48000
                 )
             )
             self.assertFalse(
-                rb._is_canonical_aiff_output(
+                cdj_aiff._is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
@@ -660,7 +657,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 )
             self.assertEqual(normalize_calls, [])
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff._is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
@@ -696,11 +693,11 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 src, dest, el, passthrough=False, codec="pcm_s16be",
                 bit_depth=16, sample_rate=44100,
             )
-            info = rb._parse_aiff_audio(dest)
+            info = cdj_aiff._parse_aiff_audio(dest)
             self.assertEqual(info.bits_per_sample, 16)
             self.assertEqual(info.sample_rate_bytes, RATE_44100)
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff._is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
@@ -741,11 +738,11 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 bit_depth=24,
                 sample_rate=48000,
             )
-            info = rb._parse_aiff_audio(dest)
+            info = cdj_aiff._parse_aiff_audio(dest)
             self.assertEqual(info.bits_per_sample, 24)
             self.assertEqual(info.sample_rate_bytes, RATE_48000)
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff._is_canonical_aiff_output(
                     dest, el, None, bit_depth=24, sample_rate=48000
                 )
             )

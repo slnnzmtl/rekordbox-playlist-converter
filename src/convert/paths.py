@@ -13,6 +13,7 @@ from convert.quality import (
     coerce_bit_depth,
     coerce_sample_rate,
 )
+from ffmpeg_tools import bits_from_raw_sample
 
 
 def abs_path(path: Path) -> Path:
@@ -133,15 +134,7 @@ def target_from_stream(
     max_sample_rate = coerce_sample_rate(max_sample_rate)
 
     fmt = str(stream.get("sample_fmt") or "")
-    raw = stream.get("bits_per_raw_sample")
-    bits: int | None = None
-    if raw not in (None, "", "0", "N/A"):
-        try:
-            bits = int(raw)
-        except (TypeError, ValueError):
-            bits = None
-    if bits is None and fmt in ("s16", "s16p"):
-        bits = 16
+    bits = bits_from_raw_sample(stream)
     if bits is None and fmt in ("s24", "s24p", "s32", "s32p"):
         bits = 24 if "24" in fmt else 32
     if bits is None:

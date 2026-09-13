@@ -145,10 +145,8 @@ def first_stream(probe: dict) -> dict | None:
     return streams[0] if streams else None
 
 
-def pcm_codec_for_stream(stream: dict) -> str:
-    fmt = str(stream.get("sample_fmt") or "")
-    if fmt in ("flt", "fltp"):
-        return "pcm_f32le"
+def bits_from_raw_sample(stream: dict) -> int | None:
+    """Return bits_per_raw_sample, or 16 for s16/s16p sample_fmt; else None."""
     raw = stream.get("bits_per_raw_sample")
     bits: int | None = None
     if raw not in (None, "", "0", "N/A"):
@@ -156,8 +154,18 @@ def pcm_codec_for_stream(stream: dict) -> str:
             bits = int(raw)
         except (TypeError, ValueError):
             bits = None
-    if bits is None and fmt in ("s16", "s16p"):
-        bits = 16
+    if bits is None:
+        fmt = str(stream.get("sample_fmt") or "")
+        if fmt in ("s16", "s16p"):
+            bits = 16
+    return bits
+
+
+def pcm_codec_for_stream(stream: dict) -> str:
+    fmt = str(stream.get("sample_fmt") or "")
+    if fmt in ("flt", "fltp"):
+        return "pcm_f32le"
+    bits = bits_from_raw_sample(stream)
     if bits is None:
         raise CliError("unknown bit depth")
     codec = CODEC_BY_DEPTH.get(bits)

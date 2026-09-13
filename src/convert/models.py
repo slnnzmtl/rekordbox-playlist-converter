@@ -8,7 +8,10 @@ import threading
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+if TYPE_CHECKING:
+    from converter_manifest import ConverterManifest
 
 
 class Progress:
@@ -120,3 +123,16 @@ class ConvertStats:
     errors: list[str] = field(default_factory=list)
     # (source_key, format) that skipped, copied, or converted successfully.
     succeeded: set[tuple[str, str]] = field(default_factory=set)
+
+
+@dataclass
+class PreparedConversion:
+    """In-memory prepare result held until the user confirms or the CLI writes."""
+
+    plans: list[Plan]
+    items: list[PlannedTrack]
+    manifest: ConverterManifest
+    preview: ConversionPreview
+    wav_dir: Path
+    output: Path
+    skipped: list[str]

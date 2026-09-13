@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import tkinter as tk
-from collections import Counter
 from pathlib import Path
 
+from convert.models import PreparedConversion
 from convert.quality import (
     coerce_bit_depth,
     coerce_output_format,
@@ -15,7 +15,6 @@ from gui import constants
 from gui import dialogs as gui_dialogs
 from gui import runtime
 from gui.helpers import (
-    PreparedConversion,
     total_successful_conversions,
 )
 from update_check import ReleaseInfo, UpdateCheckResult
@@ -59,13 +58,9 @@ class ConvertFlowMixin:
             runtime.messagebox.showerror("Selection", "Select at least one track.")
             return
         names = [name for _folder, name in selected]
-        dupes = {n for n, c in Counter(names).items() if c > 1}
-        if dupes:
-            listed = ", ".join(sorted(dupes))
-            runtime.messagebox.showerror(
-                "Selection",
-                f"cannot select multiple playlists with the same name: {listed}",
-            )
+        dupe_error = runtime.rb.duplicate_playlist_name_error(names)
+        if dupe_error is not None:
+            runtime.messagebox.showerror("Selection", dupe_error)
             return
 
         wav_dir, output = self._resolved_output_paths()
@@ -99,8 +94,6 @@ class ConvertFlowMixin:
         max_sample_rate = self._convert_max_sample_rate
         xml_path = self._convert_xml_path
         try:
-            skipped: list[str] = []
-            plans: list[runtime.rb.Plan] = []
             # Reuse UI-loaded tree when it matches this convert's XML; else parse once.
             loaded_xml = Path(self.xml_var.get().strip()).expanduser()
             if self._source_root is not None and loaded_xml == xml_path:
@@ -113,11 +106,6 @@ class ConvertFlowMixin:
                     return
             else:
                 source_root = None
-            try:
-                manifest = runtime.converter_manifest.load_manifest(wav_dir)
-            except runtime.rb.CliError as exc:
-                self._ui(lambda e=[str(exc)]: self._finish_error(e))
-                return
 
             def progress_tick(
                 current: int,
@@ -131,64 +119,29 @@ class ConvertFlowMixin:
                     )
                 )
 
-            for i, (folder, name) in enumerate(selected):
-                if self._cancel_event.is_set():
-                    self._ui(self._finish_cancelled)
-                    return
-                label = f"{name} ({i + 1}/{len(selected)})"
+            def on_playlist_preparing(name: str, index: int, total: int) -> None:
+                label = f"{name} ({index + 1}/{total})"
                 self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
 
-                plan, errors = runtime.rb.prepare(
-                    xml_path,
-                    name,
-                    wav_dir,
-                    output,
-                    playlist_folder=folder,
-                    output_format=output_format,
-                    max_bit_depth=max_bit_depth,
-                    max_sample_rate=max_sample_rate,
-                    track_keys=keys_by_playlist[(folder, name)],
-                    on_progress=progress_tick,
-                    cancel_event=self._cancel_event,
-                    source_root=source_root,
-                    manifest=manifest,
-                )
-                if self._cancel_event.is_set():
-                    self._ui(self._finish_cancelled)
-                    return
-                if errors:
-                    self._ui(lambda e=errors: self._finish_error(e))
-                    return
-                assert plan is not None
-                plans.append(plan)
-                skipped.extend(plan.warnings)
-
-            runtime.rb.share_output_root(plans)
-            items = runtime.rb.collect_batch_unique(plans)
-            runtime.rb.share_cover_caches(plans)
-            if self._cancel_event.is_set():
-                self._ui(self._finish_cancelled)
-                return
-
-            preview = runtime.rb.build_conversion_preview(
-                plans,
-                items,
+            prepared, errors = runtime.rb.prepare_batch(
+                xml_path,
+                selected,
+                wav_dir,
+                output,
+                output_format=output_format,
+                max_bit_depth=max_bit_depth,
+                max_sample_rate=max_sample_rate,
                 force=False,
-                cancel_event=self._cancel_event,
+                track_keys_by_playlist=keys_by_playlist,
                 on_progress=progress_tick,
+                cancel_event=self._cancel_event,
+                source_root=source_root,
+                on_playlist_preparing=on_playlist_preparing,
             )
-            if self._cancel_event.is_set():
-                self._ui(self._finish_cancelled)
+            if errors:
+                self._ui(lambda e=errors: self._finish_error(e))
                 return
-            prepared = PreparedConversion(
-                plans=plans,
-                items=items,
-                manifest=manifest,
-                preview=preview,
-                wav_dir=wav_dir,
-                output=output,
-                skipped=skipped,
-            )
+            assert prepared is not None
             self._ui(lambda p=prepared: self._on_prepare_ready(p))
         except runtime.rb.CancelledError:
             self._ui(self._finish_cancelled)

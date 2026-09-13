@@ -5,6 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 from pathlib import Path
 
+from convert.models import PreparedConversion
 from convert.quality import (
     coerce_bit_depth,
     coerce_output_format,
@@ -13,7 +14,6 @@ from convert.quality import (
 from gui import constants
 from gui import runtime
 from gui.convert_flow import ConvertFlowMixin
-from gui.helpers import PreparedConversion
 from gui.layout import SearchPlaceholder, active_display_bounds, fit_window_geometry
 from gui.playlists import PlaylistsMixin
 from gui.shell import ShellMixin

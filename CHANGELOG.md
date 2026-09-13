@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Internal: drop private CDJ re-exports from `rb_playlist_to_wav` (tests import
+  `cdj_aiff` / `cdj_wav`); shared `prepare_batch` + `PreparedConversion` in
+  `convert/models.py`; `bits_from_raw_sample` for ffprobe bit parse; one
+  `duplicate_playlist_name_error` helper in `rekordbox_xml`.
 - Internal: shared `gui_tk.run_inline_thread` for GUI unit tests (replaces ~16
   copied `threading.Thread` stubs).
 - Internal: shared path helpers in `convert/paths.py` (`abs_path`, `collision_key`,

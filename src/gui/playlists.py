@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import tkinter as tk
-from collections import Counter
 from pathlib import Path
 
 from gui import constants
@@ -496,11 +495,8 @@ class PlaylistsMixin:
         if unique_names:
             names = [name for _folder, name in chosen]
             # Same output playlist name `{name} [WAV]` — refuse converting two at once.
-            dupes = {n for n, c in Counter(names).items() if c > 1}
-            if dupes:
-                listed = ", ".join(sorted(dupes))
-                raise runtime.rb.CliError(
-                    f"cannot select multiple playlists with the same name: {listed}"
-                )
+            dupe_error = runtime.rb.duplicate_playlist_name_error(names)
+            if dupe_error is not None:
+                raise runtime.rb.CliError(dupe_error)
         return chosen
 
