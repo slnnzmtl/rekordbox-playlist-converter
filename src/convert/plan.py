@@ -51,12 +51,9 @@ def default_convert_workers() -> int:
     return max(CONVERT_WORKERS_MIN, min(n, CONVERT_WORKERS_MAX))
 
 
-CONVERT_WORKERS = default_convert_workers()
-
-
 def convert_worker_count(n_items: int, *, workers: int | None = None) -> int:
     """Clamp requested or default workers to 1..4 and to the number of items."""
-    base = CONVERT_WORKERS if workers is None else int(workers)
+    base = default_convert_workers() if workers is None else int(workers)
     capped = max(CONVERT_WORKERS_MIN, min(base, CONVERT_WORKERS_MAX))
     if n_items <= 0:
         return CONVERT_WORKERS_MIN
@@ -82,15 +79,15 @@ def cached_cover_jpeg(
 
 
 def run_ffmpeg(*args, **kwargs):
-    """Encode via convert.encode; inject CONVERT_WORKERS for timeout scaling."""
-    kwargs.setdefault("convert_workers", CONVERT_WORKERS)
+    """Encode via convert.encode; inject default workers for timeout scaling."""
+    kwargs.setdefault("convert_workers", default_convert_workers())
     return _encode_run_ffmpeg(*args, **kwargs)
 
 
 def write_aiff_output(*args, **kwargs):
     """Write AIFF via convert.encode; inject cover cache + worker defaults."""
     kwargs.setdefault("cover_lookup", cached_cover_jpeg)
-    kwargs.setdefault("convert_workers", CONVERT_WORKERS)
+    kwargs.setdefault("convert_workers", default_convert_workers())
     return _encode_write_aiff_output(*args, **kwargs)
 
 

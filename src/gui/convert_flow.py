@@ -1,4 +1,4 @@
-"""Convert / preview / finish / update-check mixin."""
+"""Convert / preview / finish mixin."""
 
 from __future__ import annotations
 
@@ -17,8 +17,6 @@ from gui import runtime
 from gui.helpers import (
     total_successful_conversions,
 )
-from update_check import ReleaseInfo, UpdateCheckResult
-from version import __version__
 
 
 class ConvertFlowMixin:
@@ -443,59 +441,6 @@ class ConvertFlowMixin:
             import_xml=import_xml,
             reveal=runtime.open_in_finder,
             on_open_guide=self._show_usage_guide,
-            place_over=self._place_dialog_over_app,
-        )
-
-    def _start_update_check(self, *, manual: bool) -> None:
-        if self._update_check_running:
-            return
-        self._update_check_running = True
-
-        def worker() -> None:
-            result = runtime.check_for_update(__version__)
-
-            def on_ui(r=result, m=manual) -> None:
-                self._update_check_running = False
-                self._handle_update_check_result(r, manual=m)
-
-            self._ui(on_ui)
-
-        runtime.threading.Thread(target=worker, daemon=True).start()
-
-    def _check_for_updates_manual(self) -> None:
-        self._start_update_check(manual=True)
-
-    def _handle_update_check_result(
-        self, result: UpdateCheckResult, *, manual: bool
-    ) -> None:
-        if result.is_error:
-            if manual:
-                runtime.messagebox.showerror(
-                    "Update check failed",
-                    f"Could not check for updates:\n\n{result.message}",
-                )
-            return
-        if result.is_up_to_date:
-            if manual:
-                runtime.messagebox.showinfo(
-                    "No updates",
-                    f"Simple Rekordbox Converter {__version__} is up to date.",
-                )
-            return
-        if result.is_update_available and result.release is not None:
-            if manual or not self._update_modal_shown:
-                if not manual:
-                    self._update_modal_shown = True
-                self._show_update_available(result.release)
-
-    def _show_update_available(self, release: ReleaseInfo) -> None:
-        gui_dialogs.show_update_available_dialog(
-            self.root,
-            current_version=__version__,
-            latest_version=release.version,
-            release_notes=release.release_notes or "",
-            html_url=release.html_url,
-            open_url=runtime.webbrowser.open,
             place_over=self._place_dialog_over_app,
         )
 

@@ -132,29 +132,8 @@ def prepare_batch(
     manifest: converter_manifest.ConverterManifest | None = None,
     on_playlist_preparing: Callable[[str, int, int], None] | None = None,
     workers: int | None = None,
-    prepare_fn: Callable[..., tuple[Plan | None, list[str]]] | None = None,
-    share_output_root_fn: Callable[[list[Plan]], None] | None = None,
-    collect_batch_unique_fn: Callable[[list[Plan]], list] | None = None,
-    share_cover_caches_fn: Callable[[list[Plan]], None] | None = None,
-    build_conversion_preview_fn: Callable[..., object] | None = None,
 ) -> tuple[PreparedConversion | None, list[str]]:
-    """Prepare playlists, share root/covers, collect unique items, build preview.
-
-    Optional *_fn args let hosts (rb facade) inject patched module-level seams.
-    """
-    prepare_one = prepare if prepare_fn is None else prepare_fn
-    share_root = share_output_root if share_output_root_fn is None else share_output_root_fn
-    collect_unique = (
-        collect_batch_unique if collect_batch_unique_fn is None else collect_batch_unique_fn
-    )
-    share_covers = (
-        share_cover_caches if share_cover_caches_fn is None else share_cover_caches_fn
-    )
-    build_preview = (
-        build_conversion_preview
-        if build_conversion_preview_fn is None
-        else build_conversion_preview_fn
-    )
+    """Prepare playlists, share root/covers, collect unique items, build preview."""
     if cancel_event is not None and cancel_event.is_set():
         raise CancelledError("conversion cancelled")
 
@@ -175,7 +154,7 @@ def prepare_batch(
         track_keys = None
         if track_keys_by_playlist is not None:
             track_keys = track_keys_by_playlist[(folder, name)]
-        plan, errors = prepare_one(
+        plan, errors = prepare(
             xml_path,
             name,
             wav_dir,
@@ -203,13 +182,13 @@ def prepare_batch(
         plans.append(plan)
         skipped.extend(plan.warnings)
 
-    share_root(plans)
-    items = collect_unique(plans)
-    share_covers(plans)
+    share_output_root(plans)
+    items = collect_batch_unique(plans)
+    share_cover_caches(plans)
     if cancel_event is not None and cancel_event.is_set():
         raise CancelledError("conversion cancelled")
 
-    preview = build_preview(
+    preview = build_conversion_preview(
         plans,
         items,
         force=force,

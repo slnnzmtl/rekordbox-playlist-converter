@@ -41,6 +41,7 @@ def classify_source(
     max_sample_rate: int = 48000,
 ) -> tuple[str, bool, int, int]:
     """Return (ffmpeg_codec or 'copy', is_copy, bit_depth, sample_rate)."""
+    output_format = coerce_output_format(output_format)
     ext = path.suffix.lower()
     codec_name = str(stream.get("codec_name") or "")
     if ext not in SUPPORTED_LOSSLESS_EXT:
@@ -81,6 +82,7 @@ def inplace_noop_and_error(
     sample_rate: int,
 ) -> tuple[bool, str | None]:
     """Return (noop, error_message) for in-place source==dest cases during planning."""
+    output_format = coerce_output_format(output_format)
     in_place = same_file(item.source_path, item.dest_path)
     if output_format == "aiff":
         if not in_place:

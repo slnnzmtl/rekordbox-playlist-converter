@@ -12,7 +12,8 @@
   CLI failure). Stderr progress lives in `convert.progress`. Cover extract uses
   `COVER_MAX_SIDE` and does not swallow cancel as a missing cover. CDJ/encode
   helpers used across modules are public (`parse_aiff_audio`, `copy_wav_atomic`,
-  `rewrite_wav_pcm`, …). Convert workers are an explicit parameter (no mutable
+  `rewrite_wav_pcm`, …). Convert workers are an explicit parameter; the default
+  comes from `default_convert_workers()` at use time (no frozen
   `CONVERT_WORKERS` global).
 - Internal: shared write port `convert.write.execute_prepared` (save
   manifest → convert_unique → apply_xml → write_import_xml). GUI and CLI hosts
@@ -39,12 +40,9 @@
 - Internal: shared `convert/quality.py` allowlists for output format / bit depth /
   sample rate (parse for prefs omit, coerce for GUI/convert/CDJ defaults);
   format directory names shared with the converter manifest.
-- Internal refactor (pass 3): convert plan dataclasses live in `convert/models.py`
-  and pure path/stream helpers in `convert/paths.py`; `convert_plan.py` remains the
-  patched facade (`planned_action`, `CONVERT_WORKERS`, encode wrappers, orchestrators).
-  Oversized GUI preference tests split into `test_rb_converter_gui_preferences.py`,
-  `test_rb_converter_gui_browse.py`, `test_rb_converter_gui_xml_search.py`, and
-  `test_rb_converter_gui_library.py`.
+- Internal: GUI update-check methods live on `ShellMixin` (menu owner); convert
+  flow mixin stays prepare/preview/write only. `prepare_batch` has no injectable
+  `*_fn` seams.
 - Internal refactor (pass 2): `ConverterApp` lives in `gui/app.py` with
   `gui/shell.py` / `gui/playlists.py` / `gui/convert_flow.py` mixins; patched
   names are looked up on `gui.runtime` (`gui_tk.GUI_MODULE`). Helpers/constants
@@ -56,7 +54,7 @@
   `gui/browser.py` and `gui/tracklist.py`; preview bit-depth batch constants in
   `preview_bit_depth.py`. `rb_converter_gui.py` remains the TCC / PyInstaller entry.
 - Internal refactor: GUI layout helpers live in `gui/layout.py` and dialog builders in
-  `gui/dialogs.py`; encode/copy bodies live in `convert/encode.py` behind `convert_plan`.
+  `gui/dialogs.py`; encode/copy bodies live in `convert/encode.py`.
   Status and dialog labels wrap with window size.
 - GUI Cancel after encode writes Import XML from tracks already in the success
   set, then finishes Cancelled (re-run Convert to finish the rest).
