@@ -332,6 +332,65 @@ class InPlaceAiffTests(unittest.TestCase):
 
 
 class Id3AndConvertAiffTests(unittest.TestCase):
+    def test_canonical_aiff_output_parses_dest_once(self) -> None:
+        """Given a canonical AIFF dest: When _is_canonical_aiff_output runs:
+        Then _parse_aiff_audio is invoked once (no separate is_cdj_safe + ID3 walk)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dest = root / "out.aiff"
+            write_pcm_aiff(dest)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            rb.write_aiff_id3(dest, el, None)
+            real_parse = rb._parse_aiff_audio
+            calls = {"n": 0}
+
+            def counting_parse(path: Path):
+                calls["n"] += 1
+                return real_parse(path)
+
+            with mock.patch.object(rb, "_parse_aiff_audio", side_effect=counting_parse):
+                # Patch the name used inside cdj_aiff / convert_plan facades.
+                import cdj_aiff
+
+                with mock.patch.object(
+                    cdj_aiff, "_parse_aiff_audio", side_effect=counting_parse
+                ):
+                    self.assertTrue(
+                        rb._is_canonical_aiff_output(
+                            dest, el, None, bit_depth=16, sample_rate=44100
+                        )
+                    )
+            self.assertEqual(calls["n"], 1)
+
+    def test_extract_id3_chunk_does_not_read_ssnd_payload(self) -> None:
+        """Given a large AIFF with ID3: When _extract_id3_chunk runs: Then it
+        does not load the whole file / SSND PCM via read_bytes."""
+        from counting_open import patch_counting_open
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "large.aiff"
+            # ~2 MiB SSND; ID3 is a small trailing chunk.
+            id3 = rb.build_id3v23_tag({"TIT2": "Song", "TPE1": "DJ"}, None)
+            write_pcm_aiff(
+                path,
+                frames=512 * 1024,
+                include_id3=id3,
+            )
+            self.assertGreater(path.stat().st_size, 1_000_000)
+
+            bytes_read = {"n": 0}
+            open_patch, read_bytes_patch = patch_counting_open(path, bytes_read)
+            with open_patch, read_bytes_patch:
+                tag = rb._extract_id3_chunk(path)
+
+            self.assertIsNotNone(tag)
+            assert tag is not None
+            text, cover = rb._read_id3_frames(tag)
+            self.assertEqual(text.get("TIT2"), "Song")
+            self.assertIsNone(cover)
+            # Headers + COMM + ID3 tag only; far below SSND size.
+            self.assertLess(bytes_read["n"], 8_192)
+
     def test_id3_utf16_ukrainian_title_and_canonical(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

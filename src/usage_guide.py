@@ -62,11 +62,11 @@ export.
    outputs, actions, quality, and size. Back (or Escape) writes nothing and
    returns to the main window. Confirm Convert to start encoding. While
    converting, Cancel replaces Convert in that spot. Cancel stops in-flight
-   encodes (up to 4 at once); files already written are kept (re-run Convert
-   to finish). Import XML is not updated for the interrupted playlist. If some
-   tracks fail, convertible tracks still finish and all errors are reported
-   together. After success, Reveal audio folder opens the selected format
-   directory (WAV/ or AIFF/).
+   encodes (up to 4 at once); files already written are kept and Import XML
+   includes tracks already in the success set (re-run Convert to finish the
+   rest). If some tracks fail, convertible tracks still finish and all errors
+   are reported together. After success, Reveal audio folder opens the selected
+   format directory (WAV/ or AIFF/).
 
 What you get:
 • Audio files in <output folder>/WAV/ or …/AIFF/ as <artist> - <track>

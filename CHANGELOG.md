@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- GUI Cancel after encode writes Import XML from tracks already in the success
+  set, then finishes Cancelled (re-run Convert to finish the rest).
 - Format-flat layout: converted files live under `WAV|AIFF/<artist> - <track>` (no Album or quality directories). Import XML remains `<output>/rekordbox-import.xml`.
 - Sticky hidden `.rekordbox-converter-manifest.json` remembers per-source, per-format destinations so reruns stay stable when metadata changes; `(2)` / `(3)` suffixes apply only when different sources collide. Deleted generated audio is recreated at its existing assignment.
 - Deleting the manifest leaves audio unmanaged and the output folder is refused — choose a new empty folder.

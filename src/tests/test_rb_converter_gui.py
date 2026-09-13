@@ -112,6 +112,18 @@ def _mock_convert_plan(*, n_unique: int = 2):
     )
 
 
+def _empty_conversion_preview(*, selected: int = 0) -> rb.ConversionPreview:
+    """Minimal preview for GUI tests that stub threading.Thread (pool-hostile)."""
+    return rb.ConversionPreview(
+        selected=selected,
+        resolved=selected,
+        unique_outputs=selected,
+        duplicates=0,
+        missing=0,
+        items=[],
+    )
+
+
 class TotalSuccessfulConversionsTests(unittest.TestCase):
     def test_total_successful_conversions(self) -> None:
         self.assertEqual(
@@ -303,89 +315,13 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
-    def test_cancel_skips_apply_xml_for_interrupted_playlist(self) -> None:
-        if not _tk_available():
-            self.skipTest("_tkinter not available")
-
-        import tkinter as tk
-        from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR, ConverterApp
-
-        plan = _mock_convert_plan(n_unique=2)
-
-        root = None
-        try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch(
-                "rb_converter_gui.load_preferences",
-                return_value={},
-            ), patch(
-                "rb_converter_gui.resolve_startup_paths",
-                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
-            ), patch(
-                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
-            ), patch(
-                "rb_converter_gui.save_preferences"
-            ), patch.object(
-                ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
-            ), patch(
-                "rb_converter_gui.rb.prepare", return_value=(plan, [])
-            ), patch(
-                "rb_converter_gui.rb.share_output_root"
-            ), patch(
-                "rb_converter_gui.converter_manifest.save_manifest"
-            ), patch.object(
-                ConverterApp, "_show_conversion_preview"
-            ), patch(
-                "rb_converter_gui.rb.convert_unique"
-            ) as convert_unique, patch(
-                "rb_converter_gui.rb.apply_xml"
-            ) as apply_xml, patch(
-                "rb_converter_gui.rb.write_import_xml"
-            ) as write_xml, patch(
-                "rb_converter_gui.messagebox.showerror"
-            ) as showerror:
-
-                def run_inline(target=None, **_kwargs):
-                    class _T:
-                        def start(self_inner):
-                            target()
-
-                    return _T()
-
-                with patch("rb_converter_gui.threading.Thread", side_effect=run_inline):
-                    root = tk.Tk()
-                    root.withdraw()
-                    app = ConverterApp(root, documents_accessible=False)
-                    app.xml_var.set("/tmp/test.xml")
-                    _seed_track_selection(app)
-
-                    def convert_and_cancel(*_args, **_kwargs):
-                        app._cancel_event.set()
-                        return rb.ConvertStats(converted=1)
-
-                    convert_unique.side_effect = convert_and_cancel
-                    _mark_output_folder_valid(app)
-                    _start_convert_and_confirm(app, root)
-
-                    apply_xml.assert_not_called()
-                    write_xml.assert_not_called()
-                    showerror.assert_not_called()
-                    self.assertEqual(app.status_var.get(), "Cancelled.")
-                    self.assertFalse(app._busy)
-        except tk.TclError:
-            self.skipTest("tk.TclError: display not available")
-        finally:
-            if root is not None:
-                root.destroy()
-
-    def test_cancel_after_encode_errors_surfaces_errors_without_apply_xml(
+    def test_cancel_after_encode_writes_import_xml_then_finishes_cancelled(
         self,
     ) -> None:
-        """Given convert_unique returns errors and cancel is set: When the GUI
-        convert worker finishes cancelled: Then no completed playlist is written
-        and the user still sees the boom encode error (not only Cancelled.)."""
+        """Given convert_unique returns successes (and optional encode errors)
+        then sets cancel: When the GUI write worker finishes: Then Import XML
+        is written from the success set and status is Cancelled. (encode errors
+        still surface in the list dialog)."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
@@ -394,6 +330,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
 
         plan = _mock_convert_plan(n_unique=2)
         error_text = "boom for x.flac"
+        succeeded = {("sk", "wav")}
 
         root = None
         try:
@@ -418,12 +355,15 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 "rb_converter_gui.rb.share_output_root"
             ), patch(
                 "rb_converter_gui.converter_manifest.save_manifest"
+            ), patch(
+                "rb_converter_gui.rb.build_conversion_preview",
+                return_value=_empty_conversion_preview(selected=2),
             ), patch.object(
                 ConverterApp, "_show_conversion_preview"
             ), patch(
                 "rb_converter_gui.rb.convert_unique"
             ) as convert_unique, patch(
-                "rb_converter_gui.rb.apply_xml"
+                "rb_converter_gui.rb.apply_xml", return_value=1
             ) as apply_xml, patch(
                 "rb_converter_gui.rb.write_import_xml"
             ) as write_xml, patch(
@@ -449,15 +389,19 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     def convert_and_cancel(*_args, **_kwargs):
                         app._cancel_event.set()
                         return rb.ConvertStats(
-                            converted=1, errors=[error_text]
+                            converted=1,
+                            errors=[error_text],
+                            succeeded=succeeded,
                         )
 
                     convert_unique.side_effect = convert_and_cancel
                     _mark_output_folder_valid(app)
                     _start_convert_and_confirm(app, root)
 
-                    apply_xml.assert_not_called()
-                    write_xml.assert_not_called()
+                    apply_xml.assert_called()
+                    write_xml.assert_called()
+                    apply_xml.assert_called_with(plan, succeeded)
+                    write_xml.assert_called_with(plan.output_root, plan.output)
                     showerror.assert_not_called()
                     show_list.assert_called()
                     joined = _list_dialog_text(show_list)
@@ -467,6 +411,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "cancel with known encode errors must surface them in "
                         f"the scrollable list dialog; got lines={joined!r}",
                     )
+                    self.assertEqual(app.status_var.get(), "Cancelled.")
                     self.assertFalse(app._busy)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -513,6 +458,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 "rb_converter_gui.rb.share_output_root"
             ), patch(
                 "rb_converter_gui.converter_manifest.save_manifest"
+            ), patch(
+                "rb_converter_gui.rb.build_conversion_preview",
+                return_value=_empty_conversion_preview(selected=2),
             ), patch.object(
                 ConverterApp, "_show_conversion_preview"
             ), patch(
@@ -781,6 +729,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 "rb_converter_gui.rb.share_output_root"
             ), patch(
                 "rb_converter_gui.converter_manifest.save_manifest"
+            ), patch(
+                "rb_converter_gui.rb.build_conversion_preview",
+                return_value=_empty_conversion_preview(selected=1),
             ), patch.object(
                 ConverterApp, "_show_conversion_preview"
             ), patch(
