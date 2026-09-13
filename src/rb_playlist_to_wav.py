@@ -11,11 +11,61 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Callable, Collection
 
-import convert_plan
 import convert.write as convert_write
 import converter_manifest
 import ffmpeg_tools
 import xml_output
+from convert.encode import pcm_codec_for_depth
+from convert.format_policy import (
+    AIFF_EXT,
+    ALAC_EXT,
+    SUPPORTED_LOSSLESS_EXT,
+    WAV_EXT,
+    classify_source,
+    planned_action,
+)
+from convert.models import (
+    ConversionPreview,
+    ConversionPreviewItem,
+    ConvertStats,
+    Plan,
+    PlannedTrack,
+    PreparedConversion,
+)
+from convert.paths import (
+    abs_path,
+    collision_key,
+    format_dir_name,
+    format_media_dir,
+    parse_duration_seconds,
+    preferred_relative_dest,
+    resolve_existing_file,
+    same_file,
+    sanitize_path_component,
+    source_key,
+    target_from_stream,
+)
+from convert.plan import (
+    AIFF_SUFFIX,
+    DEFAULT_OUTPUT,
+    DEFAULT_WAV_DIR,
+    WAV_SUFFIX,
+    build_plan,
+    cached_cover_jpeg,
+    collect_batch_unique,
+    run_ffmpeg,
+    share_cover_caches,
+    write_aiff_output,
+)
+from convert.preview import (
+    build_conversion_preview,
+    insufficient_output_space_message,
+    preview_write_bytes,
+)
+from convert.prepare import prepare as _prepare_impl
+from convert.prepare import prepare_batch as _prepare_batch_impl
+from convert.progress import Progress
+from convert.write import convert_unique
 from cdj_aiff import (
     AIFF_SAFE_BIT_DEPTHS,
     build_id3v23_tag,
@@ -33,7 +83,6 @@ from cdj_wav import (
     parse_wav_info,
 )
 from cli_error import CancelledError, CliError
-from convert.models import PreparedConversion
 from gui_preferences import import_xml_path
 from rekordbox_xml import (
     XML_CANDIDATE_RELATIVE,
@@ -58,6 +107,20 @@ from rekordbox_xml import (
 )
 
 
+def prepare(*args, **kwargs):
+    return _prepare_impl(*args, **kwargs)
+
+
+def prepare_batch(*args, **kwargs):
+    """Facade prepare_batch that routes batch steps through rb module seams."""
+    kwargs.setdefault("prepare_fn", prepare)
+    kwargs.setdefault("share_output_root_fn", share_output_root)
+    kwargs.setdefault("collect_batch_unique_fn", collect_batch_unique)
+    kwargs.setdefault("share_cover_caches_fn", share_cover_caches)
+    kwargs.setdefault("build_conversion_preview_fn", build_conversion_preview)
+    return _prepare_batch_impl(*args, **kwargs)
+
+
 # Re-exports for callers (launcher / GUI / tests that import rb.*).
 FFPROBE_TIMEOUT_S = ffmpeg_tools.FFPROBE_TIMEOUT_S
 FFMPEG_SOXR_TIMEOUT_S = ffmpeg_tools.FFMPEG_SOXR_TIMEOUT_S
@@ -72,46 +135,6 @@ pcm_codec_for_stream = ffmpeg_tools.pcm_codec_for_stream
 bit_depth_of_codec = ffmpeg_tools.bit_depth_of_codec
 ffmpeg_supports_soxr = ffmpeg_tools.ffmpeg_supports_soxr
 
-
-# Re-exports from convert_plan for callers.
-DEFAULT_WAV_DIR = convert_plan.DEFAULT_WAV_DIR
-DEFAULT_OUTPUT = convert_plan.DEFAULT_OUTPUT
-WAV_SUFFIX = convert_plan.WAV_SUFFIX
-SUPPORTED_LOSSLESS_EXT = convert_plan.SUPPORTED_LOSSLESS_EXT
-WAV_EXT = convert_plan.WAV_EXT
-ALAC_EXT = convert_plan.ALAC_EXT
-AIFF_SUFFIX = convert_plan.AIFF_SUFFIX
-AIFF_EXT = convert_plan.AIFF_EXT
-Progress = convert_plan.Progress
-PlannedTrack = convert_plan.PlannedTrack
-Plan = convert_plan.Plan
-ConvertStats = convert_plan.ConvertStats
-ConversionPreview = convert_plan.ConversionPreview
-ConversionPreviewItem = convert_plan.ConversionPreviewItem
-cached_cover_jpeg = convert_plan.cached_cover_jpeg
-abs_path = convert_plan.abs_path
-sanitize_path_component = convert_plan.sanitize_path_component
-preferred_relative_dest = convert_plan.preferred_relative_dest
-format_dir_name = convert_plan.format_dir_name
-format_media_dir = convert_plan.format_media_dir
-collision_key = convert_plan.collision_key
-resolve_existing_file = convert_plan.resolve_existing_file
-same_file = convert_plan.same_file
-target_from_stream = convert_plan.target_from_stream
-pcm_codec_for_depth = convert_plan.pcm_codec_for_depth
-classify_source = convert_plan.classify_source
-parse_duration_seconds = convert_plan.parse_duration_seconds
-build_plan = convert_plan.build_plan
-run_ffmpeg = convert_plan.run_ffmpeg
-write_aiff_output = convert_plan.write_aiff_output
-source_key = convert_plan.source_key
-collect_batch_unique = convert_plan.collect_batch_unique
-share_cover_caches = convert_plan.share_cover_caches
-planned_action = convert_plan.planned_action
-build_conversion_preview = convert_plan.build_conversion_preview
-preview_write_bytes = convert_plan.preview_write_bytes
-insufficient_output_space_message = convert_plan.insufficient_output_space_message
-convert_unique = convert_plan.convert_unique
 
 # Re-exports from xml_output for callers.
 next_track_id = xml_output.next_track_id
@@ -383,9 +406,9 @@ def run_convert_batch(
         print_conversion_preview(plans, preview)
         return 0
 
-    space_issue = convert_plan.insufficient_output_space_message(
+    space_issue = insufficient_output_space_message(
         wav_dir,
-        convert_plan.preview_write_bytes(preview),
+        preview_write_bytes(preview),
     )
     if space_issue is not None:
         print(space_issue, file=sys.stderr)
@@ -509,191 +532,6 @@ def print_summary(
         print(f"{plan.wav_playlist_name} (+{stats.appended} entries)")
     else:
         print(plan.wav_playlist_name)
-
-
-def prepare(
-    xml_path: Path,
-    playlist_name: str,
-    wav_dir: Path,
-    output: Path,
-    *,
-    playlist_folder: str | None = None,
-    output_format: str = "wav",
-    max_bit_depth: int = 24,
-    max_sample_rate: int = 48000,
-    track_keys: Collection[str] | None = None,
-    on_progress: Callable[[int, int, str, str], None] | None = None,
-    cancel_event: threading.Event | None = None,
-    source_root: ET.Element | None = None,
-    manifest: converter_manifest.ConverterManifest | None = None,
-) -> tuple[Plan | None, list[str]]:
-    errors: list[str] = []
-    errors.extend(ffmpeg_tools.require_tools())
-    if not xml_path.is_file():
-        errors.append(f"source XML not found: {xml_path}")
-        return None, errors
-    if source_root is None:
-        try:
-            source_root = load_dj_playlists(xml_path)
-        except CliError as exc:
-            errors.append(str(exc))
-            return None, errors
-
-    found, resolve_errors = resolve_playlist(
-        source_root, playlist_name, folder=playlist_folder
-    )
-    if resolve_errors:
-        errors.extend(resolve_errors)
-        return None, errors
-    assert found is not None
-    _folder, resolved_name, playlist_el = found
-
-    if track_keys is not None:
-        allowed = set(track_keys)
-        playlist_el = copy.deepcopy(playlist_el)
-        for entry in list(playlist_el.findall("TRACK")):
-            if (entry.get("Key") or "") not in allowed:
-                playlist_el.remove(entry)
-
-    output_path = convert_plan.abs_path(output)
-    output_existed = output_path.is_file()
-    output_root: ET.Element | None = None
-    if output_existed:
-        try:
-            output_root = load_dj_playlists(output_path)
-        except CliError as exc:
-            errors.append(str(exc))
-            return None, errors
-    else:
-        output_root = skeleton_from(source_root)
-
-    if manifest is None:
-        try:
-            manifest = converter_manifest.load_manifest(wav_dir)
-        except CliError as exc:
-            errors.append(str(exc))
-            return None, errors
-
-    plan, plan_errors = convert_plan.build_plan(
-        source_root,
-        playlist_el,
-        resolved_name,
-        wav_dir,
-        output_path,
-        output_root,
-        output_existed,
-        output_format=output_format,
-        max_bit_depth=max_bit_depth,
-        max_sample_rate=max_sample_rate,
-        on_progress=on_progress,
-        cancel_event=cancel_event,
-        manifest=manifest,
-    )
-    errors.extend(plan_errors)
-    return plan, errors
-
-
-def prepare_batch(
-    xml_path: Path,
-    playlist_refs: list[tuple[str | None, str]],
-    wav_dir: Path,
-    output: Path,
-    *,
-    output_format: str = "wav",
-    max_bit_depth: int = 24,
-    max_sample_rate: int = 48000,
-    force: bool = False,
-    track_keys_by_playlist: dict[tuple[str | None, str], Collection[str]] | None = None,
-    on_progress: Callable[[int, int, str, str], None] | None = None,
-    cancel_event: threading.Event | None = None,
-    source_root: ET.Element | None = None,
-    manifest: converter_manifest.ConverterManifest | None = None,
-    on_playlist_preparing: Callable[[str, int, int], None] | None = None,
-) -> tuple[PreparedConversion | None, list[str]]:
-    """Prepare playlists, share root/covers, collect unique items, build preview.
-
-    Uses module-level prepare / share_* / collect_* / build_conversion_preview so
-    GUI tests that patch rb.* still bind the same seams.
-    """
-    if cancel_event is not None and cancel_event.is_set():
-        raise CancelledError("conversion cancelled")
-
-    # Callers that want one shared parse must pass source_root; prepare() loads
-    # per playlist when it is None (keeps GUI tests that mock prepare working).
-    if manifest is None:
-        try:
-            manifest = converter_manifest.load_manifest(wav_dir)
-        except CliError as exc:
-            return None, [str(exc)]
-
-    plans: list[Plan] = []
-    skipped: list[str] = []
-    total = len(playlist_refs)
-    for i, (folder, name) in enumerate(playlist_refs):
-        if cancel_event is not None and cancel_event.is_set():
-            raise CancelledError("conversion cancelled")
-        if on_playlist_preparing is not None:
-            on_playlist_preparing(name, i, total)
-        track_keys = None
-        if track_keys_by_playlist is not None:
-            track_keys = track_keys_by_playlist[(folder, name)]
-        plan, errors = prepare(
-            xml_path,
-            name,
-            wav_dir,
-            output,
-            playlist_folder=folder,
-            output_format=output_format,
-            max_bit_depth=max_bit_depth,
-            max_sample_rate=max_sample_rate,
-            track_keys=track_keys,
-            on_progress=on_progress,
-            cancel_event=cancel_event,
-            source_root=source_root,
-            manifest=manifest,
-        )
-        if cancel_event is not None and cancel_event.is_set():
-            raise CancelledError("conversion cancelled")
-        if errors:
-            return None, errors
-        assert plan is not None
-        # Reuse the first plan's source tree for later playlists when the caller
-        # did not pass a shared root (same as a successful prepare parse).
-        if source_root is None:
-            plan_root = getattr(plan, "source_root", None)
-            if plan_root is not None:
-                source_root = plan_root
-        plans.append(plan)
-        skipped.extend(plan.warnings)
-
-    share_output_root(plans)
-    items = collect_batch_unique(plans)
-    share_cover_caches(plans)
-    if cancel_event is not None and cancel_event.is_set():
-        raise CancelledError("conversion cancelled")
-
-    preview = build_conversion_preview(
-        plans,
-        items,
-        force=force,
-        cancel_event=cancel_event,
-        on_progress=on_progress,
-    )
-    if cancel_event is not None and cancel_event.is_set():
-        raise CancelledError("conversion cancelled")
-
-    return (
-        PreparedConversion(
-            plans=plans,
-            items=items,
-            manifest=manifest,
-            preview=preview,
-            wav_dir=wav_dir,
-            output=output,
-            skipped=skipped,
-        ),
-        [],
-    )
 
 
 def main(argv: list[str] | None = None) -> int:

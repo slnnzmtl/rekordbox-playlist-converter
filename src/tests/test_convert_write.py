@@ -16,9 +16,9 @@ for _p in (_SRC, _TESTS):
         sys.path.insert(0, str(_p))
 
 import converter_manifest
-import convert_plan
 import ffmpeg_tools
 import rb_playlist_to_wav as rb
+import convert.plan
 from convert.write import execute_prepared
 from convert_fixtures import XmlFixtureTests as XmlFixtureBase
 
@@ -41,7 +41,7 @@ class ExecutePreparedTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             prepared, errors = rb.prepare_batch(

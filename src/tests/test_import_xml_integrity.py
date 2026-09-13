@@ -12,9 +12,9 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import convert_plan
 import ffmpeg_tools
 import rb_playlist_to_wav as rb
+import convert.plan
 import xml_output
 
 
@@ -167,8 +167,8 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
 
             with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
                 ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-            ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-                convert_plan, "is_cdj_safe_wav", return_value=False
+            ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+                convert.format_policy, "is_cdj_safe_wav", return_value=False
             ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("100", "2116", "44100")
             ):
@@ -264,8 +264,8 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
 
             with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
                 ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-            ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-                convert_plan, "is_cdj_safe_wav", return_value=False
+            ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+                convert.format_policy, "is_cdj_safe_wav", return_value=False
             ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
             ):

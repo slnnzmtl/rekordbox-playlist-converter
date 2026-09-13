@@ -534,11 +534,3 @@ def is_canonical_aiff_output(
         bit_depth=bit_depth,
         sample_rate=sample_rate,
     )
-
-# Private-name aliases for older tests/patches.
-_parse_aiff_audio = parse_aiff_audio
-_info_is_cdj_safe_aiff = info_is_cdj_safe_aiff
-_ssnd_pcm_bytes = ssnd_pcm_bytes
-_normalize_aiff_audio_chunks = normalize_aiff_audio_chunks
-_is_canonical_aiff_from_info = is_canonical_aiff_from_info
-_is_canonical_aiff_output = is_canonical_aiff_output

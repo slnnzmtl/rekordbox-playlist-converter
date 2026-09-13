@@ -15,7 +15,8 @@ for _p in (_SRC, _TESTS):
         sys.path.insert(0, str(_p))
 
 import rb_playlist_to_wav as rb
-import convert_plan
+import convert.models
+import convert.plan
 from convert import encode
 import ffmpeg_tools
 import xml_output
@@ -56,16 +57,16 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
-        ), patch.object(convert_plan, "CONVERT_WORKERS", 1):
+        ), patch.object(convert.plan, "default_convert_workers", return_value=1):
             plan, errors = rb.prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
             )
             self.assertEqual(errors, [])
             assert plan is not None
 
-            def run() -> convert_plan.ConvertStats:
+            def run() -> convert.models.ConvertStats:
                 return rb.convert_unique(
                     plan, force=False, progress=False, cancel_event=cancel
                 )
@@ -110,16 +111,16 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
-        ), patch.object(convert_plan, "CONVERT_WORKERS", 1):
+        ), patch.object(convert.plan, "default_convert_workers", return_value=1):
             plan, errors = rb.prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
             )
             self.assertEqual(errors, [])
             assert plan is not None
 
-            def run() -> convert_plan.ConvertStats:
+            def run() -> convert.models.ConvertStats:
                 return rb.convert_unique(
                     plan, force=False, progress=False, cancel_event=cancel
                 )
@@ -153,7 +154,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             plan, errors = rb.prepare(
@@ -184,7 +185,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             plan, errors = rb.prepare(
@@ -253,7 +254,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(
@@ -312,7 +313,7 @@ class XmlFixtureTests(XmlFixtureBase):
                 ffmpeg_tools.time, "sleep", lambda _s: None
             ):
                 with self.assertRaises(rb.CancelledError):
-                    convert_plan.run_ffmpeg(
+                    convert.plan.run_ffmpeg(
                         src, dest, "pcm_s16le", force=True, cancel_event=cancel
                     )
             self.assertTrue(killed)
@@ -415,8 +416,8 @@ class XmlFixtureTests(XmlFixtureBase):
 
             with patch.object(encode, "_COPY_CHUNK_SIZE", 8), patch(
                 "builtins.open", side_effect=open_side_effect
-            ), patch.object(convert_plan, "CONVERT_WORKERS", 1), patch.object(
-                convert_plan, "is_cdj_safe_wav", return_value=False
+            ), patch.object(convert.plan, "default_convert_workers", return_value=1), patch.object(
+                convert.format_policy, "is_cdj_safe_wav", return_value=False
             ):
                 rb.convert_unique(
                     plan, force=False, progress=False, cancel_event=cancel
@@ -452,7 +453,7 @@ class XmlFixtureTests(XmlFixtureBase):
             ), patch.object(
                 encode.subprocess, "Popen", FakeProc
             ), patch.object(encode, "is_cdj_safe_wav", return_value=True):
-                convert_plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
+                convert.plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
 
         self.assertEqual(len(captured), 1)
         cmd = captured[0]
@@ -475,7 +476,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe_and_cancel
-        ), patch.object(convert_plan, "CONVERT_WORKERS", 1):
+        ), patch.object(convert.plan, "default_convert_workers", return_value=1):
             plan, errors = rb.prepare(
                 self.xml_path,
                 "Untitled Intelligent List",
@@ -515,7 +516,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe_side_effect
-        ), patch.object(convert_plan, "CONVERT_WORKERS", 2):
+        ), patch.object(convert.plan, "default_convert_workers", return_value=2):
             t0 = time.monotonic()
             plan, errors = rb.prepare(
                 self.xml_path,
@@ -561,7 +562,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe_with_overlap
-        ), patch.object(convert_plan, "CONVERT_WORKERS", 2):
+        ), patch.object(convert.plan, "default_convert_workers", return_value=2):
             plan, errors = rb.prepare(
                 self.xml_path,
                 "Untitled Intelligent List",
@@ -603,7 +604,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe_by_source
-        ), patch.object(convert_plan, "CONVERT_WORKERS", 3):
+        ), patch.object(convert.plan, "default_convert_workers", return_value=3):
             plan, errors = rb.prepare(
                 self.xml_path,
                 "Untitled Intelligent List",

@@ -45,6 +45,36 @@ def parse_sample_rate(value: object) -> int | None:
     return None
 
 
+def require_output_format(value: object) -> str:
+    """Return an allowed format or raise CliError."""
+    from cli_error import CliError
+
+    parsed = parse_output_format(value)
+    if parsed is None:
+        raise CliError(f"unsupported output format: {value!r}")
+    return parsed
+
+
+def require_bit_depth(value: object) -> int:
+    """Return an allowed bit depth or raise CliError."""
+    from cli_error import CliError
+
+    parsed = parse_bit_depth(value)
+    if parsed is None:
+        raise CliError(f"unsupported bit depth: {value!r}")
+    return parsed
+
+
+def require_sample_rate(value: object) -> int:
+    """Return an allowed sample rate or raise CliError."""
+    from cli_error import CliError
+
+    parsed = parse_sample_rate(value)
+    if parsed is None:
+        raise CliError(f"unsupported sample rate: {value!r}")
+    return parsed
+
+
 def coerce_output_format(value: object) -> str:
     """Return an allowed format, defaulting to wav."""
     return parse_output_format(value) or DEFAULT_OUTPUT_FORMAT

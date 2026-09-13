@@ -15,7 +15,8 @@ for _p in (_SRC, _TESTS):
         sys.path.insert(0, str(_p))
 
 import rb_playlist_to_wav as rb
-import convert_plan
+import cdj_aiff
+import convert.plan
 import converter_manifest
 import ffmpeg_tools
 from convert_fixtures import write_flac, write_pcm_wav
@@ -183,7 +184,7 @@ class ConversionPreviewTests(unittest.TestCase):
             )
             plan = self._plan_with(item, output_format="aiff")
             with patch.object(
-                convert_plan, "extract_cover_jpeg", return_value=None
+                cdj_aiff, "extract_cover_jpeg", return_value=None
             ) as extract:
                 action = rb.planned_action(plan, item, force=False)
             self.assertEqual(action, "copy")
@@ -203,7 +204,7 @@ class ConversionPreviewTests(unittest.TestCase):
             )
             plan = self._plan_with(tx_item, output_format="aiff")
             with patch.object(
-                convert_plan, "extract_cover_jpeg", return_value=None
+                cdj_aiff, "extract_cover_jpeg", return_value=None
             ) as extract:
                 action = rb.planned_action(plan, tx_item, force=False)
             self.assertEqual(action, "transcode")
@@ -261,8 +262,8 @@ class ConversionPreviewTests(unittest.TestCase):
                 return "transcode"
 
             with patch.object(
-                convert_plan, "planned_action", side_effect=action_side_effect
-            ), patch.object(convert_plan, "CONVERT_WORKERS", 1):
+                convert.format_policy, "planned_action", side_effect=action_side_effect
+            ), patch.object(convert.plan, "default_convert_workers", return_value=1):
                 with self.assertRaises(rb.CancelledError):
                     rb.build_conversion_preview(
                         [plan], items, force=False, cancel_event=cancel
@@ -322,8 +323,8 @@ class ConversionPreviewTests(unittest.TestCase):
                 return "transcode"
 
             with patch.object(
-                convert_plan, "planned_action", side_effect=action_with_overlap
-            ), patch.object(convert_plan, "CONVERT_WORKERS", 2):
+                convert.format_policy, "planned_action", side_effect=action_with_overlap
+            ), patch.object(convert.plan, "default_convert_workers", return_value=2):
                 preview = rb.build_conversion_preview([plan], items, force=False)
             self.assertTrue(
                 overlapped.is_set(),
@@ -370,7 +371,7 @@ class ConversionPreviewTests(unittest.TestCase):
             def on_progress(current: int, total: int, action: str, name: str) -> None:
                 progress_calls.append((current, total, action, name))
 
-            with patch.object(convert_plan, "CONVERT_WORKERS", 1):
+            with patch.object(convert.plan, "default_convert_workers", return_value=1):
                 preview = rb.build_conversion_preview(
                     [plan], items, force=False, on_progress=on_progress
                 )

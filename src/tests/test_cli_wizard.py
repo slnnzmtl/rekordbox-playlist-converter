@@ -13,9 +13,9 @@ for _p in (_SRC, _TESTS):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import convert_plan
 import ffmpeg_tools
 import rb_playlist_to_wav as rb
+import convert.plan
 from convert_fixtures import write_flac
 
 
@@ -212,7 +212,7 @@ class PlanQualityFieldsTests(unittest.TestCase):
                         }
                     ]
                 },
-            ), patch.object(convert_plan, "classify_source", side_effect=boom):
+            ), patch.object(convert.plan, "classify_source", side_effect=boom):
                 with self.assertRaises(rb.CancelledError):
                     rb.prepare(
                         xml_path,
@@ -220,6 +220,44 @@ class PlanQualityFieldsTests(unittest.TestCase):
                         root / "out",
                         root / "import.xml",
                     )
+
+    def test_prepare_rejects_invalid_quality(self) -> None:
+        """Given invalid max_bit_depth: When prepare runs: Then it returns an
+        error and does not build a plan."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "hi.flac"
+            write_flac(src)
+            xml_path = root / "c.xml"
+            xml_path.write_text(
+                f"""\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="1">
+    <TRACK TrackID="1" Name="Hi" Location="{rb.encode_location(src)}" Kind="FLAC File"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="P" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+""",
+                encoding="utf-8",
+            )
+            with patch.object(ffmpeg_tools, "require_tools", return_value=[]):
+                plan, errors = rb.prepare(
+                    xml_path,
+                    "P",
+                    root / "out",
+                    root / "import.xml",
+                    max_bit_depth=99,
+                )
+            self.assertIsNone(plan)
+            self.assertTrue(any("bit depth" in e.lower() for e in errors), errors)
 
 
 if __name__ == "__main__":

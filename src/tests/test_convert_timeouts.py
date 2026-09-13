@@ -14,7 +14,7 @@ for _p in (_SRC, _TESTS):
         sys.path.insert(0, str(_p))
 
 import rb_playlist_to_wav as rb
-import convert_plan
+import convert.plan
 from convert import encode
 import ffmpeg_tools
 from convert_fixtures import HangProc as _HangProc
@@ -55,15 +55,13 @@ class SubprocessTimeoutTests(unittest.TestCase):
             ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
         ), patch.object(
             ffmpeg_tools, "FFMPEG_CONVERT_TIMEOUT_S", 100
-        ), patch.object(
-            convert_plan, "CONVERT_WORKERS", 4
-        ), patch.object(encode.subprocess, "Popen", FakeProc), patch.object(
+        ), patch.object(convert.plan, "default_convert_workers", return_value=4), patch.object(encode.subprocess, "Popen", FakeProc), patch.object(
             ffmpeg_tools.time, "sleep", lambda _s: None
         ), patch.object(
             ffmpeg_tools.time, "monotonic", side_effect=[0.0, 401.0]
         ):
             with self.assertRaises(rb.CliError) as ctx:
-                convert_plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
+                convert.plan.run_ffmpeg(src, dest, "pcm_s16le", force=True)
         msg = str(ctx.exception).lower()
         self.assertIn("timed out", msg)
         self.assertIn("400", msg, f"deadline must scale to 100*4=400s; got {msg!r}")

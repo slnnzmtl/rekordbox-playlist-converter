@@ -7,10 +7,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
 
 import converter_manifest
-import convert_plan
 import xml_output
 from cli_error import CancelledError, CliError
 from convert.encode import copy_wav_atomic
+from convert import format_policy
+from convert import plan as plan_module
 from convert.models import (
     ConvertStats,
     Plan,
@@ -30,6 +31,7 @@ def convert_unique(
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
     items: list[PlannedTrack] | None = None,
+    workers: int | None = None,
 ) -> ConvertStats:
     """Encode/copy/reuse unique planned tracks; wait in-flight on cancel."""
     stats = ConvertStats()
@@ -57,7 +59,7 @@ def convert_unique(
             return
         name = item.dest_name
         is_aiff = coerce_output_format(item.output_format) == "aiff"
-        action = convert_plan.planned_action(
+        action = format_policy.planned_action(
             plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
         )
         if action == "reuse":
@@ -71,7 +73,7 @@ def convert_unique(
                 plan.wav_dir, item.dest_path
             )
             if is_aiff:
-                convert_plan.write_aiff_output(
+                plan_module.write_aiff_output(
                     item.source_path,
                     item.dest_path,
                     item.source_el,
@@ -102,7 +104,7 @@ def convert_unique(
                 return
             if not item.codec:
                 raise CliError(f"no codec planned for {item.source_path}")
-            convert_plan.run_ffmpeg(
+            plan_module.run_ffmpeg(
                 item.source_path,
                 item.dest_path,
                 item.codec,
@@ -126,8 +128,10 @@ def convert_unique(
     try:
         if not items:
             return stats
-        workers = convert_plan.convert_worker_count(len(items))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        effective_workers = plan_module.convert_worker_count(
+            len(items), workers=workers
+        )
+        with ThreadPoolExecutor(max_workers=effective_workers) as pool:
             futures = [pool.submit(process_one, item) for item in items]
             for fut in as_completed(futures):
                 fut.result()
@@ -143,6 +147,7 @@ def execute_prepared(
     progress: bool = False,
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    workers: int | None = None,
 ) -> ConvertStats:
     """Save manifest, convert unique items, apply XML per plan, write import XML.
 
@@ -158,10 +163,11 @@ def execute_prepared(
         on_progress=on_progress,
         cancel_event=cancel_event,
         items=prepared.items,
+        workers=workers,
     )
     appended_by_plan: list[int] = []
-    for plan in plans:
-        appended_by_plan.append(xml_output.apply_xml(plan, stats.succeeded))
+    for one_plan in plans:
+        appended_by_plan.append(xml_output.apply_xml(one_plan, stats.succeeded))
     xml_output.write_import_xml(plans[0].output_root, plans[0].output)
     stats.appended_by_plan = appended_by_plan
     stats.appended = sum(appended_by_plan)

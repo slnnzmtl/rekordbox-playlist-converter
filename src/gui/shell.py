@@ -323,12 +323,18 @@ class ShellMixin:
 
     def _on_bit_depth_selected(self, _event: object = None) -> None:
         label = self.bit_depth_combo.get().strip()
-        self.bit_depth_var.set(constants.BIT_DEPTH_FROM_LABEL.get(label, "24"))
+        mapped = constants.BIT_DEPTH_FROM_LABEL.get(label)
+        if mapped is None:
+            return
+        self.bit_depth_var.set(mapped)
         self._persist_output_preferences()
 
     def _on_sample_rate_selected(self, _event: object = None) -> None:
         label = self.sample_rate_combo.get().strip()
-        self.sample_rate_var.set(constants.SAMPLE_RATE_FROM_LABEL.get(label, "48000"))
+        mapped = constants.SAMPLE_RATE_FROM_LABEL.get(label)
+        if mapped is None:
+            return
+        self.sample_rate_var.set(mapped)
         self._persist_output_preferences()
 
     def _on_wav_dir_changed(self) -> None:
@@ -394,7 +400,8 @@ class ShellMixin:
                 sample_rate=rate,
             )
         except OSError:
-            pass
+            if not self._busy:
+                self.status_var.set("Couldn’t save preferences")
 
     def _browse_initial_dir(self, preferred: Path | None = None) -> str:
         """Pick a file-dialog start folder without stating Documents when denied."""

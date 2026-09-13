@@ -448,7 +448,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                 "_selected_playlists",
                 return_value=[("ROOT", "Test")],
             ), patch(
-                "convert_plan.shutil.disk_usage",
+                "convert.preview.shutil.disk_usage",
                 return_value=SimpleNamespace(free=1_000_000),
             ):
                 root = tk.Tk()

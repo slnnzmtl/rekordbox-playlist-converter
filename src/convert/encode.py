@@ -23,18 +23,10 @@ from cdj_wav import (
     rewrite_wav_pcm,
 )
 from cli_error import CancelledError, CliError
+from convert.format_policy import pcm_codec_for_depth
 from convert.quality import coerce_output_format
 
 _COPY_CHUNK_SIZE = 1024 * 1024
-_normalize_aiff_audio_chunks = normalize_aiff_audio_chunks
-_rewrite_wav_pcm = rewrite_wav_pcm
-
-
-def pcm_codec_for_depth(bit_depth: int, *, output_format: str = "wav") -> str:
-    """Map effective bit depth to an ffmpeg PCM codec for the output container."""
-    if coerce_output_format(output_format) == "aiff":
-        return "pcm_s16be" if bit_depth == 16 else "pcm_s24be"
-    return "pcm_s16le" if bit_depth == 16 else "pcm_s24le"
 
 
 def _unlink_quiet(path: Path) -> None:
@@ -190,13 +182,13 @@ def run_ffmpeg(
             raise CliError(f"ffmpeg conversion failed for {source}: {err}")
         if is_aiff:
             if not is_cdj_safe_aiff(out_tmp, bit_depth=depth, sample_rate=rate):
-                _rewrite_sidecar(out_tmp, _normalize_aiff_audio_chunks)
+                _rewrite_sidecar(out_tmp, normalize_aiff_audio_chunks)
                 if not is_cdj_safe_aiff(out_tmp, bit_depth=depth, sample_rate=rate):
                     raise CliError(
                         f"ffmpeg produced a non-CDJ-safe AIFF for {source}: {dest}"
                     )
         elif not is_cdj_safe_wav(out_tmp, bit_depth=depth, sample_rate=rate):
-            _rewrite_sidecar(out_tmp, _rewrite_wav_pcm)
+            _rewrite_sidecar(out_tmp, rewrite_wav_pcm)
             if not is_cdj_safe_wav(out_tmp, bit_depth=depth, sample_rate=rate):
                 raise CliError(
                     f"ffmpeg produced a non-CDJ-safe WAV for {source}: {dest}"
@@ -225,7 +217,7 @@ def write_aiff_output(
     """Atomically write AIFF: PCM then ID3, validate, os.replace.
 
     When *cover_cache* is set, *cover_lookup* must be the shared cache helper
-    (typically convert_plan.cached_cover_jpeg).
+    (typically convert.plan.cached_cover_jpeg).
     """
     dest.parent.mkdir(parents=True, exist_ok=True)
     if cover_cache is None:
@@ -239,7 +231,7 @@ def write_aiff_output(
     tmp = _temp_beside(dest, aiff=True)
     try:
         if passthrough:
-            _normalize_aiff_audio_chunks(source, tmp)
+            normalize_aiff_audio_chunks(source, tmp)
         else:
             if not codec:
                 raise CliError(f"no codec planned for {source}")

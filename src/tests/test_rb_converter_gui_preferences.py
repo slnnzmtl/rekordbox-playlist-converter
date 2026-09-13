@@ -369,6 +369,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 app = ConverterApp(root, documents_accessible=False)
                 app._browse_wav_dir()
                 self.assertEqual(app.wav_dir_var.get(), "/tmp/chosen-wav")
+                self.assertIn("Couldn’t save preferences", app.status_var.get())
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

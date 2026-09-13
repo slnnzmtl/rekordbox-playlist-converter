@@ -16,7 +16,9 @@ for _p in (_SRC, _TESTS):
         sys.path.insert(0, str(_p))
 
 import rb_playlist_to_wav as rb
-import convert_plan
+import cdj_wav
+import convert.paths
+import convert.plan
 import converter_manifest
 import ffmpeg_tools
 from convert_fixtures import (
@@ -116,7 +118,7 @@ class XmlFixtureTests(XmlFixtureBase):
         path.write_text(both, encoding="utf-8")
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc1 = rb.main(
@@ -138,7 +140,7 @@ class XmlFixtureTests(XmlFixtureBase):
             )
         )
         self.assertEqual(
-            data["tracks"][convert_plan.source_key(second)]["wav"]["dest"],
+            data["tracks"][convert.paths.source_key(second)]["wav"]["dest"],
             "WAV/Same - Song (2).wav",
         )
 
@@ -162,7 +164,7 @@ class XmlFixtureTests(XmlFixtureBase):
         path.write_text(only_second, encoding="utf-8")
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=True
         ):
             plan, errors = rb.prepare(
@@ -181,7 +183,7 @@ class XmlFixtureTests(XmlFixtureBase):
             )
         )
         self.assertEqual(
-            data2["tracks"][convert_plan.source_key(second)]["wav"]["dest"],
+            data2["tracks"][convert.paths.source_key(second)]["wav"]["dest"],
             "WAV/Same - Song (2).wav",
         )
         self.assertNotEqual(
@@ -232,7 +234,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(
@@ -257,7 +259,7 @@ class XmlFixtureTests(XmlFixtureBase):
             )
         )
         self.assertEqual(
-            data["tracks"][convert_plan.source_key(src)]["wav"]["dest"],
+            data["tracks"][convert.paths.source_key(src)]["wav"]["dest"],
             "WAV/Same - Song (2).wav",
         )
 
@@ -347,7 +349,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc1 = rb.main(
@@ -376,7 +378,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=True
         ):
             rc2 = rb.main(
@@ -402,7 +404,7 @@ class XmlFixtureTests(XmlFixtureBase):
             )
         )
         self.assertEqual(
-            data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
+            data["tracks"][convert.paths.source_key(self.a)]["wav"]["dest"],
             sticky,
         )
         out = ET.parse(self.output).getroot()
@@ -422,7 +424,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=boom), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=boom), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(
@@ -444,7 +446,7 @@ class XmlFixtureTests(XmlFixtureBase):
             )
         )
         self.assertEqual(
-            data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
+            data["tracks"][convert.paths.source_key(self.a)]["wav"]["dest"],
             "WAV/ABSL - Bestial.wav",
         )
 
@@ -461,7 +463,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc1 = rb.main(
@@ -485,7 +487,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc2 = rb.main(
@@ -512,7 +514,7 @@ class XmlFixtureTests(XmlFixtureBase):
             )
         )
         self.assertEqual(
-            data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
+            data["tracks"][convert.paths.source_key(self.a)]["wav"]["dest"],
             sticky,
         )
 
@@ -551,11 +553,11 @@ class XmlFixtureTests(XmlFixtureBase):
         ]
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe24
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
             self.assertEqual(rb.main(args_low), 0)
         dest = self.wav_dir / Path(sticky)
         self.assertTrue(
-            convert_plan.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100)
+            cdj_wav.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100)
         )
         converted.clear()
 
@@ -575,11 +577,11 @@ class XmlFixtureTests(XmlFixtureBase):
         ]
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe24
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
             self.assertEqual(rb.main(args_high), 0)
         self.assertIn(dest, converted)
         self.assertTrue(
-            convert_plan.is_cdj_safe_wav(dest, bit_depth=24, sample_rate=44100)
+            cdj_wav.is_cdj_safe_wav(dest, bit_depth=24, sample_rate=44100)
         )
         self.assertFalse(
             (self.wav_dir / "WAV" / "ABSL - Bestial (2).wav").exists()
@@ -590,7 +592,7 @@ class XmlFixtureTests(XmlFixtureBase):
             )
         )
         self.assertEqual(
-            data["tracks"][convert_plan.source_key(self.a)]["wav"]["dest"],
+            data["tracks"][convert.paths.source_key(self.a)]["wav"]["dest"],
             sticky,
         )
 
@@ -612,9 +614,9 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
-        ), patch.object(convert_plan, "write_aiff_output", side_effect=fake_aiff):
+        ), patch.object(convert.plan, "write_aiff_output", side_effect=fake_aiff):
             rc_wav = rb.main(
                 [
                     "--xml",
@@ -650,7 +652,7 @@ class XmlFixtureTests(XmlFixtureBase):
                 encoding="utf-8"
             )
         )
-        entry = data["tracks"][convert_plan.source_key(self.a)]
+        entry = data["tracks"][convert.paths.source_key(self.a)]
         self.assertEqual(
             entry["wav"]["dest"],
             "WAV/ABSL - Bestial.wav",
@@ -667,7 +669,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-        ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             rb, "is_cdj_safe_wav", return_value=False
         ):
             rc = rb.main(

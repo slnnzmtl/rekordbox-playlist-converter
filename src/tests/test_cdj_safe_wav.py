@@ -14,7 +14,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 import rb_playlist_to_wav as rb
-import convert_plan
+import convert.plan
 from convert import encode
 import ffmpeg_tools
 
@@ -296,7 +296,7 @@ class RunFfmpegRewriteGateTests(unittest.TestCase):
                     return self.returncode
 
             rewrite_calls: list[tuple[Path, Path]] = []
-            real_rewrite = encode._rewrite_wav_pcm
+            real_rewrite = encode.rewrite_wav_pcm
 
             def tracking_rewrite(source: Path, out: Path) -> None:
                 rewrite_calls.append((source, out))
@@ -309,9 +309,9 @@ class RunFfmpegRewriteGateTests(unittest.TestCase):
             ), mock.patch.object(
                 ffmpeg_tools, "ffmpeg_supports_soxr", return_value=False
             ), mock.patch.object(
-                encode, "_rewrite_wav_pcm", side_effect=tracking_rewrite
+                encode, "rewrite_wav_pcm", side_effect=tracking_rewrite
             ):
-                convert_plan.run_ffmpeg(
+                convert.plan.run_ffmpeg(
                     src, dest, "pcm_s16le", force=True, sample_rate=44100, bit_depth=16
                 )
             self.assertEqual(rewrite_calls, [])
@@ -408,14 +408,14 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 converted.append(dest)
                 write_pcm_wav(dest)
 
-            with mock.patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
                 stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 1)
             self.assertEqual(stats.converted, 1)
             self.assertEqual(converted, [unsafe_dest])
 
             converted.clear()
-            with mock.patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
                 stats = rb.convert_unique(plan, force=True)
             self.assertEqual(stats.converted, 2)
             self.assertCountEqual(converted, [safe_dest, unsafe_dest])
@@ -467,7 +467,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 converted.append(dest_path)
                 write_pcm_wav(dest_path, bits=24, sample_rate=48000)
 
-            with mock.patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
                 stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 0)
             self.assertEqual(stats.converted, 1)
@@ -518,7 +518,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             ) -> None:
                 raise rb.CliError(f"encode failed for {source}")
 
-            with mock.patch.object(convert_plan, "run_ffmpeg", side_effect=boom):
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=boom):
                 stats = rb.convert_unique(plan, force=True)
             self.assertEqual(len(stats.errors), 1)
             self.assertTrue(dest.is_file())

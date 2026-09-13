@@ -176,5 +176,3 @@ def rewrite_wav_pcm(source: Path, dest: Path) -> None:
     except ValueError as exc:
         raise CliError(f"truncated WAV data while streaming copy") from exc
 
-
-_rewrite_wav_pcm = rewrite_wav_pcm

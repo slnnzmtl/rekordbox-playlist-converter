@@ -134,7 +134,12 @@ def mark_output_folder_valid(app) -> None:
     app._update_convert_enabled()
 
 
-def pump_ui(root, times: int = 20) -> None:
+# Idle-callback drain hops for run_inline_thread / after(0) under unit tests.
+PUMP_UI_IDLE_HOPS = 20
+
+
+def pump_ui(root, times: int = PUMP_UI_IDLE_HOPS) -> None:
+    """Drain pending Tk idle callbacks; *times* bounds nested after(0) hops."""
     root.update_idletasks()
     for _ in range(times):
         root.update()

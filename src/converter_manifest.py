@@ -1,4 +1,4 @@
-"""Per-format sticky dest assignments under wav_dir (private to convert_plan/batch)."""
+"""Per-format sticky dest assignments under wav_dir (private to convert/prepare batch)."""
 
 from __future__ import annotations
 
