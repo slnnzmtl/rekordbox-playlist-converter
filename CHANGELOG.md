@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Internal refactor (pass 3): convert plan dataclasses live in `convert/models.py`
+  and pure path/stream helpers in `convert/paths.py`; `convert_plan.py` remains the
+  patched facade (`planned_action`, `CONVERT_WORKERS`, encode wrappers, orchestrators).
+  Oversized GUI preference tests split into `test_rb_converter_gui_preferences.py`,
+  `test_rb_converter_gui_browse.py`, `test_rb_converter_gui_xml_search.py`, and
+  `test_rb_converter_gui_library.py`.
 - Internal refactor (pass 2): `ConverterApp` lives in `gui/app.py` with
   `gui/shell.py` / `gui/playlists.py` / `gui/convert_flow.py` mixins; patched
   names are looked up on `gui.runtime` (`gui_tk.GUI_MODULE`). Helpers/constants

@@ -5,12 +5,10 @@ from __future__ import annotations
 import math
 import os
 import shutil
-import sys
 import threading
 import unicodedata
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Callable
 
@@ -34,6 +32,30 @@ from convert.encode import (
     run_ffmpeg as _encode_run_ffmpeg,
     write_aiff_output as _encode_write_aiff_output,
 )
+from convert.models import (
+    ConversionPreview,
+    ConversionPreviewItem,
+    ConvertStats,
+    Plan,
+    PlannedTrack,
+    Progress,
+)
+from convert.paths import (
+    _format_size_mb,
+    abs_path,
+    format_media_dir,
+    parse_duration_seconds,
+    preferred_relative_dest,
+    resolve_existing_file,
+    same_file,
+    target_from_stream,
+)
+# Facade re-exports for rb_playlist_to_wav / callers (not used directly below).
+from convert.paths import (
+    format_dir_name as format_dir_name,
+    playlist_dir_name as playlist_dir_name,
+    sanitize_path_component as sanitize_path_component,
+)
 from converter_manifest import ConverterManifest
 from rekordbox_xml import (
     decode_location,
@@ -56,6 +78,8 @@ AIFF_EXT = {".aiff", ".aif"}
 CONVERT_WORKERS_MIN = 1
 CONVERT_WORKERS_MAX = 5
 
+collision_key = converter_manifest.collision_key
+
 
 def default_convert_workers() -> int:
     """Worker count from cpu_count, at least 1, at most 4."""
@@ -64,106 +88,6 @@ def default_convert_workers() -> int:
 
 
 CONVERT_WORKERS = default_convert_workers()
-
-
-class Progress:
-    """Single-line stderr bar. Callback always fires; stderr only when enabled."""
-
-    def __init__(
-        self,
-        total: int,
-        enabled: bool,
-        on_progress: Callable[[int, int, str, str], None] | None = None,
-    ) -> None:
-        self.total = max(total, 0)
-        self.enabled = enabled
-        self.on_progress = on_progress
-        self._width = 0
-        self._lock = threading.Lock()
-
-    def update(self, current: int, action: str, name: str) -> None:
-        with self._lock:
-            if self.on_progress is not None:
-                self.on_progress(current, self.total, action, name)
-            if not self.enabled:
-                return
-            total = self.total
-            frac = 1.0 if total == 0 else min(current / total, 1.0)
-            bar_w = 24
-            filled = int(bar_w * frac) if total else bar_w
-            bar = "#" * filled + "-" * (bar_w - filled)
-            denom = total if total else current
-            label = f"[{bar}] {current}/{denom}  {action}  {name}"
-            cols = shutil.get_terminal_size((80, 24)).columns
-            if cols > 8 and len(label) > cols - 1:
-                label = label[: cols - 2] + "…"
-            pad = max(self._width - len(label), 0)
-            sys.stderr.write("\r" + label + (" " * pad))
-            sys.stderr.flush()
-            self._width = len(label)
-
-    def close(self) -> None:
-        with self._lock:
-            if not self.enabled:
-                return
-            sys.stderr.write("\n")
-            sys.stderr.flush()
-            self.enabled = False
-
-
-@dataclass
-class PlannedTrack:
-    source_el: ET.Element
-    source_path: Path
-    dest_path: Path
-    dest_location: str
-    dest_name: str
-    codec: str | None  # None means copy WAV (or no-op)
-    copy_wav: bool
-    noop: bool
-    bit_depth: int = 24
-    sample_rate: int = 48000
-    duration_seconds: float | None = None
-
-
-@dataclass
-class ConversionPreviewItem:
-    relative_dest: str
-    action: str
-    bit_depth: int
-    sample_rate: int
-    size_bytes: int | None = None
-    size_display: str = "—"
-    source_display: str = ""
-
-
-@dataclass
-class ConversionPreview:
-    selected: int
-    resolved: int
-    unique_outputs: int
-    duplicates: int
-    missing: int
-    items: list[ConversionPreviewItem] = field(default_factory=list)
-
-
-@dataclass
-class Plan:
-    playlist_name: str
-    wav_playlist_name: str
-    wav_dir: Path
-    playlist_dir: Path
-    output: Path
-    tracks: list[PlannedTrack]  # playlist order, may repeat dest
-    unique: list[PlannedTrack]  # one per dest path
-    source_root: ET.Element
-    output_root: ET.Element
-    output_existed: bool
-    warnings: list[str] = field(default_factory=list)
-    output_format: str = "wav"
-    max_bit_depth: int = 24
-    max_sample_rate: int = 48000
-    cover_cache: dict[Path, bytes | None] = field(default_factory=dict)
 
 
 def cached_cover_jpeg(
@@ -287,12 +211,6 @@ def planned_action(
     if item.copy_wav:
         return "copy"
     return "transcode"
-
-
-def _format_size_mb(nbytes: int, *, approximate: bool = False) -> str:
-    """Human-readable size in mebibytes (1024²), one decimal place."""
-    text = f"{nbytes / (1024 * 1024):.1f} MB"
-    return f"≈ {text}" if approximate else text
 
 
 def _preview_size(item: PlannedTrack, action: str) -> tuple[int | None, str]:
@@ -593,172 +511,6 @@ def convert_unique(
     return stats
 
 
-@dataclass
-class ConvertStats:
-    converted: int = 0
-    copied: int = 0
-    skipped: int = 0
-    appended: int = 0
-    errors: list[str] = field(default_factory=list)
-    # (source_key, format) that skipped, copied, or converted successfully.
-    succeeded: set[tuple[str, str]] = field(default_factory=set)
-
-
-def abs_path(path: Path) -> Path:
-    path = path.expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path
-
-
-_RESERVED_FILENAME_CHARS = '<>:"|?*'
-
-
-def _clean_path_component(value: str) -> str:
-    """NFC-normalize and replace unsafe characters; empty if unusable."""
-    if not value or value.isspace():
-        return ""
-    name = unicodedata.normalize("NFC", value)
-    out: list[str] = []
-    for ch in name:
-        if ch in "/\\\0" or ch in _RESERVED_FILENAME_CHARS or ord(ch) < 32:
-            out.append("_")
-        else:
-            out.append(ch)
-    name = "".join(out).rstrip(" .")
-    if not name or name in {".", ".."}:
-        return ""
-    return name
-
-
-def sanitize_path_component(value: str, *, fallback: str) -> str:
-    """NFC-normalize and make a single path component filesystem-safe."""
-    return (
-        _clean_path_component(value)
-        or _clean_path_component(fallback)
-        or "Unknown"
-    )
-
-
-def preferred_relative_dest(
-    track_el: ET.Element,
-    *,
-    output_format: str = "wav",
-    stem_fallback: str = "",
-) -> str:
-    """Relative FORMAT/Artist - Name.ext path under wav_dir for first assignment."""
-    ext = ".aiff" if output_format == "aiff" else ".wav"
-    fmt = format_dir_name(output_format)
-    artist = sanitize_path_component(
-        track_el.get("Artist") or "", fallback="Unknown Artist"
-    )
-    name = sanitize_path_component(
-        track_el.get("Name") or "",
-        fallback=stem_fallback or "Unknown Track",
-    )
-    return f"{fmt}/{artist} - {name}{ext}"
-
-
-def format_dir_name(output_format: str) -> str:
-    """Return WAV or AIFF directory name for the output format."""
-    if output_format == "wav":
-        return "WAV"
-    if output_format == "aiff":
-        return "AIFF"
-    raise CliError(f"unsupported output format: {output_format!r}")
-
-
-def format_media_dir(wav_dir: Path, output_format: str) -> Path:
-    """Return wav_dir/WAV or wav_dir/AIFF for audio output."""
-    return wav_dir / format_dir_name(output_format)
-
-
-def playlist_dir_name(playlist_name: str) -> str:
-    """Filesystem-safe single directory component from the playlist name."""
-    name = unicodedata.normalize("NFC", playlist_name)
-    name = name.replace("/", "_").replace("\\", "_").replace("\0", "")
-    name = name.rstrip(" .")
-    if not name or name in {".", ".."}:
-        raise CliError(f"playlist name is not usable as a directory: {playlist_name!r}")
-    return name
-
-
-collision_key = converter_manifest.collision_key
-
-
-def resolve_existing_file(path: Path) -> Path | None:
-    """Return path if it exists; otherwise match by Unicode-normalized filename."""
-    if path.is_file():
-        return path
-    parent = path.parent
-    if not parent.is_dir():
-        return None
-    key = collision_key(path.name)
-    for entry in parent.iterdir():
-        if entry.is_file() and collision_key(entry.name) == key:
-            return entry
-    return None
-
-
-def target_from_stream(
-    stream: dict,
-    *,
-    max_bit_depth: int = 24,
-    max_sample_rate: int = 48000,
-) -> tuple[int, int]:
-    """Return (bit_depth, sample_rate) under the selected ceiling.
-
-    Never raises bit depth or sample rate above the source (within the ceiling).
-    """
-    if max_bit_depth not in (16, 24):
-        max_bit_depth = 24
-    if max_sample_rate not in (44100, 48000):
-        max_sample_rate = 48000
-
-    fmt = str(stream.get("sample_fmt") or "")
-    raw = stream.get("bits_per_raw_sample")
-    bits: int | None = None
-    if raw not in (None, "", "0", "N/A"):
-        try:
-            bits = int(raw)
-        except (TypeError, ValueError):
-            bits = None
-    if bits is None and fmt in ("s16", "s16p"):
-        bits = 16
-    if bits is None and fmt in ("s24", "s24p", "s32", "s32p"):
-        bits = 24 if "24" in fmt else 32
-    if bits is None:
-        name = str(stream.get("codec_name") or "")
-        if "16" in name:
-            bits = 16
-        elif "24" in name:
-            bits = 24
-        else:
-            bits = 16
-    if bits > 24:
-        bits = 24
-    elif bits not in (16, 24):
-        bits = 16 if bits <= 16 else 24
-    if bits > max_bit_depth:
-        bits = max_bit_depth
-
-    try:
-        rate = int(float(stream.get("sample_rate") or 0))
-    except (TypeError, ValueError):
-        rate = 0
-    if rate > max_sample_rate:
-        if rate % 44100 == 0 and 44100 <= max_sample_rate:
-            rate = 44100
-        else:
-            rate = max_sample_rate
-    elif rate in (44100, 48000) and rate <= max_sample_rate:
-        pass
-    else:
-        rate = 44100 if 44100 <= max_sample_rate else max_sample_rate
-
-    return bits, rate
-
-
 def classify_source(
     path: Path,
     stream: dict,
@@ -798,28 +550,6 @@ def classify_source(
         codec = pcm_codec_for_depth(bits, output_format="wav")
         return codec, False, bits, rate
     raise CliError(f"unsupported format: {path}")
-
-
-def same_file(a: Path, b: Path) -> bool:
-    try:
-        return a.exists() and b.exists() and a.samefile(b)
-    except OSError:
-        return False
-
-
-def parse_duration_seconds(probe: dict) -> float | None:
-    """Extract duration from ffprobe JSON; invalid/non-finite/negative → None."""
-    fmt = probe.get("format") or {}
-    raw = fmt.get("duration") if isinstance(fmt, dict) else None
-    if raw is None or raw == "":
-        return None
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(value) or value < 0:
-        return None
-    return value
 
 
 def build_plan(
