@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Format-flat layout: converted files live under `WAV|AIFF/<artist> - <track>` (no Album or quality directories). Import XML remains `<output>/rekordbox-import.xml`.
+- Sticky hidden `.rekordbox-converter-manifest.json` remembers per-source, per-format destinations so reruns stay stable when metadata changes; `(2)` / `(3)` suffixes apply only when different sources collide. Deleted generated audio is recreated at its existing assignment.
+- Deleting the manifest leaves audio unmanaged and the output folder is refused — choose a new empty folder.
+- Batch convert encodes each unique source once even if it appears in several playlists; Import XML is written once from the success set.
+- GUI and CLI derive Import XML as `<wav-dir>/rekordbox-import.xml` (CLI `--output` remains an optional override). The GUI shows a read-only path field (click to copy); ignore legacy `import_xml` preferences.
+- GUI Convert opens a conversion preview (unique outputs, action, quality, size); **Back** writes nothing. CLI `--dry-run` prints the same plan. Success offers **Reveal audio folder** (selected format directory) and **Reveal import XML**.
+- GUI quality control is **Max. quality** (`16-bit` / `24-bit` / `44.1 kHz` / `48 kHz`). Output-folder validation runs off the UI thread and disables Convert when the folder is invalid.
+
 ## 2.0.0
 
 - Unique-track conversion runs up to **4 encodes in parallel** (capped at 5). Progress counts completed tracks; Cancel stops in-flight encodes (completed files kept; interrupted playlist is not written to Import XML).

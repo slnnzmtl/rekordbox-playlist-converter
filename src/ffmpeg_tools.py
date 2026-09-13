@@ -6,10 +6,12 @@ import json
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from functools import lru_cache
 from pathlib import Path
 
-from cli_error import CliError
+from cli_error import CancelledError, CliError
 
 FFPROBE_TIMEOUT_S = 60
 FFMPEG_SOXR_TIMEOUT_S = 15
@@ -47,7 +49,47 @@ def require_tools() -> list[str]:
     return missing
 
 
-def run_ffprobe(path: Path) -> dict:
+def _kill_proc_drain(proc: subprocess.Popen) -> None:
+    try:
+        proc.kill()
+        proc.wait()
+    finally:
+        proc.communicate()
+
+
+def wait_proc(
+    proc: subprocess.Popen,
+    *,
+    cancel_event: threading.Event | None,
+    timeout_s: float,
+    cancel_message: str,
+) -> tuple[str, str]:
+    deadline = time.monotonic() + timeout_s
+    try:
+        while proc.poll() is None:
+            if cancel_event is not None and cancel_event.is_set():
+                _kill_proc_drain(proc)
+                raise CancelledError(cancel_message)
+            if time.monotonic() >= deadline:
+                _kill_proc_drain(proc)
+                raise subprocess.TimeoutExpired(
+                    getattr(proc, "args", "") or "", timeout_s
+                )
+            time.sleep(0.05)
+        return proc.communicate()
+    except (CancelledError, subprocess.TimeoutExpired):
+        raise
+    except Exception:
+        if proc.poll() is None:
+            _kill_proc_drain(proc)
+        raise
+
+
+def run_ffprobe(
+    path: Path,
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict:
     exe = tool_path("ffprobe")
     if exe is None:
         raise CliError(
@@ -62,32 +104,38 @@ def run_ffprobe(path: Path) -> dict:
         "-show_entries",
         "stream=codec_name,sample_fmt,sample_rate,channels,bits_per_raw_sample",
         "-show_entries",
-        "format=format_name",
+        "format=format_name,duration",
         "-of",
         "json",
         str(path),
     ]
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            check=False,
-            timeout=FFPROBE_TIMEOUT_S,
         )
     except FileNotFoundError as exc:
         raise CliError(
             "ffprobe not found on PATH (install with: brew install ffmpeg)"
         ) from exc
-    except subprocess.TimeoutExpired as exc:
+    try:
+        stdout, stderr = wait_proc(
+            proc,
+            cancel_event=cancel_event,
+            timeout_s=FFPROBE_TIMEOUT_S,
+            cancel_message=f"ffprobe cancelled for {path}",
+        )
+    except subprocess.TimeoutExpired:
         raise CliError(
             f"ffprobe timed out after {FFPROBE_TIMEOUT_S}s for {path}"
-        ) from exc
+        )
     if proc.returncode != 0:
-        err = (proc.stderr or proc.stdout or "").strip() or f"exit {proc.returncode}"
+        err = (stderr or stdout or "").strip() or f"exit {proc.returncode}"
         raise CliError(f"ffprobe failed for {path}: {err}")
     try:
-        return json.loads(proc.stdout or "{}")
+        return json.loads(stdout or "{}")
     except json.JSONDecodeError as exc:
         raise CliError(f"ffprobe returned invalid JSON for {path}") from exc
 

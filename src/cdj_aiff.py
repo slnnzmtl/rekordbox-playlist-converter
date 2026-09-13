@@ -5,6 +5,7 @@ from __future__ import annotations
 import struct
 import subprocess
 import tempfile
+import threading
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +13,7 @@ from pathlib import Path
 import ffmpeg_tools
 import iff_chunks
 from cdj_wav import CDJ_SAFE_CHANNELS
-from cli_error import CliError
+from cli_error import CancelledError, CliError
 
 AIFF_RATE_BYTES = {
     44100: bytes.fromhex("400eac44000000000000"),
@@ -396,7 +397,12 @@ def write_aiff_id3(
         raise
 
 
-def extract_cover_jpeg(source: Path, *, max_side: int = 600) -> bytes | None:
+def extract_cover_jpeg(
+    source: Path,
+    *,
+    max_side: int = 600,
+    cancel_event: threading.Event | None = None,
+) -> bytes | None:
     """Extract attached picture as JPEG ≤ max_side; None if absent."""
     exe = ffmpeg_tools.tool_path("ffmpeg")
     if exe is None:
@@ -416,14 +422,24 @@ def extract_cover_jpeg(source: Path, *, max_side: int = 600) -> bytes | None:
             str(out),
         ]
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                check=False,
-                timeout=ffmpeg_tools.FFMPEG_COVER_TIMEOUT_S,
             )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
+        except FileNotFoundError:
+            return None
+        try:
+            ffmpeg_tools.wait_proc(
+                proc,
+                cancel_event=cancel_event,
+                timeout_s=ffmpeg_tools.FFMPEG_COVER_TIMEOUT_S,
+                cancel_message=f"cover extract cancelled for {source}",
+            )
+        except CancelledError:
+            raise
+        except Exception:
             return None
         if proc.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
             return None

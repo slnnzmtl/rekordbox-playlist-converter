@@ -11,6 +11,7 @@ from gui_preferences import (
     IMPORT_XML_NAME,
     default_output_paths,
     find_rekordbox_xml_via_child,
+    import_xml_path,
     load_preferences,
     probe_path_via_child,
     resolve_startup_paths,
@@ -31,10 +32,12 @@ import time
 import tkinter as tk
 import webbrowser
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 import rb_playlist_to_wav as rb
+import converter_manifest
 from preview_bit_depth import (
     cached_preview_bit_depth,
     peek_cached_preview_bit_depth,
@@ -48,6 +51,13 @@ FALLBACK_WAV_DIR, FALLBACK_OUTPUT = default_output_paths(documents_accessible=Fa
 SEARCH_PLACEHOLDER = "Search playlists…"
 TRACK_SEARCH_PLACEHOLDER = "Search tracks…"
 SCANNING_BIT_DEPTH = "Scanning bit depth…"
+
+# Tracklist playlist-group highlight when any of its tracks are selected
+# (darker than the Treeview selection blue used on leaf rows).
+TRACKLIST_HEADER_TAG = "playlist_header"
+TRACKLIST_HEADER_SELECTED_TAG = "playlist_header_selected"
+TRACKLIST_HEADER_SELECTED_BG = "#0a2f55"
+TRACKLIST_HEADER_SELECTED_FG = "#ffffff"
 APP_LOGO_NAME = "rpc-logo-white.png"
 XML_SEARCH_TIMEOUT_SECONDS = 30.0
 APP_WINDOW_ICON_NAME = "rpc-logo-white-256.png"
@@ -59,13 +69,32 @@ SAMPLE_RATE_48_TOOLTIP = (
     "This is a maximum, not a target. "
     "44.1 kHz tracks are not upconverted to 48 kHz."
 )
-BIT_DEPTH_LABELS = {"16": "16Bit", "24": "24Bit"}
-SAMPLE_RATE_LABELS = {"44100": "44.1KHz", "48000": "48KHz"}
+BIT_DEPTH_LABELS = {"16": "16-bit", "24": "24-bit"}
+SAMPLE_RATE_LABELS = {"44100": "44.1 kHz", "48000": "48 kHz"}
 BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items()}
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
 ACTION_BUTTON_WIDTH = 9
 CANCELLED_STATUS_CLEAR_MS = 3000
+PREVIEW_ACTION_LABELS = {
+    "reuse": "Reuse existing",
+    "copy": "Copy",
+    "transcode": "Transcode",
+}
+
+
+@dataclass
+class PreparedConversion:
+    """In-memory prepare result held until the user confirms or discards."""
+
+    plans: list
+    items: list
+    manifest: converter_manifest.ConverterManifest
+    preview: rb.ConversionPreview
+    wav_dir: Path
+    output: Path
+    skipped: list[str]
 SEARCH_DEBOUNCE_MS = 200
+WAV_DIR_VALIDATE_DEBOUNCE_MS = 300
 # One probe worker; apply this many depths per UI callback so Tk can paint.
 PREVIEW_BIT_DEPTH_BATCH = 24
 PREVIEW_BIT_DEPTH_YIELD_S = 0.02
@@ -225,11 +254,18 @@ def _active_display_bounds() -> tuple[int, int, int, int] | None:
 
 
 def open_in_finder(path: Path) -> None:
-    """Reveal a folder in Finder (macOS) or the platform file browser."""
-    target = path if path.is_dir() else path.parent
-    if not target.exists():
+    """Reveal a folder or select a file in Finder (macOS) / file browser."""
+    if path.is_dir():
+        if not path.exists():
+            return
+        subprocess.run(["open", str(path)], check=False)
         return
-    subprocess.run(["open", str(target)], check=False)
+    if path.exists():
+        subprocess.run(["open", "-R", str(path)], check=False)
+        return
+    parent = path.parent
+    if parent.exists():
+        subprocess.run(["open", str(parent)], check=False)
 
 
 class _SearchPlaceholder:
@@ -287,14 +323,14 @@ class ConverterApp:
         self.output_var = tk.StringVar()
         # Start with home fallback so the window can appear before Documents TCC.
         saved_prefs = load_preferences()
-        startup_wav, startup_output = resolve_startup_paths(
+        startup_wav, _startup_output = resolve_startup_paths(
             saved_prefs,
             default_wav_dir=FALLBACK_WAV_DIR,
             default_import_xml=FALLBACK_OUTPUT,
             documents_accessible=False,
         )
         self.wav_dir_var.set(str(startup_wav))
-        self.output_var.set(str(startup_output))
+        self._sync_import_xml_display()
         saved_format = saved_prefs.get("output_format", "wav")
         if saved_format not in ("wav", "aiff"):
             saved_format = "wav"
@@ -317,12 +353,16 @@ class ConverterApp:
         self.scan_status_var = tk.StringVar(value="")
         self._busy = False
         self._cancel_event = threading.Event()
+        self._prepared_conversion: PreparedConversion | None = None
+        self._write_prepared: PreparedConversion | None = None
+        self._preview_dialog: tk.Toplevel | None = None
         self._usage_window: tk.Toplevel | None = None
         self._update_modal_shown = False
         self._update_check_running = False
         self._progress_target = 0.0
         self._progress_anim_id: str | None = None
         self._cancelled_clear_id: str | None = None
+        self._copy_status_clear_id: str | None = None
         self._documents_accessible = False
         self._source_root = None
         self._collection_indexes_cache: tuple[dict, dict] | None = None
@@ -333,7 +373,11 @@ class ConverterApp:
         # leaf iid -> (folder, name, key); group iids are absent
         self._tracklist_iids: dict[str, tuple[str, str, str]] = {}
         self._tracklist_paths: dict[str, Path] = {}
+        # (folder, name) -> open state for tracklist playlist groups
+        self._tracklist_group_open: dict[tuple[str, str], bool] = {}
+        self._tracklist_group_iids: dict[str, tuple[str, str]] = {}
         self._tracklist_selecting = False
+        self._playlist_selecting = False
         self._tracklist_tech_gen = 0
         self._preview_bit_depth_cache: dict = {}
         self._preview_bit_depth_lock = threading.Lock()
@@ -344,6 +388,11 @@ class ConverterApp:
         self._tracklist_sort_reverse = False
         self._playlist_search_after_id: str | None = None
         self._track_search_after_id: str | None = None
+        self._wav_dir_validate_after_id: str | None = None
+        self._wav_dir_validate_gen = 0
+        self._wav_dir_valid = False
+        self._wav_dir_checking = False
+        self.wav_dir_error_var = tk.StringVar(value="")
 
         self._build()
         self.search_var.trace_add(
@@ -358,10 +407,15 @@ class ConverterApp:
                 "_track_search_after_id", self._refresh_tracklist_preview
             ),
         )
+        self.wav_dir_var.trace_add(
+            "write",
+            lambda *_: self._on_wav_dir_changed(),
+        )
         if not self.search_var.get():
             self._playlist_search.show()
         if not self.track_search_var.get():
             self._track_search.show()
+        self._schedule_wav_dir_validation()
         # Prefs key, not xml_var: skip first-launch search even if Documents
         # restore has not filled the field yet.
         self._has_saved_source_xml = bool(saved_prefs.get("source_xml", "").strip())
@@ -503,14 +557,14 @@ class ConverterApp:
         if accessible:
             saved = load_preferences()
             docs_wav, docs_xml = default_output_paths(documents_accessible=True)
-            startup_wav, startup_output = resolve_startup_paths(
+            startup_wav, _startup_output = resolve_startup_paths(
                 saved,
                 default_wav_dir=docs_wav,
                 default_import_xml=docs_xml,
                 documents_accessible=True,
             )
             self.wav_dir_var.set(str(startup_wav))
-            self.output_var.set(str(startup_output))
+            self._schedule_wav_dir_validation()
             if not self.xml_var.get().strip():
                 self._restore_saved_source_xml(saved)
 
@@ -537,17 +591,17 @@ class ConverterApp:
         frm.rowconfigure(1, weight=1)
 
         ttk.Label(frm, text="Rekordbox XML").grid(row=0, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.xml_var).grid(
-            row=0, column=1, sticky="ew", **pad
-        )
+        self.xml_entry = ttk.Entry(frm, textvariable=self.xml_var)
+        self.xml_entry.grid(row=0, column=1, sticky="ew", **pad)
         xml_btns = ttk.Frame(frm)
         xml_btns.grid(row=0, column=2, sticky="e", **pad)
-        ttk.Button(
+        self.xml_browse_btn = ttk.Button(
             xml_btns,
             text="Browse…",
             width=ACTION_BUTTON_WIDTH,
             command=self._browse_xml,
-        ).pack(side=tk.LEFT)
+        )
+        self.xml_browse_btn.pack(side=tk.LEFT)
         self.refresh_btn = ttk.Button(
             xml_btns, text="Refresh", command=self._refresh_xml
         )
@@ -582,6 +636,7 @@ class ConverterApp:
         self.playlist_tree.grid(row=1, column=0, sticky="nsew")
         scroll.grid(row=1, column=1, sticky="ns")
         self.playlist_tree.bind("<<TreeviewSelect>>", self._on_playlist_select, add="+")
+        self.playlist_tree.bind("<Button-1>", self._on_playlist_button1, add="+")
 
         right = ttk.Frame(panes)
         right.columnconfigure(0, weight=1)
@@ -625,6 +680,11 @@ class ConverterApp:
         self.tracklist_tree.column(
             "sample_rate", width=90, stretch=False, anchor="center"
         )
+        self.tracklist_tree.tag_configure(
+            TRACKLIST_HEADER_SELECTED_TAG,
+            background=TRACKLIST_HEADER_SELECTED_BG,
+            foreground=TRACKLIST_HEADER_SELECTED_FG,
+        )
         track_scroll = ttk.Scrollbar(
             right, orient=tk.VERTICAL, command=self.tracklist_tree.yview
         )
@@ -634,54 +694,72 @@ class ConverterApp:
         self.tracklist_tree.bind(
             "<<TreeviewSelect>>", self._on_tracklist_select, add="+"
         )
+        self.tracklist_tree.bind("<Button-1>", self._on_tracklist_button1, add="+")
+        self.tracklist_tree.bind(
+            "<<TreeviewOpen>>", self._remember_tracklist_group_open, add="+"
+        )
+        self.tracklist_tree.bind(
+            "<<TreeviewClose>>", self._remember_tracklist_group_open, add="+"
+        )
 
         panes.add(left, weight=1)
         panes.add(right, weight=1)
         self._refresh_tracklist_preview()
 
         ttk.Label(frm, text="Output folder").grid(row=2, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.wav_dir_var).grid(
-            row=2, column=1, sticky="ew", **pad
-        )
-        ttk.Button(
+        self.wav_dir_entry = ttk.Entry(frm, textvariable=self.wav_dir_var)
+        self.wav_dir_entry.grid(row=2, column=1, sticky="ew", **pad)
+        self.wav_dir_browse_btn = ttk.Button(
             frm,
             text="Browse…",
             width=ACTION_BUTTON_WIDTH,
             command=self._browse_wav_dir,
-        ).grid(row=2, column=2, sticky="e", **pad)
-
-        ttk.Label(frm, text="Import XML").grid(row=3, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=self.output_var).grid(
-            row=3, column=1, sticky="ew", **pad
         )
-        ttk.Button(
+        self.wav_dir_browse_btn.grid(row=2, column=2, sticky="e", **pad)
+        self.wav_dir_error_label = ttk.Label(
             frm,
-            text="Browse…",
-            width=ACTION_BUTTON_WIDTH,
-            command=self._browse_output,
-        ).grid(row=3, column=2, sticky="e", **pad)
+            textvariable=self.wav_dir_error_var,
+            foreground="#a40000",
+            wraplength=720,
+        )
+        # Row 3 is used only while validation has a message (grid_remove otherwise).
 
-        ttk.Label(frm, text="Format").grid(row=4, column=0, sticky="w", **pad)
+        import_xml_label = ttk.Label(frm, text="Import XML")
+        import_xml_label.grid(row=4, column=0, sticky="w", **pad)
+        import_xml_label.configure(cursor="hand2")
+        import_xml_label.bind("<Button-1>", self._copy_import_xml_path, add="+")
+        self.import_xml_entry = ttk.Entry(
+            frm, textvariable=self.output_var, state="disabled", cursor="hand2"
+        )
+        self.import_xml_entry.grid(row=4, column=1, sticky="ew", **pad)
+        self.import_xml_entry.bind(
+            "<Button-1>", self._copy_import_xml_path, add="+"
+        )
+        _HoverTooltip(self.import_xml_entry, "Click to copy the Import XML path")
+
+        ttk.Label(frm, text="Format").grid(row=5, column=0, sticky="w", **pad)
         format_opts = ttk.Frame(frm)
-        format_opts.grid(row=4, column=1, sticky="w", **pad)
-        ttk.Radiobutton(
+        format_opts.grid(row=5, column=1, sticky="w", **pad)
+        self.format_wav_radio = ttk.Radiobutton(
             format_opts,
             text="WAV",
             variable=self.format_var,
             value="wav",
             command=self._persist_output_preferences,
-        ).pack(side=tk.LEFT)
-        ttk.Radiobutton(
+        )
+        self.format_wav_radio.pack(side=tk.LEFT)
+        self.format_aiff_radio = ttk.Radiobutton(
             format_opts,
             text="AIFF",
             variable=self.format_var,
             value="aiff",
             command=self._persist_output_preferences,
-        ).pack(side=tk.LEFT, padx=(8, 0))
+        )
+        self.format_aiff_radio.pack(side=tk.LEFT, padx=(8, 0))
 
+        ttk.Label(frm, text="Max. quality").grid(row=6, column=0, sticky="w", **pad)
         quality = ttk.Frame(frm)
-        quality.grid(row=5, column=0, columnspan=2, sticky="w", **pad)
-        ttk.Label(quality, text="Sampling format").pack(side=tk.LEFT)
+        quality.grid(row=6, column=1, sticky="w", **pad)
         self.bit_depth_combo = ttk.Combobox(
             quality,
             values=list(BIT_DEPTH_LABELS.values()),
@@ -689,9 +767,9 @@ class ConverterApp:
             width=8,
         )
         self.bit_depth_combo.set(
-            BIT_DEPTH_LABELS.get(self.bit_depth_var.get(), "24Bit")
+            BIT_DEPTH_LABELS.get(self.bit_depth_var.get(), "24-bit")
         )
-        self.bit_depth_combo.pack(side=tk.LEFT, padx=(8, 0))
+        self.bit_depth_combo.pack(side=tk.LEFT)
         self.bit_depth_combo.bind(
             "<<ComboboxSelected>>", self._on_bit_depth_selected, add="+"
         )
@@ -703,7 +781,7 @@ class ConverterApp:
             width=9,
         )
         self.sample_rate_combo.set(
-            SAMPLE_RATE_LABELS.get(self.sample_rate_var.get(), "48KHz")
+            SAMPLE_RATE_LABELS.get(self.sample_rate_var.get(), "48 kHz")
         )
         self.sample_rate_combo.pack(side=tk.LEFT, padx=(8, 0))
         self.sample_rate_combo.bind(
@@ -712,7 +790,7 @@ class ConverterApp:
         _HoverTooltip(self.sample_rate_combo, SAMPLE_RATE_48_TOOLTIP)
 
         self.progress = ttk.Progressbar(frm, mode="determinate", maximum=100)
-        self.progress.grid(row=6, column=0, columnspan=2, sticky="ew", **pad)
+        self.progress.grid(row=7, column=0, columnspan=2, sticky="ew", **pad)
         self.progress["value"] = 0
         self.convert_btn = ttk.Button(
             frm,
@@ -720,7 +798,7 @@ class ConverterApp:
             width=ACTION_BUTTON_WIDTH,
             command=self._start_convert,
         )
-        self.convert_btn.grid(row=6, column=2, sticky="e", **pad)
+        self.convert_btn.grid(row=7, column=2, sticky="e", **pad)
         self.cancel_btn = ttk.Button(
             frm,
             text="Cancel",
@@ -728,11 +806,11 @@ class ConverterApp:
             command=self._request_cancel,
             state=tk.DISABLED,
         )
-        self.cancel_btn.grid(row=6, column=2, sticky="e", **pad)
+        self.cancel_btn.grid(row=7, column=2, sticky="e", **pad)
         self.cancel_btn.grid_remove()
 
         status_row = ttk.Frame(frm)
-        status_row.grid(row=7, column=0, columnspan=3, sticky="ew", **pad)
+        status_row.grid(row=8, column=0, columnspan=3, sticky="ew", **pad)
         ttk.Label(status_row, textvariable=self.status_var, wraplength=1000).pack(
             side=tk.LEFT
         )
@@ -852,17 +930,53 @@ class ConverterApp:
         self.sample_rate_var.set(SAMPLE_RATE_FROM_LABEL.get(label, "48000"))
         self._persist_output_preferences()
 
+    def _on_wav_dir_changed(self) -> None:
+        self._sync_import_xml_display()
+        self._schedule_wav_dir_validation()
+
     def _resolved_output_paths(self) -> tuple[Path, Path]:
-        wav_dir = Path(self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)).expanduser()
-        output = Path(self.output_var.get().strip() or str(DEFAULT_OUTPUT)).expanduser()
+        wav_dir = Path(
+            self.wav_dir_var.get().strip() or str(DEFAULT_WAV_DIR)
+        ).expanduser()
         if not wav_dir.is_absolute():
             wav_dir = Path.home() / wav_dir
-        if not output.is_absolute():
-            output = Path.home() / output
-        return wav_dir, output
+        return wav_dir, import_xml_path(wav_dir)
+
+    def _sync_import_xml_display(self) -> None:
+        _wav_dir, output = self._resolved_output_paths()
+        self.output_var.set(str(output))
+
+    def _copy_import_xml_path(self, _event: object = None) -> str | None:
+        path = str(self._resolved_output_paths()[1])
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(path)
+            self.root.update_idletasks()
+        except tk.TclError:
+            return "break"
+        if not self._busy:
+            self._cancel_copy_status_clear()
+            self.status_var.set(f"Copied path: {path}")
+            self._copy_status_clear_id = self.root.after(
+                CANCELLED_STATUS_CLEAR_MS, self._clear_copy_status
+            )
+        return "break"
+
+    def _cancel_copy_status_clear(self) -> None:
+        if self._copy_status_clear_id is not None:
+            self.root.after_cancel(self._copy_status_clear_id)
+            self._copy_status_clear_id = None
+
+    def _clear_copy_status(self) -> None:
+        self._copy_status_clear_id = None
+        if self._busy:
+            return
+        if not self.status_var.get().startswith("Copied path:"):
+            return
+        self._set_idle_status(self._tracklist_selection_summary())
 
     def _persist_output_preferences(self, *, include_source_xml: bool = False) -> None:
-        wav_dir, output = self._resolved_output_paths()
+        wav_dir, _output = self._resolved_output_paths()
         source_xml = None
         if include_source_xml:
             source_s = self.xml_var.get().strip()
@@ -879,7 +993,6 @@ class ConverterApp:
         try:
             save_preferences(
                 wav_dir,
-                output,
                 source_xml=source_xml,
                 output_format=fmt,
                 bit_depth=depth,
@@ -903,6 +1016,8 @@ class ConverterApp:
         return str(Path.home())
 
     def _browse_xml(self) -> None:
+        if self._busy:
+            return
         current = self.xml_var.get().strip()
         preferred = Path(current).expanduser().parent if current else None
         path = filedialog.askopenfilename(
@@ -924,6 +1039,8 @@ class ConverterApp:
         self._load_playlists()
 
     def _browse_wav_dir(self) -> None:
+        if self._busy:
+            return
         current = self.wav_dir_var.get().strip()
         path = filedialog.askdirectory(
             title="Audio output folder",
@@ -934,23 +1051,7 @@ class ConverterApp:
         if path:
             self.wav_dir_var.set(path)
             self._persist_output_preferences()
-
-    def _browse_output(self) -> None:
-        current = self.output_var.get().strip()
-        if current:
-            preferred = Path(current).expanduser().parent
-        else:
-            preferred = FALLBACK_WAV_DIR
-        path = filedialog.asksaveasfilename(
-            title="Import XML",
-            initialfile=Path(current).name if current else IMPORT_XML_NAME,
-            initialdir=self._browse_initial_dir(preferred),
-            defaultextension=".xml",
-            filetypes=[("XML files", "*.xml"), ("All files", "*.*")],
-        )
-        if path:
-            self.output_var.set(path)
-            self._persist_output_preferences()
+            self._schedule_wav_dir_validation()
 
     def _debounce(self, attr: str, callback) -> None:
         prev = getattr(self, attr)
@@ -991,8 +1092,18 @@ class ConverterApp:
         self._source_root = root
         self._collection_indexes_cache = rb.collection_indexes(root)
         nodes = rb.iter_playlist_nodes(root)
+        by_id, by_location = self._collection_indexes_cache
         for kind, folder, name, node in nodes:
-            count = rb.playlist_track_count(node) if kind == "playlist" else 0
+            count = (
+                rb.playlist_preview_track_count(
+                    node,
+                    by_id,
+                    by_location,
+                    supported_ext=rb.SUPPORTED_LOSSLESS_EXT,
+                )
+                if kind == "playlist"
+                else 0
+            )
             self._playlist_entries.append((kind, folder, name, count, node))
         self._playlist_search.show()
         self._track_search.show()
@@ -1057,11 +1168,71 @@ class ConverterApp:
 
         self._refresh_tracklist_preview()
 
+    def _on_playlist_button1(self, event: object) -> str | None:
+        """Folder row clicks only expand/collapse; playlists keep normal select."""
+        if self._busy:
+            return None
+        tree = self.playlist_tree
+        y = getattr(event, "y", None)
+        if y is None:
+            return None
+        row = tree.identify_row(y)
+        if not row:
+            return None
+        meta = self._playlist_iids.get(row)
+        if meta is None or meta[0] != "folder":
+            return None
+        tree.item(row, open=not bool(tree.item(row, "open")))
+        return "break"
+
     def _on_playlist_select(self, _event: object = None) -> None:
+        if self._busy or self._playlist_selecting:
+            return
+        tree = self.playlist_tree
+        keep = [
+            iid
+            for iid in tree.selection()
+            if (meta := self._playlist_iids.get(iid)) is not None
+            and meta[0] == "playlist"
+        ]
+        if set(keep) != set(tree.selection()):
+            self._playlist_selecting = True
+            try:
+                tree.selection_set(keep)
+            finally:
+                self._playlist_selecting = False
         self._refresh_tracklist_preview()
 
+    def _on_tracklist_button1(self, event: object) -> str | None:
+        """Expand/collapse arrow on a playlist group must not change selection."""
+        if self._busy:
+            return None
+        tree = self.tracklist_tree
+        y = getattr(event, "y", None)
+        x = getattr(event, "x", None)
+        if y is None or x is None:
+            return None
+        row = tree.identify_row(y)
+        if not row or row not in self._tracklist_group_iids:
+            return None
+        element = tree.identify("element", x, y)
+        if element != "Treeitem.indicator":
+            return None
+        is_open = not bool(tree.item(row, "open"))
+        tree.item(row, open=is_open)
+        self._tracklist_group_open[self._tracklist_group_iids[row]] = is_open
+        return "break"
+
+    def _remember_tracklist_group_open(self, _event: object = None) -> None:
+        iid = self.tracklist_tree.focus()
+        key = self._tracklist_group_iids.get(iid)
+        if key is not None:
+            self._tracklist_group_open[key] = bool(
+                self.tracklist_tree.item(iid, "open")
+            )
+
     def _on_tracklist_select(self, _event: object = None) -> None:
-        if self._tracklist_selecting:
+        if self._busy or self._tracklist_selecting:
             return
         preview = self.tracklist_tree
         selected = list(preview.selection())
@@ -1089,7 +1260,22 @@ class ConverterApp:
                 preview.selection_set(unique_leaves)
             finally:
                 self._tracklist_selecting = False
+        self._sync_tracklist_header_highlights()
         self._set_idle_status(self._tracklist_selection_summary())
+
+    def _sync_tracklist_header_highlights(self) -> None:
+        """Darker blue on playlist group rows when any of their tracks are selected."""
+        preview = self.tracklist_tree
+        selected = set(preview.selection())
+        for group_iid in preview.get_children(""):
+            children = preview.get_children(group_iid)
+            active = bool(children) and any(child in selected for child in children)
+            tags = (
+                (TRACKLIST_HEADER_TAG, TRACKLIST_HEADER_SELECTED_TAG)
+                if active
+                else (TRACKLIST_HEADER_TAG,)
+            )
+            preview.item(group_iid, tags=tags)
 
     def _tracklist_selection_summary(self) -> str | None:
         unique_keys: set[str] = set()
@@ -1154,15 +1340,22 @@ class ConverterApp:
         self.tracklist_tree.delete(*self.tracklist_tree.get_children())
         self._tracklist_iids = {}
         self._tracklist_paths = {}
+        self._tracklist_group_iids = {}
         if self._source_root is None:
+            self._tracklist_group_open.clear()
             self._set_preview_scan_active(False)
             self._set_idle_status()
             return
         selected = self._selected_playlists(unique_names=False)
         if not selected:
+            self._tracklist_group_open.clear()
             self._set_preview_scan_active(False)
             self._set_idle_status()
             return
+        selected_keys = set(selected)
+        for key in list(self._tracklist_group_open):
+            if key not in selected_keys:
+                del self._tracklist_group_open[key]
         query = self._track_search.query().casefold()
         if self._collection_indexes_cache is None:
             self._collection_indexes_cache = rb.collection_indexes(self._source_root)
@@ -1190,9 +1383,8 @@ class ConverterApp:
                     continue
                 loc = (track.get("Location") or "") if track is not None else ""
                 path = rb.decode_location(loc) if loc else None
-                if (
-                    path is not None
-                    and path.suffix.lower() not in rb.SUPPORTED_LOSSLESS_EXT
+                if not rb.track_included_in_playlist_preview(
+                    track, supported_ext=rb.SUPPORTED_LOSSLESS_EXT
                 ):
                     continue
                 if path is not None:
@@ -1209,10 +1401,18 @@ class ConverterApp:
                 matched.append((key, label, (fmt, depth, rate), path))
             if not matched:
                 continue
+            group_key = (folder, name)
+            is_open = self._tracklist_group_open.setdefault(group_key, True)
             group_text = f"{name} ({len(matched)} tracks)"
             group_iid = self.tracklist_tree.insert(
-                "", tk.END, text=group_text, open=True, values=("", "", "")
+                "",
+                tk.END,
+                text=group_text,
+                open=is_open,
+                values=("", "", ""),
+                tags=(TRACKLIST_HEADER_TAG,),
             )
+            self._tracklist_group_iids[group_iid] = group_key
             painted += 1
             for key, label, values, path in matched:
                 leaf_iid = self.tracklist_tree.insert(
@@ -1232,6 +1432,7 @@ class ConverterApp:
                 self.tracklist_tree.selection_set(leaf_iids)
         finally:
             self._tracklist_selecting = False
+        self._sync_tracklist_header_highlights()
         self._set_idle_status(self._tracklist_selection_summary())
         if self._tracklist_sort_column is not None:
             self._apply_tracklist_sort()
@@ -1367,9 +1568,6 @@ class ConverterApp:
             kind, folder, name = meta
             if kind == "playlist":
                 add_playlist(folder, name)
-                return
-            for child in self.playlist_tree.get_children(iid):
-                collect_from_iid(child)
 
         for iid in self.playlist_tree.selection():
             collect_from_iid(iid)
@@ -1387,7 +1585,22 @@ class ConverterApp:
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        self.refresh_btn.configure(state=tk.DISABLED if busy else tk.NORMAL)
+        edit_state = tk.DISABLED if busy else tk.NORMAL
+        combo_state = "disabled" if busy else "readonly"
+        tree_state = ("disabled",) if busy else ("!disabled",)
+        self.xml_entry.configure(state=edit_state)
+        self.wav_dir_entry.configure(state=edit_state)
+        self.xml_browse_btn.configure(state=edit_state)
+        self.wav_dir_browse_btn.configure(state=edit_state)
+        self.search_entry.configure(state=edit_state)
+        self.track_search_entry.configure(state=edit_state)
+        self.format_wav_radio.configure(state=edit_state)
+        self.format_aiff_radio.configure(state=edit_state)
+        self.bit_depth_combo.configure(state=combo_state)
+        self.sample_rate_combo.configure(state=combo_state)
+        self.refresh_btn.configure(state=edit_state)
+        self.playlist_tree.state(tree_state)
+        self.tracklist_tree.state(tree_state)
         if busy:
             self._cancel_cancelled_clear()
             self._cancel_progress_anim()
@@ -1400,12 +1613,77 @@ class ConverterApp:
         else:
             self.cancel_btn.grid_remove()
             self.cancel_btn.configure(state=tk.DISABLED)
-            self.convert_btn.configure(state=tk.NORMAL)
             self.convert_btn.grid()
+            self._update_convert_enabled()
             self._sync_scan_indicator()
+
+    def _update_convert_enabled(self) -> None:
+        if self._busy:
+            return
+        enabled = self._wav_dir_valid and not self._wav_dir_checking
+        self.convert_btn.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+
+    def _set_wav_dir_error(self, message: str) -> None:
+        self.wav_dir_error_var.set(message)
+        if message:
+            self.wav_dir_error_label.grid(
+                row=3, column=1, columnspan=2, sticky="w", padx=10, pady=(0, 4)
+            )
+        else:
+            self.wav_dir_error_label.grid_remove()
+
+    def _schedule_wav_dir_validation(self) -> None:
+        prev = self._wav_dir_validate_after_id
+        if prev is not None:
+            self.root.after_cancel(prev)
+        self._wav_dir_checking = True
+        self._wav_dir_valid = False
+        self._set_wav_dir_error("")
+        self._update_convert_enabled()
+
+        def fire() -> None:
+            self._wav_dir_validate_after_id = None
+            self._start_wav_dir_validation()
+
+        self._wav_dir_validate_after_id = self.root.after(
+            WAV_DIR_VALIDATE_DEBOUNCE_MS, fire
+        )
+
+    def _start_wav_dir_validation(self) -> None:
+        wav_dir, _output = self._resolved_output_paths()
+        self._wav_dir_validate_gen += 1
+        gen = self._wav_dir_validate_gen
+        self._wav_dir_checking = True
+        self._wav_dir_valid = False
+        # Do not show a temporary "Checking…" in the error row — it flickers
+        # and then hides for valid folders. Convert stays disabled via
+        # _wav_dir_checking until the result lands.
+        self._update_convert_enabled()
+
+        def worker() -> None:
+            error = converter_manifest.validate_library_folder(wav_dir)
+
+            def on_ui() -> None:
+                if gen != self._wav_dir_validate_gen:
+                    return
+                self._wav_dir_checking = False
+                if error:
+                    self._wav_dir_valid = False
+                    self._set_wav_dir_error(error)
+                else:
+                    self._wav_dir_valid = True
+                    self._set_wav_dir_error("")
+                self._update_convert_enabled()
+
+            self._ui(on_ui)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _request_cancel(self) -> None:
         if not self._busy:
+            return
+        if self._prepared_conversion is not None and self._write_prepared is None:
+            self._discard_prepared_conversion()
             return
         self._cancel_event.set()
         self.status_var.set("Cancelling…")
@@ -1490,10 +1768,15 @@ class ConverterApp:
             self.status_var.set(f"Working… {current}/{total} ({int(pct)}%)")
 
     def _ui(self, fn) -> None:
-        self.root.after(0, fn)
+        try:
+            self.root.after(0, fn)
+        except tk.TclError:
+            pass
 
     def _start_convert(self) -> None:
         if self._busy:
+            return
+        if not self._wav_dir_valid or self._wav_dir_checking:
             return
         xml_s = self.xml_var.get().strip()
         if not xml_s:
@@ -1566,9 +1849,9 @@ class ConverterApp:
         self._convert_max_bit_depth = max_bit_depth
         self._convert_max_sample_rate = max_sample_rate
         self._convert_xml_path = xml_path
-        threading.Thread(target=self._convert_worker, daemon=True).start()
+        threading.Thread(target=self._prepare_worker, daemon=True).start()
 
-    def _convert_worker(self) -> None:
+    def _prepare_worker(self) -> None:
         selected = self._convert_selected
         keys_by_playlist = self._convert_keys_by_playlist
         wav_dir = self._convert_wav_dir
@@ -1578,10 +1861,7 @@ class ConverterApp:
         max_sample_rate = self._convert_max_sample_rate
         xml_path = self._convert_xml_path
         try:
-            summaries: list[str] = []
             skipped: list[str] = []
-            all_stats: list[rb.ConvertStats] = []
-            playlist_dirs: list[Path] = []
             plans: list[rb.Plan] = []
             # Reuse UI-loaded tree when it matches this convert's XML; else parse once.
             loaded_xml = Path(self.xml_var.get().strip()).expanduser()
@@ -1595,24 +1875,30 @@ class ConverterApp:
                     return
             else:
                 source_root = None
+            try:
+                manifest = converter_manifest.load_manifest(wav_dir)
+            except rb.CliError as exc:
+                self._ui(lambda e=[str(exc)]: self._finish_error(e))
+                return
+
+            def progress_tick(
+                current: int,
+                total: int,
+                action: str,
+                track_name: str,
+            ) -> None:
+                self._ui(
+                    lambda c=current, t=total, a=action, n=track_name: self._set_progress(
+                        c, t, action=a, name=n
+                    )
+                )
+
             for i, (folder, name) in enumerate(selected):
                 if self._cancel_event.is_set():
                     self._ui(self._finish_cancelled)
                     return
                 label = f"{name} ({i + 1}/{len(selected)})"
                 self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
-
-                def prepare_tick(
-                    current: int,
-                    total: int,
-                    action: str,
-                    track_name: str,
-                ) -> None:
-                    self._ui(
-                        lambda c=current, t=total, a=action, n=track_name: self._set_progress(
-                            c, t, action=a, name=n
-                        )
-                    )
 
                 plan, errors = rb.prepare(
                     xml_path,
@@ -1624,9 +1910,10 @@ class ConverterApp:
                     max_bit_depth=max_bit_depth,
                     max_sample_rate=max_sample_rate,
                     track_keys=keys_by_playlist[(folder, name)],
-                    on_progress=prepare_tick,
+                    on_progress=progress_tick,
                     cancel_event=self._cancel_event,
                     source_root=source_root,
+                    manifest=manifest,
                 )
                 if self._cancel_event.is_set():
                     self._ui(self._finish_cancelled)
@@ -1637,100 +1924,314 @@ class ConverterApp:
                 assert plan is not None
                 plans.append(plan)
                 skipped.extend(plan.warnings)
-                playlist_dirs.append(plan.playlist_dir)
 
             rb.share_output_root(plans)
-            total = sum(len(plan.unique) for plan in plans)
-            done_base = 0
+            items = rb.collect_batch_unique(plans)
+            rb.share_cover_caches(plans)
+            if self._cancel_event.is_set():
+                self._ui(self._finish_cancelled)
+                return
+
+            preview = rb.build_conversion_preview(
+                plans,
+                items,
+                force=False,
+                cancel_event=self._cancel_event,
+                on_progress=progress_tick,
+            )
+            if self._cancel_event.is_set():
+                self._ui(self._finish_cancelled)
+                return
+            prepared = PreparedConversion(
+                plans=plans,
+                items=items,
+                manifest=manifest,
+                preview=preview,
+                wav_dir=wav_dir,
+                output=output,
+                skipped=skipped,
+            )
+            self._ui(lambda p=prepared: self._on_prepare_ready(p))
+        except rb.CancelledError:
+            self._ui(self._finish_cancelled)
+        except rb.CliError as exc:
+            self._ui(lambda e=str(exc): self._finish_error(e))
+        except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
+            self._ui(lambda e=str(exc): self._finish_error(e))
+
+    def _on_prepare_ready(self, prepared: PreparedConversion) -> None:
+        if self._cancel_event.is_set():
+            self._finish_cancelled()
+            return
+        self._prepared_conversion = prepared
+        self._show_conversion_preview(prepared)
+
+    def _show_conversion_preview(self, prepared: PreparedConversion) -> None:
+        """Modal unique-output preview; Convert continues, Back/Escape discard."""
+        self._close_preview_dialog()
+        preview = prepared.preview
+        dlg = tk.Toplevel(self.root)
+        self._preview_dialog = dlg
+        dlg.title("Conversion preview")
+        dlg.geometry("960x540")
+        dlg.minsize(960, 540)
+        dlg.resizable(True, True)
+
+        frm = ttk.Frame(dlg, padding=16)
+        frm.grid(row=0, column=0, sticky="nsew")
+        dlg.columnconfigure(0, weight=1)
+        dlg.rowconfigure(0, weight=1)
+        frm.columnconfigure(0, weight=1)
+        frm.rowconfigure(1, weight=1)
+
+        summary = (
+            f"{preview.unique_outputs} unique output file(s) · "
+            f"{preview.selected} selected · "
+            f"{preview.resolved} resolved · "
+            f"{preview.duplicates} duplicate(s) · "
+            f"{preview.missing} missing"
+        )
+        ttk.Label(frm, text=summary, wraplength=930).grid(
+            row=0, column=0, sticky="w", pady=(0, 8)
+        )
+
+        table_frame = ttk.Frame(frm)
+        table_frame.grid(row=1, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+
+        columns = ("action", "quality", "size")
+        table = ttk.Treeview(
+            table_frame,
+            columns=columns,
+            show="tree headings",
+            selectmode="browse",
+            height=18,
+        )
+        table.heading("#0", text="Input file", anchor="w")
+        table.heading("action", text="Action", anchor="w")
+        table.heading("quality", text="Quality", anchor="w")
+        table.heading("size", text="Size", anchor="e")
+        table.column("#0", width=400, stretch=True, minwidth=160)
+        table.column("action", width=110, stretch=False, anchor="w")
+        table.column("quality", width=150, stretch=False, anchor="w")
+        table.column("size", width=130, stretch=False, minwidth=120, anchor="e")
+        yscroll = ttk.Scrollbar(
+            table_frame, orient=tk.VERTICAL, command=table.yview
+        )
+        table.configure(yscrollcommand=yscroll.set)
+        table.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+
+        for item in preview.items:
+            action = PREVIEW_ACTION_LABELS.get(item.action, item.action)
+            depth = BIT_DEPTH_LABELS.get(str(item.bit_depth), f"{item.bit_depth}-bit")
+            rate = SAMPLE_RATE_LABELS.get(
+                str(item.sample_rate), f"{item.sample_rate} Hz"
+            )
+            quality = f"{depth} / {rate}"
+            table.insert(
+                "",
+                tk.END,
+                text=item.source_display,
+                values=(action, quality, item.size_display),
+            )
+
+        space_issue = rb.insufficient_output_space_message(
+            prepared.wav_dir,
+            rb.preview_write_bytes(preview),
+        )
+        issue_row = 2
+        btn_row = 2
+        if space_issue:
+            ttk.Label(
+                frm,
+                text=space_issue,
+                foreground="#a40000",
+                wraplength=930,
+            ).grid(row=issue_row, column=0, sticky="w", pady=(8, 0))
+            btn_row = 3
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=btn_row, column=0, sticky="ew", pady=(12, 0))
+        btns.columnconfigure(0, weight=1)
+
+        def on_back() -> None:
+            self._discard_prepared_conversion()
+
+        def on_convert() -> None:
+            self._confirm_prepared_conversion()
+
+        ttk.Button(
+            btns, text="Back", command=on_back, width=ACTION_BUTTON_WIDTH
+        ).grid(row=0, column=0, sticky="w")
+        convert_btn = ttk.Button(
+            btns, text="Convert", command=on_convert, width=ACTION_BUTTON_WIDTH
+        )
+        convert_btn.grid(row=0, column=1, sticky="e")
+        if space_issue:
+            convert_btn.configure(state=tk.DISABLED)
+        dlg.protocol("WM_DELETE_WINDOW", on_back)
+        dlg.bind("<Escape>", lambda _e: on_back())
+        self._place_dialog_over_app(dlg)
+        self.status_var.set("Review conversion…")
+        self._animate_progress_to(0, snap=True)
+
+    def _close_preview_dialog(self) -> None:
+        dlg = self._preview_dialog
+        self._preview_dialog = None
+        if dlg is None:
+            return
+        try:
+            dlg.grab_release()
+        except tk.TclError:
+            pass
+        try:
+            dlg.destroy()
+        except tk.TclError:
+            pass
+
+    def _discard_prepared_conversion(self) -> None:
+        self._close_preview_dialog()
+        self._prepared_conversion = None
+        self._write_prepared = None
+        self._cancel_event.clear()
+        self._set_busy(False)
+        self._animate_progress_to(0, snap=True)
+        self._set_idle_status(self._tracklist_selection_summary())
+
+    def _confirm_prepared_conversion(self) -> None:
+        prepared = self._prepared_conversion
+        if prepared is None:
+            return
+        space_issue = rb.insufficient_output_space_message(
+            prepared.wav_dir,
+            rb.preview_write_bytes(prepared.preview),
+        )
+        if space_issue:
+            messagebox.showerror("Not enough space", space_issue)
+            return
+        self._close_preview_dialog()
+        self._prepared_conversion = None
+        self._write_prepared = prepared
+        self.status_var.set("Converting…")
+        threading.Thread(target=self._write_worker, daemon=True).start()
+
+    def _write_worker(self) -> None:
+        prepared = self._write_prepared
+        if prepared is None:
+            self._ui(lambda: self._finish_error("Nothing to convert."))
+            return
+        plans = prepared.plans
+        items = prepared.items
+        manifest = prepared.manifest
+        wav_dir = prepared.wav_dir
+        output = prepared.output
+        skipped = list(prepared.skipped)
+        try:
+            summaries: list[str] = []
+            total = len(items)
 
             def on_progress(
                 current: int,
                 _plan_total: int,
                 action: str,
                 track_name: str,
-                base: int = 0,
             ) -> None:
-                overall = base + current
                 self._ui(
-                    lambda o=overall, t=total, a=action, n=track_name: self._set_progress(
+                    lambda o=current, t=total, a=action, n=track_name: self._set_progress(
                         o, t, action=a, name=n
                     )
                 )
 
-            def _finish_cancel_with_errors() -> None:
-                encode_errors = [err for s in all_stats for err in s.errors]
+            def _finish_cancel_with_errors(
+                encode_errors: list[str] | None = None,
+            ) -> None:
                 self._ui(lambda e=encode_errors: self._finish_cancelled(e or None))
 
-            for plan in plans:
-                if self._cancel_event.is_set():
-                    _finish_cancel_with_errors()
-                    return
-                base = done_base
-
-                def tick(
-                    current: int,
-                    plan_total: int,
-                    action: str,
-                    track_name: str,
-                    b: int = base,
-                ) -> None:
-                    on_progress(current, plan_total, action, track_name, base=b)
-
-                stats = rb.convert_unique(
-                    plan,
-                    force=False,
-                    progress=False,
-                    on_progress=tick,
-                    cancel_event=self._cancel_event,
+            if self._cancel_event.is_set():
+                _finish_cancel_with_errors()
+                return
+            try:
+                converter_manifest.save_manifest(manifest, wav_dir)
+            except OSError as exc:
+                self._ui(
+                    lambda e=[f"cannot write converter manifest: {exc}"]: self._finish_error(
+                        e
+                    )
                 )
-                all_stats.append(stats)
-                done_base += len(plan.unique)
+                return
+            batch_stats = rb.convert_unique(
+                plans[0],
+                force=False,
+                progress=False,
+                on_progress=on_progress,
+                cancel_event=self._cancel_event,
+                items=items,
+            )
+            completed_plans: list[rb.Plan] = []
+            cancelled = self._cancel_event.is_set()
+            for plan in plans:
+                if cancelled or self._cancel_event.is_set():
+                    cancelled = True
+                    break
+                appended = rb.apply_xml(plan, batch_stats.succeeded)
+                completed_plans.append(plan)
                 if self._cancel_event.is_set():
-                    _finish_cancel_with_errors()
-                    return
-                stats.appended = rb.apply_xml(plan)
-                rb.atomic_write_xml(plan.output_root, plan.output)
-                if self._cancel_event.is_set():
-                    _finish_cancel_with_errors()
-                    return
+                    cancelled = True
                 parts = []
-                if stats.converted:
-                    parts.append(f"{stats.converted} converted")
-                if stats.copied:
-                    parts.append(f"{stats.copied} copied")
-                if stats.skipped:
-                    parts.append(f"{stats.skipped} skipped")
-                if stats.appended:
-                    parts.append(f"+{stats.appended} playlist entries")
+                if batch_stats.converted and plan is plans[0]:
+                    parts.append(f"{batch_stats.converted} converted")
+                if batch_stats.copied and plan is plans[0]:
+                    parts.append(f"{batch_stats.copied} copied")
+                if batch_stats.skipped and plan is plans[0]:
+                    parts.append(f"{batch_stats.skipped} skipped")
+                if appended:
+                    parts.append(f"+{appended} playlist entries")
                 if plan.warnings:
                     parts.append(f"{len(plan.warnings)} missing skipped")
                 detail = ", ".join(parts) if parts else "done"
                 summaries.append(f"{plan.wav_playlist_name}: {detail}")
 
+            if completed_plans:
+                try:
+                    rb.write_import_xml(
+                        completed_plans[0].output_root, completed_plans[0].output
+                    )
+                except rb.CliError as exc:
+                    self._ui(lambda e=[str(exc)]: self._finish_error(e))
+                    return
+                if self._cancel_event.is_set():
+                    cancelled = True
+
+            if cancelled:
+                _finish_cancel_with_errors(batch_stats.errors or None)
+                return
             if total == 0:
                 self._ui(lambda: self._set_progress(0, 0))
             else:
                 self._ui(lambda t=total: self._set_progress(t, t))
-            encode_errors = [err for s in all_stats for err in s.errors]
-            if encode_errors:
-                self._ui(lambda e=encode_errors: self._finish_error(e))
+            if batch_stats.errors:
+                self._ui(lambda e=batch_stats.errors: self._finish_error(e))
                 return
-            open_dir = playlist_dirs[0] if len(playlist_dirs) == 1 else wav_dir
+            open_dir = plans[0].playlist_dir
             out = str(output)
-            if total_successful_conversions(all_stats) == 0:
+            if total_successful_conversions([batch_stats]) == 0:
                 self._ui(
                     lambda s=summaries, w=skipped: self._finish_no_conversions(s, w)
                 )
             else:
                 self._ui(
-                    lambda s=summaries, o=out, w=skipped, d=open_dir: self._finish_ok(
-                        s, o, w, d
+                    lambda s=summaries, o=out, w=skipped, d=open_dir, x=output: self._finish_ok(
+                        s, o, w, d, x
                     )
                 )
         except rb.CliError as exc:
             self._ui(lambda e=str(exc): self._finish_error(e))
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
             self._ui(lambda e=str(exc): self._finish_error(e))
+        finally:
+            self._write_prepared = None
 
     def _show_conversion_errors(self, message: str | list[str]) -> None:
         lines = message if isinstance(message, list) else message.splitlines()
@@ -1742,6 +2243,9 @@ class ConverterApp:
         )
 
     def _finish_cancelled(self, errors: str | list[str] | None = None) -> None:
+        self._close_preview_dialog()
+        self._prepared_conversion = None
+        self._write_prepared = None
         self._set_busy(False)
         self.status_var.set("Cancelled.")
         self._cancel_cancelled_clear()
@@ -1752,6 +2256,9 @@ class ConverterApp:
             self._show_conversion_errors(errors)
 
     def _finish_error(self, message: str | list[str]) -> None:
+        self._close_preview_dialog()
+        self._prepared_conversion = None
+        self._write_prepared = None
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Failed.")
@@ -1762,6 +2269,8 @@ class ConverterApp:
         summaries: list[str],
         warnings: list[str] | None = None,
     ) -> None:
+        self._prepared_conversion = None
+        self._write_prepared = None
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Finished with no audio files converted or copied.")
@@ -1781,7 +2290,10 @@ class ConverterApp:
         output: str,
         warnings: list[str] | None = None,
         open_dir: Path | None = None,
+        import_xml: Path | None = None,
     ) -> None:
+        self._prepared_conversion = None
+        self._write_prepared = None
         self._set_busy(False)
         self._animate_progress_to(100, snap=True)
         body = "\n".join(summaries)
@@ -1805,7 +2317,7 @@ class ConverterApp:
             "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
             f"   (or drag the {suffix} playlist into Playlists)"
         )
-        self._show_done_dialog(message, open_dir)
+        self._show_done_dialog(message, open_dir, import_xml)
 
     def _show_list_dialog(
         self,
@@ -1871,7 +2383,12 @@ class ConverterApp:
         if wait:
             dlg.wait_window()
 
-    def _show_done_dialog(self, message: str, open_dir: Path | None) -> None:
+    def _show_done_dialog(
+        self,
+        message: str,
+        open_dir: Path | None,
+        import_xml: Path | None = None,
+    ) -> None:
         dlg = tk.Toplevel(self.root)
         dlg.title("Done")
         dlg.transient(self.root)
@@ -1889,9 +2406,14 @@ class ConverterApp:
         def close() -> None:
             dlg.destroy()
 
-        def open_folder() -> None:
+        def reveal_library() -> None:
             if open_dir is not None:
                 open_in_finder(open_dir)
+            close()
+
+        def reveal_import_xml() -> None:
+            if import_xml is not None:
+                open_in_finder(import_xml)
             close()
 
         def open_guide() -> None:
@@ -1899,9 +2421,13 @@ class ConverterApp:
             self._show_usage_guide()
 
         if open_dir is not None:
-            ttk.Button(btns, text="Open folder", command=open_folder).pack(
-                side=tk.LEFT, padx=(0, 8)
-            )
+            ttk.Button(
+                btns, text="Reveal audio folder", command=reveal_library
+            ).pack(side=tk.LEFT, padx=(0, 8))
+        if import_xml is not None:
+            ttk.Button(
+                btns, text="Reveal import XML", command=reveal_import_xml
+            ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btns, text="Open usage guide", command=open_guide).pack(
             side=tk.LEFT, padx=(0, 8)
         )

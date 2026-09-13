@@ -163,11 +163,76 @@ class CdjSafeAiffTests(unittest.TestCase):
 
 
 class DestNameAndClassifyAiffTests(unittest.TestCase):
-    def test_dest_name_for_aiff_and_default_wav(self) -> None:
-        src = Path("/music/Track One.flac")
-        self.assertEqual(rb.dest_name_for(src), "Track One.wav")
-        self.assertEqual(rb.dest_name_for(src, output_format="wav"), "Track One.wav")
-        self.assertEqual(rb.dest_name_for(src, output_format="aiff"), "Track One.aiff")
+    def test_preferred_relative_dest_from_track_metadata(self) -> None:
+        """Given Artist/Album/Name on a TRACK: When preferred_relative_dest
+        runs: Then the relative path is FORMAT/Artist - Name.ext (Album ignored)."""
+        el = ET.Element(
+            "TRACK",
+            {
+                "Name": "Bestial",
+                "Artist": "ABSL",
+                "Album": "It's just a bad dream",
+            },
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el),
+            "WAV/ABSL - Bestial.wav",
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el, output_format="wav"),
+            "WAV/ABSL - Bestial.wav",
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el, output_format="aiff"),
+            "AIFF/ABSL - Bestial.aiff",
+        )
+
+    def test_preferred_relative_dest_fallbacks(self) -> None:
+        """Given empty/whitespace Artist or Name: When preferred_relative_dest
+        runs: Then Unknown Artist or stem_fallback is used (Album ignored)."""
+        el = ET.Element(
+            "TRACK",
+            {"Name": "  ", "Artist": "", "Album": "\t"},
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el, stem_fallback="07 - Bestial"),
+            "WAV/Unknown Artist - 07 - Bestial.wav",
+        )
+        el_dot = ET.Element(
+            "TRACK",
+            {"Name": "Track", "Artist": ".", "Album": ".."},
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el_dot),
+            "WAV/Unknown Artist - Track.wav",
+        )
+
+    def test_preferred_relative_dest_sanitizes_components(self) -> None:
+        """Given path separators and reserved filename chars: When preferred_relative_dest
+        runs: Then Artist and Name are sanitized (Album excluded from path)."""
+        el = ET.Element(
+            "TRACK",
+            {
+                "Name": "A:B*C?",
+                "Artist": "X/Y\\Z",
+                "Album": 'Foo<>|"Bar"',
+            },
+        )
+        self.assertEqual(
+            rb.preferred_relative_dest(el),
+            "WAV/X_Y_Z - A_B_C_.wav",
+        )
+
+    def test_format_dir_name_and_media_dir(self) -> None:
+        """Given wav/aiff/other: When format_dir_name / format_media_dir run:
+        Then WAV/AIFF dirs or CliError for unsupported formats."""
+        self.assertEqual(rb.format_dir_name("wav"), "WAV")
+        self.assertEqual(rb.format_dir_name("aiff"), "AIFF")
+        with self.assertRaises(rb.CliError):
+            rb.format_dir_name("flac")
+        root = Path("/tmp/out")
+        self.assertEqual(rb.format_media_dir(root, "wav"), root / "WAV")
+        self.assertEqual(rb.format_media_dir(root, "aiff"), root / "AIFF")
 
     def test_classify_aiff_passthrough_and_transcode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -226,11 +291,11 @@ class InPlaceAiffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             wav_dir = root / "out"
-            playlist = "Set"
-            playlist_dir = wav_dir / playlist
-            playlist_dir.mkdir(parents=True)
-            src = playlist_dir / "track.aiff"
+            # Dest is AIFF/Artist - Name.aiff — put the source at that path.
+            src = wav_dir / "AIFF" / "A - Expected Title.aiff"
+            src.parent.mkdir(parents=True)
             write_pcm_aiff(src)
+            playlist = "Set"
             xml_path = root / "c.xml"
             xml_path.write_text(
                 f"""\
@@ -383,7 +448,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.copied, 1)
             self.assertEqual(cover.call_count, 1)
-            cover.assert_called_with(src)
+            cover.assert_called_with(src, cancel_event=None)
 
     def test_aiff_24_48_dest_does_not_skip_when_effective_is_16_44100(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -686,7 +751,8 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                 output_existed=True,
             )
             with mock.patch.object(xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")):
-                rb.apply_xml(plan)
+                success = {(rb.source_key(item.source_path), "aiff")}
+                rb.apply_xml(plan, success)
             tracks = output_root.findall("COLLECTION/TRACK")
             self.assertEqual(len(tracks), 1)
             self.assertEqual(tracks[0].get("TrackID"), "42")

@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
-import time
 import unicodedata
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Callable
 
+import converter_manifest
 import ffmpeg_tools
 from cdj_aiff import (
     _is_canonical_aiff_output,
@@ -30,6 +31,7 @@ from cdj_wav import (
     is_cdj_safe_wav,
 )
 from cli_error import CancelledError, CliError
+from converter_manifest import ConverterManifest
 from rekordbox_xml import (
     decode_location,
     encode_location,
@@ -118,6 +120,28 @@ class PlannedTrack:
     noop: bool
     bit_depth: int = 24
     sample_rate: int = 48000
+    duration_seconds: float | None = None
+
+
+@dataclass
+class ConversionPreviewItem:
+    relative_dest: str
+    action: str
+    bit_depth: int
+    sample_rate: int
+    size_bytes: int | None = None
+    size_display: str = "—"
+    source_display: str = ""
+
+
+@dataclass
+class ConversionPreview:
+    selected: int
+    resolved: int
+    unique_outputs: int
+    duplicates: int
+    missing: int
+    items: list[ConversionPreviewItem] = field(default_factory=list)
 
 
 @dataclass
@@ -144,15 +168,16 @@ def cached_cover_jpeg(
     cache: dict[Path, bytes | None],
     *,
     lock: threading.Lock | None = None,
+    cancel_event: threading.Event | None = None,
 ) -> bytes | None:
     """Extract cover once per source path for the duration of a convert run."""
     if lock is None:
         if source not in cache:
-            cache[source] = extract_cover_jpeg(source)
+            cache[source] = extract_cover_jpeg(source, cancel_event=cancel_event)
         return cache[source]
     with lock:
         if source not in cache:
-            cache[source] = extract_cover_jpeg(source)
+            cache[source] = extract_cover_jpeg(source, cancel_event=cancel_event)
         return cache[source]
 
 
@@ -164,6 +189,228 @@ def convert_worker_count(n_items: int) -> int:
     return max(CONVERT_WORKERS_MIN, min(capped, n_items))
 
 
+def source_key(path: Path) -> str:
+    """NFC-normalized resolved path string identifying an existing source file."""
+    return unicodedata.normalize("NFC", str(path.expanduser().resolve()))
+
+
+def collect_batch_unique(plans: list[Plan]) -> list[PlannedTrack]:
+    """One PlannedTrack per (source_key, format) across plans; first wins."""
+    seen: set[tuple[str, str]] = set()
+    out: list[PlannedTrack] = []
+    for plan in plans:
+        fmt = plan.output_format
+        for item in plan.unique:
+            key = (source_key(item.source_path), fmt)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+    return out
+
+
+def share_cover_caches(plans: list[Plan]) -> None:
+    """Point every plan at the first plan's cover_cache (merged)."""
+    if len(plans) < 2:
+        return
+    host = plans[0]
+    for plan in plans[1:]:
+        host.cover_cache.update(plan.cover_cache)
+        plan.cover_cache = host.cover_cache
+
+
+def planned_action(
+    plan: Plan,
+    item: PlannedTrack,
+    force: bool,
+    *,
+    cover_lock: threading.Lock | None = None,
+    cancel_event: threading.Event | None = None,
+) -> str:
+    """Classify read-only action: reuse, copy, or transcode."""
+    if item.noop:
+        return "reuse"
+    is_aiff = item.dest_path.suffix.lower() == ".aiff"
+    if not force:
+        if is_aiff:
+            if is_cdj_safe_aiff(
+                item.dest_path,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+            ):
+                cover = cached_cover_jpeg(
+                    item.source_path,
+                    plan.cover_cache,
+                    lock=cover_lock,
+                    cancel_event=cancel_event,
+                )
+                if _is_canonical_aiff_output(
+                    item.dest_path,
+                    item.source_el,
+                    cover,
+                    bit_depth=item.bit_depth,
+                    sample_rate=item.sample_rate,
+                ):
+                    return "reuse"
+        elif is_cdj_safe_wav(
+            item.dest_path,
+            bit_depth=item.bit_depth,
+            sample_rate=item.sample_rate,
+        ):
+            return "reuse"
+    if item.copy_wav:
+        return "copy"
+    return "transcode"
+
+
+def _plan_for_preview_item(plans: list[Plan], item: PlannedTrack) -> Plan:
+    for plan in plans:
+        if item in plan.unique or item in plan.tracks:
+            return plan
+    return plans[0]
+
+
+def _format_size_mb(nbytes: int, *, approximate: bool = False) -> str:
+    """Human-readable size in mebibytes (1024²), one decimal place."""
+    text = f"{nbytes / (1024 * 1024):.1f} MB"
+    return f"≈ {text}" if approximate else text
+
+
+def _preview_size(item: PlannedTrack, action: str) -> tuple[int | None, str]:
+    """Return (bytes, display). Reuse uses dest size; else estimate PCM."""
+    if action == "reuse":
+        try:
+            if item.dest_path.is_file():
+                size = item.dest_path.stat().st_size
+                return size, _format_size_mb(size)
+        except OSError:
+            pass
+        return None, "—"
+    duration = item.duration_seconds
+    if duration is None or not math.isfinite(duration) or duration < 0:
+        return None, "—"
+    bytes_per_sample = 2 if item.bit_depth == 16 else 3
+    estimated = int(duration * item.sample_rate * bytes_per_sample * 2)
+    return estimated, _format_size_mb(estimated, approximate=True)
+
+
+def build_conversion_preview(
+    plans: list[Plan],
+    items: list[PlannedTrack],
+    force: bool,
+    *,
+    cancel_event: threading.Event | None = None,
+    on_progress: Callable[[int, int, str, str], None] | None = None,
+) -> ConversionPreview:
+    """Build a read-only conversion preview from prepared plans and unique items."""
+    if not plans:
+        return ConversionPreview(
+            selected=0,
+            resolved=0,
+            unique_outputs=0,
+            duplicates=0,
+            missing=0,
+            items=[],
+        )
+    resolved = sum(len(plan.tracks) for plan in plans)
+    missing = sum(len(plan.warnings) for plan in plans)
+    selected = resolved + missing
+    unique_outputs = len(items)
+    duplicates = resolved - unique_outputs
+    wav_dir = plans[0].wav_dir
+    preview_items: list[ConversionPreviewItem] = []
+    total = len(items)
+    for index, item in enumerate(items):
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("conversion cancelled during preview")
+        plan = _plan_for_preview_item(plans, item)
+        action = planned_action(
+            plan, item, force, cancel_event=cancel_event
+        )
+        try:
+            relative_dest = item.dest_path.relative_to(wav_dir).as_posix()
+        except ValueError:
+            relative_dest = item.dest_path.name
+        size_bytes, size_display = _preview_size(item, action)
+        preview_items.append(
+            ConversionPreviewItem(
+                relative_dest=relative_dest,
+                action=action,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+                size_bytes=size_bytes,
+                size_display=size_display,
+                source_display=item.source_path.name,
+            )
+        )
+        if on_progress is not None:
+            on_progress(index + 1, total, "preview", item.dest_name)
+    return ConversionPreview(
+        selected=selected,
+        resolved=resolved,
+        unique_outputs=unique_outputs,
+        duplicates=duplicates,
+        missing=missing,
+        items=preview_items,
+    )
+
+
+def preview_write_bytes(preview: ConversionPreview) -> int:
+    """Bytes that copy/transcode will write; reuse needs no extra space."""
+    total = 0
+    for item in preview.items:
+        if item.action == "reuse":
+            continue
+        if item.size_bytes is None:
+            continue
+        total += item.size_bytes
+    return total
+
+
+def _disk_usage_path(path: Path) -> Path:
+    """Nearest existing ancestor suitable for shutil.disk_usage."""
+    candidate = path.expanduser()
+    try:
+        candidate = candidate.resolve(strict=False)
+    except OSError:
+        pass
+    while True:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            pass
+        parent = candidate.parent
+        if parent == candidate:
+            return candidate
+        candidate = parent
+
+
+def insufficient_output_space_message(
+    path: Path,
+    required_bytes: int,
+    *,
+    disk_usage: Callable[[str | Path], object] | None = None,
+) -> str | None:
+    """Return an issue message when free space on path is below required_bytes."""
+    if required_bytes <= 0:
+        return None
+    probe = disk_usage if disk_usage is not None else shutil.disk_usage
+    try:
+        usage = probe(_disk_usage_path(path))
+        free = int(getattr(usage, "free"))
+    except (OSError, TypeError, ValueError, AttributeError):
+        return None
+    if free >= required_bytes:
+        return None
+    needed = _format_size_mb(required_bytes, approximate=True)
+    available = _format_size_mb(free)
+    return (
+        "Not enough free space in the output folder. "
+        f"About {needed.removeprefix('≈ ')} needed, {available} available."
+    )
+
+
 def convert_unique(
     plan: Plan,
     force: bool,
@@ -171,10 +418,11 @@ def convert_unique(
     progress: bool = False,
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    items: list[PlannedTrack] | None = None,
 ) -> ConvertStats:
     stats = ConvertStats()
     plan.playlist_dir.mkdir(parents=True, exist_ok=True)
-    items = plan.unique
+    items = list(items) if items is not None else plan.unique
     bar = Progress(len(items), progress, on_progress=on_progress)
     completed = 0
     stats_lock = threading.Lock()
@@ -187,33 +435,30 @@ def convert_unique(
             done = completed
         bar.update(done, action, name)
 
+    def mark_succeeded(item: PlannedTrack) -> None:
+        fmt = "aiff" if item.dest_path.suffix.lower() == ".aiff" else "wav"
+        with stats_lock:
+            stats.succeeded.add((source_key(item.source_path), fmt))
+
     def process_one(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
             return
         name = item.dest_name
         is_aiff = item.dest_path.suffix.lower() == ".aiff"
-        if item.noop:
+        action = planned_action(
+            plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
+        )
+        if action == "reuse":
             with stats_lock:
                 stats.skipped += 1
+            mark_succeeded(item)
             finish("skip", name)
             return
         try:
+            converter_manifest.ensure_dest_path_under_wav_dir(
+                plan.wav_dir, item.dest_path
+            )
             if is_aiff:
-                cover = cached_cover_jpeg(
-                    item.source_path, plan.cover_cache, lock=cover_lock
-                )
-                if not force and _is_canonical_aiff_output(
-                    item.dest_path,
-                    item.source_el,
-                    cover,
-                    bit_depth=item.bit_depth,
-                    sample_rate=item.sample_rate,
-                ):
-                    with stats_lock:
-                        stats.skipped += 1
-                    finish("skip", name)
-                    return
-                action = "copy" if item.copy_wav else "convert"
                 write_aiff_output(
                     item.source_path,
                     item.dest_path,
@@ -231,16 +476,8 @@ def convert_unique(
                         stats.copied += 1
                     else:
                         stats.converted += 1
-                finish(action, name)
-                return
-            if not force and is_cdj_safe_wav(
-                item.dest_path,
-                bit_depth=item.bit_depth,
-                sample_rate=item.sample_rate,
-            ):
-                with stats_lock:
-                    stats.skipped += 1
-                finish("skip", name)
+                mark_succeeded(item)
+                finish("copy" if item.copy_wav else "convert", name)
                 return
             if item.copy_wav:
                 _copy_wav_atomic(
@@ -248,6 +485,7 @@ def convert_unique(
                 )
                 with stats_lock:
                     stats.copied += 1
+                mark_succeeded(item)
                 finish("copy", name)
                 return
             if not item.codec:
@@ -263,14 +501,13 @@ def convert_unique(
             )
             with stats_lock:
                 stats.converted += 1
+            mark_succeeded(item)
             finish("convert", name)
         except CancelledError:
-            _unlink_quiet(item.dest_path)
             return
         except Exception as exc:  # noqa: BLE001 — collect all; report after pool
             with stats_lock:
                 stats.errors.append(str(exc))
-            _unlink_quiet(item.dest_path)
             finish("error", name)
 
     try:
@@ -293,6 +530,8 @@ class ConvertStats:
     skipped: int = 0
     appended: int = 0
     errors: list[str] = field(default_factory=list)
+    # (source_key, format) that skipped, copied, or converted successfully.
+    succeeded: set[tuple[str, str]] = field(default_factory=set)
 
 
 def abs_path(path: Path) -> Path:
@@ -301,9 +540,67 @@ def abs_path(path: Path) -> Path:
         path = Path.cwd() / path
     return path
 
-def dest_name_for(source: Path, *, output_format: str = "wav") -> str:
+
+_RESERVED_FILENAME_CHARS = '<>:"|?*'
+
+
+def _clean_path_component(value: str) -> str:
+    """NFC-normalize and replace unsafe characters; empty if unusable."""
+    if not value or value.isspace():
+        return ""
+    name = unicodedata.normalize("NFC", value)
+    out: list[str] = []
+    for ch in name:
+        if ch in "/\\\0" or ch in _RESERVED_FILENAME_CHARS or ord(ch) < 32:
+            out.append("_")
+        else:
+            out.append(ch)
+    name = "".join(out).rstrip(" .")
+    if not name or name in {".", ".."}:
+        return ""
+    return name
+
+
+def sanitize_path_component(value: str, *, fallback: str) -> str:
+    """NFC-normalize and make a single path component filesystem-safe."""
+    return (
+        _clean_path_component(value)
+        or _clean_path_component(fallback)
+        or "Unknown"
+    )
+
+
+def preferred_relative_dest(
+    track_el: ET.Element,
+    *,
+    output_format: str = "wav",
+    stem_fallback: str = "",
+) -> str:
+    """Relative FORMAT/Artist - Name.ext path under wav_dir for first assignment."""
     ext = ".aiff" if output_format == "aiff" else ".wav"
-    return unicodedata.normalize("NFC", source.stem) + ext
+    fmt = format_dir_name(output_format)
+    artist = sanitize_path_component(
+        track_el.get("Artist") or "", fallback="Unknown Artist"
+    )
+    name = sanitize_path_component(
+        track_el.get("Name") or "",
+        fallback=stem_fallback or "Unknown Track",
+    )
+    return f"{fmt}/{artist} - {name}{ext}"
+
+
+def format_dir_name(output_format: str) -> str:
+    """Return WAV or AIFF directory name for the output format."""
+    if output_format == "wav":
+        return "WAV"
+    if output_format == "aiff":
+        return "AIFF"
+    raise CliError(f"unsupported output format: {output_format!r}")
+
+
+def format_media_dir(wav_dir: Path, output_format: str) -> Path:
+    """Return wav_dir/WAV or wav_dir/AIFF for audio output."""
+    return wav_dir / format_dir_name(output_format)
 
 
 def playlist_dir_name(playlist_name: str) -> str:
@@ -316,8 +613,7 @@ def playlist_dir_name(playlist_name: str) -> str:
     return name
 
 
-def collision_key(name: str) -> str:
-    return unicodedata.normalize("NFC", name).casefold()
+collision_key = converter_manifest.collision_key
 
 
 def resolve_existing_file(path: Path) -> Path | None:
@@ -448,6 +744,21 @@ def same_file(a: Path, b: Path) -> bool:
         return False
 
 
+def parse_duration_seconds(probe: dict) -> float | None:
+    """Extract duration from ffprobe JSON; invalid/non-finite/negative → None."""
+    fmt = probe.get("format") or {}
+    raw = fmt.get("duration") if isinstance(fmt, dict) else None
+    if raw is None or raw == "":
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return value
+
+
 def build_plan(
     source_root: ET.Element,
     playlist_el: ET.Element,
@@ -462,6 +773,7 @@ def build_plan(
     max_sample_rate: int = 48000,
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
+    manifest: ConverterManifest | None = None,
 ) -> tuple[Plan | None, list[str]]:
     if output_format not in ("wav", "aiff"):
         output_format = "wav"
@@ -474,11 +786,8 @@ def build_plan(
     errors.extend(resolve_errors)
 
     wav_dir_abs = abs_path(wav_dir)
-    try:
-        playlist_dir = wav_dir_abs / playlist_dir_name(playlist_name)
-    except CliError as exc:
-        errors.append(str(exc))
-        playlist_dir = wav_dir_abs / "_"
+    if manifest is None:
+        manifest = converter_manifest.empty_manifest()
 
     planned: list[PlannedTrack] = []
     warnings: list[str] = []
@@ -493,8 +802,21 @@ def build_plan(
             warnings.append(f"missing source file: {source_path}")
             continue
         source_path = resolved
-        dest_name = dest_name_for(source_path, output_format=output_format)
-        dest_path = playlist_dir / dest_name
+        preferred = preferred_relative_dest(
+            el,
+            output_format=output_format,
+            stem_fallback=source_path.stem,
+        )
+        rel = converter_manifest.reserve_relative_dest(
+            manifest,
+            source_key=source_key(source_path),
+            output_format=output_format,
+            preferred=preferred,
+            wav_dir=wav_dir_abs,
+            source_path=source_path,
+        )
+        dest_path = wav_dir_abs.joinpath(*PurePosixPath(rel).parts)
+        dest_name = dest_path.name
         dest_location = encode_location(dest_path)
         planned.append(
             PlannedTrack(
@@ -510,17 +832,12 @@ def build_plan(
         )
 
     unique: list[PlannedTrack] = []
-    unique_dest: dict[str, PlannedTrack] = {}
+    unique_sources: dict[str, PlannedTrack] = {}
     for item in planned:
-        dest_key = collision_key(item.dest_name)
-        if dest_key in unique_dest:
-            kept = unique_dest[dest_key]
-            if item.source_path != kept.source_path:
-                warnings.append(
-                    f"skipped filename collision: {item.source_path} → {kept.dest_name}"
-                )
+        sk = source_key(item.source_path)
+        if sk in unique_sources:
             continue
-        unique_dest[dest_key] = item
+        unique_sources[sk] = item
         unique.append(item)
 
     total = len(unique)
@@ -545,7 +862,11 @@ def build_plan(
         if cancel_event is not None and cancel_event.is_set():
             return
         try:
-            probe = ffmpeg_tools.run_ffprobe(item.source_path)
+            probe = ffmpeg_tools.run_ffprobe(
+                item.source_path, cancel_event=cancel_event
+            )
+        except CancelledError:
+            return
         except CliError as exc:
             _record_error(str(exc))
             _finish_progress(item)
@@ -575,11 +896,15 @@ def build_plan(
         item.codec = None if is_copy else codec
         item.bit_depth = bits
         item.sample_rate = rate
+        item.duration_seconds = parse_duration_seconds(probe)
         in_place = same_file(item.source_path, item.dest_path)
         if output_format == "aiff":
             if in_place:
                 cover = cached_cover_jpeg(
-                    item.source_path, cover_cache, lock=cover_lock
+                    item.source_path,
+                    cover_cache,
+                    lock=cover_lock,
+                    cancel_event=cancel_event,
                 )
                 if _is_canonical_aiff_output(
                     item.dest_path,
@@ -608,12 +933,16 @@ def build_plan(
 
     if unique:
         workers = convert_worker_count(len(unique))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=workers)
+        try:
             futures = [pool.submit(probe_one, item) for item in unique]
             for fut in as_completed(futures):
                 fut.result()
                 if cancel_event is not None and cancel_event.is_set():
                     break
+        finally:
+            cancelled = cancel_event is not None and cancel_event.is_set()
+            pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
         if cancel_event is not None and cancel_event.is_set():
             return None, []
 
@@ -623,7 +952,7 @@ def build_plan(
         playlist_name=playlist_name,
         wav_playlist_name=wav_playlist_name,
         wav_dir=wav_dir_abs,
-        playlist_dir=playlist_dir,
+        playlist_dir=format_media_dir(wav_dir_abs, output_format),
         output=output,
         tracks=planned,
         unique=unique,
@@ -639,14 +968,6 @@ def build_plan(
     if errors:
         return plan, errors
     return plan, []
-
-
-def _kill_ffmpeg_drain(proc: subprocess.Popen) -> None:
-    try:
-        proc.kill()
-        proc.wait()
-    finally:
-        proc.communicate()
 
 
 _COPY_CHUNK_SIZE = 1024 * 1024
@@ -787,18 +1108,17 @@ def run_ffmpeg(
                 "ffmpeg not found on PATH (install with: brew install ffmpeg)"
             ) from exc
         timeout_s = ffmpeg_tools.FFMPEG_CONVERT_TIMEOUT_S * CONVERT_WORKERS
-        deadline = time.monotonic() + timeout_s
-        while proc.poll() is None:
-            if cancel_event is not None and cancel_event.is_set():
-                _kill_ffmpeg_drain(proc)
-                raise CancelledError(f"conversion cancelled for {source}")
-            if time.monotonic() >= deadline:
-                _kill_ffmpeg_drain(proc)
-                raise CliError(
-                    f"ffmpeg timed out after {timeout_s}s for {source}"
-                )
-            time.sleep(0.05)
-        _stdout, stderr = proc.communicate()
+        try:
+            _stdout, stderr = ffmpeg_tools.wait_proc(
+                proc,
+                cancel_event=cancel_event,
+                timeout_s=timeout_s,
+                cancel_message=f"conversion cancelled for {source}",
+            )
+        except subprocess.TimeoutExpired:
+            raise CliError(
+                f"ffmpeg timed out after {timeout_s}s for {source}"
+            )
         if proc.returncode != 0:
             err = (stderr or _stdout or "").strip() or f"exit {proc.returncode}"
             raise CliError(f"ffmpeg conversion failed for {source}: {err}")
@@ -837,9 +1157,11 @@ def write_aiff_output(
     """Atomically write AIFF: PCM then ID3, validate, os.replace."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     if cover_cache is None:
-        cover = extract_cover_jpeg(source)
+        cover = extract_cover_jpeg(source, cancel_event=cancel_event)
     else:
-        cover = cached_cover_jpeg(source, cover_cache, lock=cover_lock)
+        cover = cached_cover_jpeg(
+            source, cover_cache, lock=cover_lock, cancel_event=cancel_event
+        )
     tmp = _temp_beside(dest, aiff=True)
     try:
         if passthrough:

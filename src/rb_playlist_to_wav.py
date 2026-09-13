@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Callable, Collection
 
 import convert_plan
+import converter_manifest
 import ffmpeg_tools
 import xml_output
 from cdj_aiff import (
@@ -39,6 +40,7 @@ from cdj_wav import (
     parse_wav_info,
 )
 from cli_error import CancelledError, CliError
+from gui_preferences import import_xml_path
 from rekordbox_xml import (
     XML_CANDIDATE_RELATIVE,
     collection_indexes,
@@ -52,10 +54,12 @@ from rekordbox_xml import (
     parse_playlist_selection,
     path_is_under_documents,
     playlist_label,
+    playlist_preview_track_count,
     playlist_track_count,
     resolve_playlist,
     resolve_playlist_tracks,
     skeleton_from,
+    track_included_in_playlist_preview,
 )
 
 
@@ -87,9 +91,14 @@ Progress = convert_plan.Progress
 PlannedTrack = convert_plan.PlannedTrack
 Plan = convert_plan.Plan
 ConvertStats = convert_plan.ConvertStats
+ConversionPreview = convert_plan.ConversionPreview
+ConversionPreviewItem = convert_plan.ConversionPreviewItem
 cached_cover_jpeg = convert_plan.cached_cover_jpeg
 abs_path = convert_plan.abs_path
-dest_name_for = convert_plan.dest_name_for
+sanitize_path_component = convert_plan.sanitize_path_component
+preferred_relative_dest = convert_plan.preferred_relative_dest
+format_dir_name = convert_plan.format_dir_name
+format_media_dir = convert_plan.format_media_dir
 playlist_dir_name = convert_plan.playlist_dir_name
 collision_key = convert_plan.collision_key
 resolve_existing_file = convert_plan.resolve_existing_file
@@ -97,9 +106,17 @@ same_file = convert_plan.same_file
 target_from_stream = convert_plan.target_from_stream
 pcm_codec_for_depth = convert_plan.pcm_codec_for_depth
 classify_source = convert_plan.classify_source
+parse_duration_seconds = convert_plan.parse_duration_seconds
 build_plan = convert_plan.build_plan
 run_ffmpeg = convert_plan.run_ffmpeg
 write_aiff_output = convert_plan.write_aiff_output
+source_key = convert_plan.source_key
+collect_batch_unique = convert_plan.collect_batch_unique
+share_cover_caches = convert_plan.share_cover_caches
+planned_action = convert_plan.planned_action
+build_conversion_preview = convert_plan.build_conversion_preview
+preview_write_bytes = convert_plan.preview_write_bytes
+insufficient_output_space_message = convert_plan.insufficient_output_space_message
 convert_unique = convert_plan.convert_unique
 
 # Re-exports from xml_output for callers.
@@ -114,6 +131,9 @@ refresh_track = xml_output.refresh_track
 playlist_keys = xml_output.playlist_keys
 apply_xml = xml_output.apply_xml
 atomic_write_xml = xml_output.atomic_write_xml
+validate_import_xml = xml_output.validate_import_xml
+write_import_xml = xml_output.write_import_xml
+assignment_key = xml_output.assignment_key
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -144,8 +164,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=DEFAULT_OUTPUT,
-        help="Output Rekordbox XML (default: ./output/rekordbox-import.xml)",
+        default=None,
+        help=(
+            "Advanced override for the import XML path "
+            "(default: <wav-dir>/rekordbox-import.xml)"
+        ),
     )
     parser.add_argument(
         "--format",
@@ -251,11 +274,21 @@ def prompt_playlists(
         return [(folder, name) for folder, name, _n in chosen]
 
 
-def prompt_paths(wav_dir: Path, output: Path) -> tuple[Path, Path]:
+def resolve_cli_output(wav_dir: Path, output: Path | None) -> Path:
+    """Return explicit --output, or <wav_dir>/rekordbox-import.xml when omitted."""
+    if output is not None:
+        return output
+    return import_xml_path(wav_dir)
+
+
+def prompt_paths(wav_dir: Path, output: Path | None) -> tuple[Path, Path]:
     print()
-    wav_s = prompt_line("WAV directory", str(wav_dir))
-    out_s = prompt_line("Output XML", str(output))
-    return Path(wav_s).expanduser(), Path(out_s).expanduser()
+    wav_s = prompt_line("Audio directory", str(wav_dir))
+    chosen_wav = Path(wav_s).expanduser()
+    if output is not None:
+        out_s = prompt_line("Output XML", str(output))
+        return chosen_wav, Path(out_s).expanduser()
+    return chosen_wav, resolve_cli_output(chosen_wav, None)
 
 
 def print_import_hints(output: Path, *, output_format: str = "wav") -> None:
@@ -304,50 +337,114 @@ def prompt_wizard(
     )
 
 
-def run_convert_one(
+def run_convert_batch(
     xml_path: Path,
-    playlist_name: str,
+    playlist_refs: list[tuple[str | None, str]],
     wav_dir: Path,
     output: Path,
     *,
     force: bool,
     dry_run: bool,
-    playlist_folder: str | None = None,
     output_format: str = "wav",
     max_bit_depth: int = 24,
     max_sample_rate: int = 48000,
     source_root: ET.Element | None = None,
 ) -> int:
-    plan, errors = prepare(
-        xml_path,
-        playlist_name,
-        wav_dir,
-        output,
-        playlist_folder=playlist_folder,
-        output_format=output_format,
-        max_bit_depth=max_bit_depth,
-        max_sample_rate=max_sample_rate,
-        source_root=source_root,
-    )
-    if errors:
-        print_errors(errors)
+    """Prepare all playlists, convert unique (source_key, format) once, apply XML."""
+    if not playlist_refs:
         return 1
-    assert plan is not None
-    if plan.warnings:
-        print_warnings(plan.warnings)
-    if dry_run:
-        print_summary(plan, None, dry_run=True)
-        return 0
+    library_error = converter_manifest.validate_library_folder(wav_dir)
+    if library_error is not None:
+        print(library_error, file=sys.stderr)
+        return 1
+    if source_root is None:
+        try:
+            source_root = load_dj_playlists(xml_path)
+        except CliError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
     try:
-        stats = convert_plan.convert_unique(
-            plan, force=force, progress=sys.stderr.isatty()
-        )
-        stats.appended = xml_output.apply_xml(plan)
-        xml_output.atomic_write_xml(plan.output_root, plan.output)
+        manifest = converter_manifest.load_manifest(wav_dir)
     except CliError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    print_summary(plan, stats, dry_run=False)
+
+    plans: list[Plan] = []
+    for folder, name in playlist_refs:
+        plan, errors = prepare(
+            xml_path,
+            name,
+            wav_dir,
+            output,
+            playlist_folder=folder,
+            output_format=output_format,
+            max_bit_depth=max_bit_depth,
+            max_sample_rate=max_sample_rate,
+            source_root=source_root,
+            manifest=manifest,
+        )
+        if errors:
+            print_errors(errors)
+            return 1
+        assert plan is not None
+        if plan.warnings:
+            print_warnings(plan.warnings)
+        plans.append(plan)
+
+    xml_output.share_output_root(plans)
+
+    if dry_run:
+        items = convert_plan.collect_batch_unique(plans)
+        convert_plan.share_cover_caches(plans)
+        preview = convert_plan.build_conversion_preview(plans, items, force=force)
+        print_conversion_preview(plans, preview)
+        return 0
+
+    items = convert_plan.collect_batch_unique(plans)
+    convert_plan.share_cover_caches(plans)
+    preview = convert_plan.build_conversion_preview(plans, items, force=force)
+    space_issue = convert_plan.insufficient_output_space_message(
+        wav_dir,
+        convert_plan.preview_write_bytes(preview),
+    )
+    if space_issue is not None:
+        print(space_issue, file=sys.stderr)
+        return 1
+
+    try:
+        converter_manifest.save_manifest(manifest, wav_dir)
+    except OSError as exc:
+        print(f"cannot write converter manifest: {exc}", file=sys.stderr)
+        return 1
+
+    host = plans[0]
+    try:
+        stats = convert_plan.convert_unique(
+            host,
+            force=force,
+            progress=sys.stderr.isatty(),
+            items=items,
+        )
+        for i, plan in enumerate(plans):
+            if len(plans) > 1:
+                print()
+                folder, name = playlist_refs[i]
+                label = playlist_label(folder, name) if folder else name
+                print(f"=== {label} ({i + 1}/{len(plans)}) ===")
+            plan_stats = ConvertStats(
+                converted=stats.converted if i == 0 else 0,
+                copied=stats.copied if i == 0 else 0,
+                skipped=stats.skipped if i == 0 else 0,
+                errors=list(stats.errors) if i == len(plans) - 1 else [],
+                succeeded=set(stats.succeeded),
+            )
+            plan_stats.appended = xml_output.apply_xml(plan, stats.succeeded)
+            print_summary(plan, plan_stats, dry_run=False)
+        xml_output.write_import_xml(host.output_root, host.output)
+    except CliError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     if stats.errors:
         print_errors(stats.errors)
         return 1
@@ -362,6 +459,35 @@ def print_errors(errors: list[str]) -> None:
 def print_warnings(warnings: list[str]) -> None:
     for warning in warnings:
         print(f"warning: {warning}", file=sys.stderr)
+
+
+def print_conversion_preview(plans: list[Plan], preview: ConversionPreview) -> None:
+    """Print shared ConversionPreview for CLI --dry-run (read-only)."""
+    print(
+        f"{preview.unique_outputs} unique output file(s) · "
+        f"{preview.selected} selected · "
+        f"{preview.resolved} resolved · "
+        f"{preview.duplicates} duplicate(s) · "
+        f"{preview.missing} missing"
+    )
+    print()
+    print("Format directory:")
+    print(plans[0].playlist_dir)
+    print()
+    if preview.items:
+        print("Inputs:")
+        for item in preview.items:
+            quality = f"{item.bit_depth}-bit / {item.sample_rate} Hz"
+            print(
+                f"{item.source_display}  {item.action}  {quality}  {item.size_display}"
+            )
+        print()
+    print("New playlist:")
+    for plan in plans:
+        print(plan.wav_playlist_name)
+    print()
+    print("Import XML:")
+    print(plans[0].output)
 
 
 def print_summary(
@@ -423,6 +549,7 @@ def prepare(
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
     source_root: ET.Element | None = None,
+    manifest: converter_manifest.ConverterManifest | None = None,
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(ffmpeg_tools.require_tools())
@@ -464,6 +591,13 @@ def prepare(
     else:
         output_root = skeleton_from(source_root)
 
+    if manifest is None:
+        try:
+            manifest = converter_manifest.load_manifest(wav_dir)
+        except CliError as exc:
+            errors.append(str(exc))
+            return None, errors
+
     plan, plan_errors = convert_plan.build_plan(
         source_root,
         playlist_el,
@@ -477,6 +611,7 @@ def prepare(
         max_sample_rate=max_sample_rate,
         on_progress=on_progress,
         cancel_event=cancel_event,
+        manifest=manifest,
     )
     errors.extend(plan_errors)
     return plan, errors
@@ -513,7 +648,7 @@ def main(argv: list[str] | None = None) -> int:
         xml_path = args.xml
         playlist_refs = [(None, args.playlist)]
         wav_dir = args.wav_dir
-        output = args.output
+        output = resolve_cli_output(wav_dir, args.output)
 
     try:
         shared_root = load_dj_playlists(xml_path)
@@ -521,26 +656,20 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    for i, (folder, name) in enumerate(playlist_refs):
-        if len(playlist_refs) > 1:
-            print()
-            label = playlist_label(folder, name) if folder else name
-            print(f"=== {label} ({i + 1}/{len(playlist_refs)}) ===")
-        rc = run_convert_one(
-            xml_path,
-            name,
-            wav_dir,
-            output,
-            force=args.force,
-            dry_run=args.dry_run,
-            playlist_folder=folder,
-            output_format=output_format,
-            max_bit_depth=max_bit_depth,
-            max_sample_rate=max_sample_rate,
-            source_root=shared_root,
-        )
-        if rc != 0:
-            return rc
+    rc = run_convert_batch(
+        xml_path,
+        playlist_refs,
+        wav_dir,
+        output,
+        force=args.force,
+        dry_run=args.dry_run,
+        output_format=output_format,
+        max_bit_depth=max_bit_depth,
+        max_sample_rate=max_sample_rate,
+        source_root=shared_root,
+    )
+    if rc != 0:
+        return rc
     if not args.dry_run:
         print_import_hints(abs_path(output), output_format=output_format)
     return 0

@@ -48,24 +48,27 @@ You will be asked to:
 
 1. **Choose the XML** — common export paths are listed; type a number or a full path.
 2. **Choose playlists** — numbered list with folder and track count. Type `1`, `1,4,7`, or `all`.
-3. **Confirm folders** — defaults are `./output` for audio files and `./output/rekordbox-import.xml` for the import file.
+3. **Confirm the output folder** — default `./output`. Import XML is always `<that folder>/rekordbox-import.xml` (CLI `--output` can override).
 4. **Format** — `wav` (default) or `aiff`.
 5. **Max bit depth** — `24` (default) or `16`. 16-bit tracks are not upconverted to 24-bit.
 6. **Max sample rate** — `48000` (default) or `44100`. 44.1 kHz tracks are not upconverted to 48 kHz.
 
 **What you get**
 
-- Audio files in `output/<playlist name>/`
+- Audio files in `output/WAV/` or `output/AIFF/` as `<artist> - <track>` (no Album or quality directories; shared across playlists)
   - WAV: stereo `WAVE_FORMAT_PCM` (`fmt ` + `data` only) at the effective depth/rate
   - AIFF: stereo PCM at the effective depth/rate, plus ID3v2.3 from the XML and optional cover art
+- Sticky hidden `output/.rekordbox-converter-manifest.json` (destinations per source and format)
 - Import file `output/rekordbox-import.xml`
 - Playlist named `{your playlist} [WAV]` or `{your playlist} [AIFF]`
 
 These quality settings are maxima, not targets. Defaults stay WAV / 24-bit / 48 kHz.
 
-Your original files stay where they are. Re-running with the same import file **adds** new tracks and refreshes metadata for existing dest paths.
+Your original files stay where they are. Re-running with the same output folder **adds** new tracks and refreshes metadata for existing dest paths. Each unique source converts once per batch even if it appears in several playlists.
 
-If two tracks would share a filename, nothing is written and you get an error.
+Assignments are sticky per source and format. If two different sources would share `<artist> - <track>`, the second gets `(2)`, then `(3)`, and so on. Deleting a generated audio file recreates it at the same assignment on the next run. Deleting the hidden manifest leaves the audio unmanaged and the folder is refused — choose a new empty output folder.
+
+CLI `--dry-run` prints the same conversion plan the GUI Convert preview shows (and writes nothing). In the app, Convert opens that preview first; **Back** discards it and writes nothing. After a successful run, **Reveal audio folder** opens the selected format directory (`WAV/` or `AIFF/`).
 
 ### Same thing with options (optional)
 
@@ -87,10 +90,10 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 | `--format` | `wav` | `wav` or `aiff` |
 | `--bit-depth` | `24` | Max `16` or `24` (no upconvert) |
 | `--sample-rate` | `48000` | Max `44100` or `48000` (no upconvert) |
-| `--wav-dir` | `./output` | Audio folder (`<this>/<playlist>/`) |
-| `--output` | `./output/rekordbox-import.xml` | Import file for Rekordbox |
+| `--wav-dir` | `./output` | Shared library (`WAV|AIFF/<artist> - <track>`) |
+| `--output` | `<wav-dir>/rekordbox-import.xml` | Optional override; default derived from `--wav-dir` |
 | `--force` | off | Rebuild files that already match the profile |
-| `--dry-run` | off | Check only; write nothing |
+| `--dry-run` | off | Print the conversion plan; write nothing |
 
 ---
 
@@ -130,4 +133,4 @@ Play one track. Confirm it is on a disk Rekordbox can read (internal drive or a 
 - **Do not move the output folder.** Rekordbox stores those paths. Convert again if you relocate files.
 - Original lossless files are untouched.
 
-**New tracks later:** export XML from Rekordbox again, run `./rb-converter.py` with the same output folder and import file, refresh **Imported Library**, then import the new rows.
+**New tracks later:** export XML from Rekordbox again, run `./rb-converter.py` with the same output folder, refresh **Imported Library**, then import the new rows.

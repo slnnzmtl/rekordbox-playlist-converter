@@ -31,8 +31,22 @@ def _seed_track_selection(app, folder="ROOT", name="Test", key="1"):
     return leaf
 
 
+def _mark_output_folder_valid(app) -> None:
+    """Bypass async folder validation so Convert can run in unit tests."""
+    after_id = getattr(app, "_wav_dir_validate_after_id", None)
+    if after_id is not None:
+        app.root.after_cancel(after_id)
+        app._wav_dir_validate_after_id = None
+    app._wav_dir_checking = False
+    app._wav_dir_valid = True
+    app._set_wav_dir_error("")
+    app._update_convert_enabled()
+
+
 class GuiPreferencesStartupTests(unittest.TestCase):
-    def test_startup_restores_saved_output_paths(self) -> None:
+    def test_startup_restores_saved_wav_dir_and_derives_xml(self) -> None:
+        """Given saved wav_dir and legacy import_xml: When the app starts: Then
+        wav_dir is restored and XML is always <wav_dir>/rekordbox-import.xml."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
@@ -40,7 +54,7 @@ class GuiPreferencesStartupTests(unittest.TestCase):
         from rb_converter_gui import ConverterApp
 
         saved_wav = Path("/tmp/saved-wav-dir")
-        saved_xml = Path("/tmp/saved-wav-dir/custom-import.xml")
+        derived_xml = saved_wav / "rekordbox-import.xml"
         root = None
         try:
             with patch(
@@ -50,17 +64,17 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 "rb_converter_gui.load_preferences",
                 return_value={
                     "wav_dir": str(saved_wav),
-                    "import_xml": str(saved_xml),
+                    "import_xml": str(saved_wav / "custom-import.xml"),
                 },
             ), patch(
                 "rb_converter_gui.resolve_startup_paths",
-                return_value=(saved_wav, saved_xml),
+                return_value=(saved_wav, derived_xml),
             ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
             self.assertEqual(app.wav_dir_var.get(), str(saved_wav))
-            self.assertEqual(app.output_var.get(), str(saved_xml))
+            self.assertEqual(app._resolved_output_paths()[1], derived_xml)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -260,7 +274,9 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 root.withdraw()
                 app = ConverterApp(root)
             self.assertEqual(app.wav_dir_var.get(), str(FALLBACK_WAV_DIR))
-            self.assertEqual(app.output_var.get(), str(FALLBACK_OUTPUT))
+            self.assertEqual(
+                app._resolved_output_paths()[1], FALLBACK_OUTPUT
+            )
             self.assertFalse(app.documents_accessible)
             probe.assert_not_called()
             finder.assert_not_called()
@@ -291,7 +307,7 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 app._probe_documents_after_idle()
             self.assertTrue(app.documents_accessible)
             self.assertEqual(app.wav_dir_var.get(), str(DEFAULT_WAV_DIR))
-            self.assertEqual(app.output_var.get(), str(DEFAULT_OUTPUT))
+            self.assertEqual(app._resolved_output_paths()[1], DEFAULT_OUTPUT)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -319,7 +335,9 @@ class GuiPreferencesStartupTests(unittest.TestCase):
                 app._probe_documents_after_idle()
             self.assertFalse(app.documents_accessible)
             self.assertEqual(app.wav_dir_var.get(), str(FALLBACK_WAV_DIR))
-            self.assertEqual(app.output_var.get(), str(FALLBACK_OUTPUT))
+            self.assertEqual(
+                app._resolved_output_paths()[1], FALLBACK_OUTPUT
+            )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -521,14 +539,14 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 app = ConverterApp(root, documents_accessible=False)
                 save_prefs.reset_mock()
 
-                app.bit_depth_combo.set("16Bit")
+                app.bit_depth_combo.set("16-bit")
                 app._on_bit_depth_selected()
                 self.assertEqual(app.bit_depth_var.get(), "16")
                 save_prefs.assert_called()
                 self.assertEqual(save_prefs.call_args.kwargs.get("bit_depth"), "16")
                 save_prefs.reset_mock()
 
-                app.sample_rate_combo.set("44.1KHz")
+                app.sample_rate_combo.set("44.1 kHz")
                 app._on_sample_rate_selected()
                 self.assertEqual(app.sample_rate_var.get(), "44100")
                 save_prefs.assert_called()
@@ -563,15 +581,18 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
-                app.output_var.set("/tmp/chosen-import.xml")
                 app.xml_var.set("/tmp/source-rekordbox.xml")
                 app._browse_wav_dir()
                 save_prefs.assert_called_once()
                 args = save_prefs.call_args[0]
                 kwargs = save_prefs.call_args.kwargs
                 self.assertEqual(args[0], Path("/tmp/chosen-wav"))
-                self.assertEqual(args[1], Path("/tmp/chosen-import.xml"))
+                self.assertEqual(len(args), 1)
                 self.assertIsNone(kwargs.get("source_xml"))
+                self.assertEqual(
+                    app._resolved_output_paths()[1],
+                    Path("/tmp/chosen-wav") / "rekordbox-import.xml",
+                )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -614,7 +635,9 @@ class GuiPreferencesPersistTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
-    def test_browse_output_saves_preferences(self) -> None:
+    def test_gui_has_readonly_import_xml_field_that_copies_path(self) -> None:
+        """Given ConverterApp: When built: Then Import XML is a disabled entry
+        (no Browse), follows wav_dir, and a click copies the full path."""
         if not _tk_available():
             self.skipTest("_tkinter not available")
 
@@ -630,18 +653,91 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 "rb_converter_gui.resolve_startup_paths",
                 return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
             ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
-                "rb_converter_gui.filedialog.asksaveasfilename"
-            ) as ask_save, patch("rb_converter_gui.save_preferences") as save_prefs:
-                ask_save.return_value = "/tmp/chosen-import.xml"
+                "rb_converter_gui.save_preferences"
+            ):
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
-                app.wav_dir_var.set("/tmp/chosen-wav")
-                app._browse_output()
-                save_prefs.assert_called_once()
-                args = save_prefs.call_args[0]
-                self.assertEqual(args[0], Path("/tmp/chosen-wav"))
-                self.assertEqual(args[1], Path("/tmp/chosen-import.xml"))
+            self.assertFalse(hasattr(app, "_browse_output"))
+            self.assertEqual(str(app.import_xml_entry.cget("state")), "disabled")
+            self.assertEqual(str(app.import_xml_entry.cget("cursor")), "hand2")
+            app.wav_dir_var.set("/tmp/lib-a")
+            expected = str(Path("/tmp/lib-a") / "rekordbox-import.xml")
+            self.assertEqual(app.output_var.get(), expected)
+            app._copy_import_xml_path()
+            self.assertEqual(root.clipboard_get(), expected)
+            self.assertEqual(app.status_var.get(), f"Copied path: {expected}")
+            self.assertNotIn("\n", app.status_var.get())
+            # Expire the temporary status the same way the 3s after() would.
+            clear_id = app._copy_status_clear_id
+            self.assertIsNotNone(clear_id)
+            app.root.after_cancel(clear_id)
+            app._clear_copy_status()
+            self.assertFalse(app.status_var.get().startswith("Copied path:"))
+            labels = []
+
+            def walk(w):
+                try:
+                    text = w.cget("text")
+                except tk.TclError:
+                    text = ""
+                if text:
+                    labels.append(text)
+                for child in w.winfo_children():
+                    walk(child)
+
+            walk(root)
+            self.assertIn("Import XML", labels)
+            self.assertIn("Max. quality", labels)
+            self.assertNotIn("Sampling format", labels)
+            self.assertNotIn("Import XML: rekordbox-import.xml", labels)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_changing_wav_dir_changes_derived_xml_path(self) -> None:
+        """Given ConverterApp: When wav_dir changes: Then derived import XML
+        follows <wav_dir>/rekordbox-import.xml."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]), patch(
+                "rb_converter_gui.save_preferences"
+            ):
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app.wav_dir_var.set("/tmp/lib-a")
+                self.assertEqual(
+                    app._resolved_output_paths()[1],
+                    Path("/tmp/lib-a") / "rekordbox-import.xml",
+                )
+                self.assertEqual(
+                    app.output_var.get(),
+                    str(Path("/tmp/lib-a") / "rekordbox-import.xml"),
+                )
+                app.wav_dir_var.set("/tmp/lib-b")
+                self.assertEqual(
+                    app._resolved_output_paths()[1],
+                    Path("/tmp/lib-b") / "rekordbox-import.xml",
+                )
+                self.assertEqual(
+                    app.output_var.get(),
+                    str(Path("/tmp/lib-b") / "rekordbox-import.xml"),
+                )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -674,17 +770,17 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 app = ConverterApp(root, documents_accessible=False)
                 app.xml_var.set("/tmp/test.xml")
                 app.wav_dir_var.set("/tmp/typed-wav")
-                app.output_var.set("/tmp/typed-import.xml")
                 app.format_var.set("aiff")
                 app.bit_depth_var.set("24")
                 app.sample_rate_var.set("48000")
+                _mark_output_folder_valid(app)
                 _seed_track_selection(app)
                 app._start_convert()
                 save_prefs.assert_called_once()
                 args = save_prefs.call_args[0]
                 kwargs = save_prefs.call_args.kwargs
                 self.assertEqual(args[0], Path("/tmp/typed-wav"))
-                self.assertEqual(args[1], Path("/tmp/typed-import.xml"))
+                self.assertEqual(len(args), 1)
                 self.assertIsNone(kwargs.get("source_xml"))
                 self.assertEqual(kwargs.get("output_format"), "aiff")
                 self.assertEqual(kwargs.get("bit_depth"), "24")
@@ -745,6 +841,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 self.assertEqual(app.sample_rate_var.get(), "48000")
                 app.xml_var.set("/tmp/test.xml")
                 _seed_track_selection(app)
+                _mark_output_folder_valid(app)
                 app._start_convert()
                 prepare.assert_called()
                 kwargs = prepare.call_args.kwargs
@@ -817,7 +914,7 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                 app = ConverterApp(root, documents_accessible=False)
                 app.xml_var.set("/tmp/test.xml")
                 app.wav_dir_var.set("/tmp/typed-wav")
-                app.output_var.set("/tmp/typed-import.xml")
+                _mark_output_folder_valid(app)
                 _seed_track_selection(app)
                 app._start_convert()
                 self.assertEqual(thread_cls.call_count, 2)
@@ -1123,6 +1220,154 @@ class GuiFileMenuXmlSearchTests(unittest.TestCase):
                     submenu.invoke(j)
                     return True
         return False
+
+
+class GuiLibraryValidationTests(unittest.TestCase):
+    def test_validation_error_disables_convert(self) -> None:
+        """Given a legacy folder without a manifest: When validation finishes:
+        Then Convert is disabled and an inline error is shown."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tempfile
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                legacy = Path(tmp) / "legacy"
+                legacy.mkdir()
+                (legacy / "old.wav").write_bytes(b"RIFF")
+                with patch(
+                    "rb_converter_gui.check_for_update",
+                    return_value=UpdateCheckResult(kind="up_to_date"),
+                ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                    "rb_converter_gui.resolve_startup_paths",
+                    return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+                ), patch(
+                    "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
+                ), patch("rb_converter_gui.save_preferences"):
+                    root = tk.Tk()
+                    root.withdraw()
+                    app = ConverterApp(root, documents_accessible=False)
+                    app.wav_dir_var.set(str(legacy))
+                    # Run validation inline (no debounce / worker).
+                    after_id = app._wav_dir_validate_after_id
+                    if after_id is not None:
+                        app.root.after_cancel(after_id)
+                        app._wav_dir_validate_after_id = None
+                    err = __import__(
+                        "converter_manifest", fromlist=["validate_library_folder"]
+                    ).validate_library_folder(legacy)
+                    self.assertIsNotNone(err)
+                    app._wav_dir_checking = False
+                    app._wav_dir_valid = False
+                    app._set_wav_dir_error(err)
+                    app._update_convert_enabled()
+                    self.assertEqual(str(app.convert_btn.cget("state")), "disabled")
+                    self.assertIn("new empty output folder", app.wav_dir_error_var.get().lower())
+                    self.assertTrue(app.wav_dir_error_label.winfo_manager())
+
+                    empty = Path(tmp) / "empty-lib"
+                    empty.mkdir()
+                    app.wav_dir_var.set(str(empty))
+                    after_id = app._wav_dir_validate_after_id
+                    if after_id is not None:
+                        app.root.after_cancel(after_id)
+                        app._wav_dir_validate_after_id = None
+                    self.assertIsNone(
+                        __import__(
+                            "converter_manifest", fromlist=["validate_library_folder"]
+                        ).validate_library_folder(empty)
+                    )
+                    app._wav_dir_checking = False
+                    app._wav_dir_valid = True
+                    app._set_wav_dir_error("")
+                    app._update_convert_enabled()
+                    self.assertEqual(str(app.convert_btn.cget("state")), "normal")
+                    self.assertEqual(app.wav_dir_error_label.winfo_manager(), "")
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_done_dialog_reveal_actions_target_library_and_xml(self) -> None:
+        """Given a successful convert dialog: When shown: Then Reveal audio folder
+        opens the WAV or AIFF playlist_dir, and Reveal import XML opens the
+        generated XML."""
+        if not _tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with patch(
+                "rb_converter_gui.check_for_update",
+                return_value=UpdateCheckResult(kind="up_to_date"),
+            ), patch("rb_converter_gui.load_preferences", return_value={}), patch(
+                "rb_converter_gui.resolve_startup_paths",
+                return_value=(DEFAULT_WAV_DIR, DEFAULT_OUTPUT),
+            ), patch(
+                "rb_converter_gui.rb.discover_xml_candidates", return_value=[]
+            ), patch.object(tk.Toplevel, "wait_window"), patch(
+                "rb_converter_gui.open_in_finder"
+            ) as reveal:
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                lib = Path("/tmp/library-root")
+                wav_folder = lib / "WAV"
+                aiff_folder = lib / "AIFF"
+                xml = lib / "rekordbox-import.xml"
+
+                app._show_done_dialog("Done body", wav_folder, xml)
+                dlg = None
+                for child in root.winfo_children():
+                    if isinstance(child, tk.Toplevel):
+                        dlg = child
+                        break
+                self.assertIsNotNone(dlg)
+                self.assertTrue(
+                    GuiPreferencesStartupTests._click_button(
+                        dlg, "Reveal audio folder"
+                    )
+                )
+                reveal.assert_called_with(wav_folder)
+
+                app._show_done_dialog("Done body", aiff_folder, xml)
+                dlg = None
+                for child in root.winfo_children():
+                    if isinstance(child, tk.Toplevel):
+                        dlg = child
+                        break
+                self.assertIsNotNone(dlg)
+                self.assertTrue(
+                    GuiPreferencesStartupTests._click_button(
+                        dlg, "Reveal audio folder"
+                    )
+                )
+                reveal.assert_called_with(aiff_folder)
+
+                app._show_done_dialog("Done body", wav_folder, xml)
+                dlg = None
+                for child in root.winfo_children():
+                    if isinstance(child, tk.Toplevel):
+                        dlg = child
+                        break
+                self.assertIsNotNone(dlg)
+                self.assertTrue(
+                    GuiPreferencesStartupTests._click_button(dlg, "Reveal import XML")
+                )
+                reveal.assert_called_with(xml)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
 
 
 if __name__ == "__main__":

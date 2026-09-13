@@ -35,8 +35,7 @@ def load_dj_playlists(path: Path) -> ET.Element:
 
 
 def skeleton_from(source_root: ET.Element) -> ET.Element:
-    version = source_root.get("Version", "1.0.0")
-    root = ET.Element("DJ_PLAYLISTS", {"Version": version})
+    root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
     product = source_root.find("PRODUCT")
     if product is not None:
         root.append(copy.deepcopy(product))
@@ -137,8 +136,45 @@ def resolve_playlist(
     return None, [f"playlist not found: {playlist_name}"]
 
 
+def track_included_in_playlist_preview(
+    track: ET.Element | None,
+    *,
+    supported_ext: Iterable[str],
+) -> bool:
+    """True for missing rows and supported lossless paths; False for other files."""
+    if track is None:
+        return True
+    loc = track.get("Location") or ""
+    path = decode_location(loc) if loc else None
+    if path is None:
+        return True
+    return path.suffix.casefold() in supported_ext
+
+
 def playlist_track_count(node: ET.Element) -> int:
+    """Raw playlist Key count (XML Entries-style)."""
     return len(node.findall("TRACK"))
+
+
+def playlist_preview_track_count(
+    node: ET.Element,
+    by_id: dict[str, ET.Element],
+    by_location: dict[str, ET.Element],
+    *,
+    supported_ext: Iterable[str],
+) -> int:
+    """Count rows the GUI tracklist would show (supported lossless + missing)."""
+    supported = {ext.casefold() for ext in supported_ext}
+    key_type = node.get("KeyType", "0")
+    count = 0
+    for entry in node.findall("TRACK"):
+        key = entry.get("Key") or ""
+        track = None
+        if key:
+            track = by_location.get(key) if key_type == "1" else by_id.get(key)
+        if track_included_in_playlist_preview(track, supported_ext=supported):
+            count += 1
+    return count
 
 
 def path_is_under_documents(path: Path, *, home: Path | None = None) -> bool:

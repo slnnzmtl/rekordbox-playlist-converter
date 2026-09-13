@@ -11,7 +11,7 @@ from pathlib import Path
 import convert_plan
 import ffmpeg_tools
 from cli_error import CliError
-from convert_plan import Plan
+from convert_plan import Plan, PlannedTrack
 from rekordbox_xml import (
     collection_indexes,
     find_playlists_by_name,
@@ -61,22 +61,29 @@ def share_output_root(plans: list[Plan]) -> None:
         plan.output_root = shared
 
 
-def rewrite_counts(output_root: ET.Element, wav_node: ET.Element) -> None:
+def rewrite_counts(output_root: ET.Element) -> None:
+    """Recompute COLLECTION Entries and every folder Count / playlist Entries."""
     collection = output_root.find("COLLECTION")
     if collection is not None:
         collection.set("Entries", str(len(collection.findall("TRACK"))))
-    wav_node.set("Entries", str(len(wav_node.findall("TRACK"))))
     playlists = output_root.find("PLAYLISTS")
     if playlists is None:
         return
-    root_node = None
+
+    def rewrite_node(node: ET.Element) -> None:
+        if node.tag != "NODE":
+            return
+        if node.get("Type") == "1":
+            node.set("Entries", str(len(node.findall("TRACK"))))
+            return
+        if node.get("Type") == "0":
+            children = [c for c in node if c.tag == "NODE"]
+            node.set("Count", str(len(children)))
+            for child in children:
+                rewrite_node(child)
+
     for child in playlists:
-        if child.tag == "NODE" and child.get("Name") == "ROOT" and child.get("Type") == "0":
-            root_node = child
-            break
-    if root_node is not None:
-        count = sum(1 for c in root_node if c.tag == "NODE")
-        root_node.set("Count", str(count))
+        rewrite_node(child)
 
 
 def probe_dest_tech(path: Path) -> tuple[str, str, str]:
@@ -141,11 +148,17 @@ def refresh_track(
         existing.append(child)
 
 
+def assignment_key(item: PlannedTrack) -> tuple[str, str]:
+    """(source_key, format) for success-set membership."""
+    fmt = "aiff" if item.dest_path.suffix.lower() == ".aiff" else "wav"
+    return convert_plan.source_key(item.source_path), fmt
+
+
 def playlist_keys(node: ET.Element) -> list[str]:
     return [t.get("Key", "") for t in node.findall("TRACK")]
 
 
-def apply_xml(plan: Plan) -> int:
+def apply_xml(plan: Plan, success: set[tuple[str, str]]) -> int:
     collection = plan.output_root.find("COLLECTION")
     if collection is None:
         collection = ET.SubElement(plan.output_root, "COLLECTION", {"Entries": "0"})
@@ -154,7 +167,7 @@ def apply_xml(plan: Plan) -> int:
     dest_to_id: dict[str, str] = {}
 
     for item in plan.unique:
-        if not item.dest_path.exists():
+        if assignment_key(item) not in success:
             continue
         existing = by_location.get(item.dest_location)
         if existing is not None:
@@ -172,28 +185,123 @@ def apply_xml(plan: Plan) -> int:
 
     wav_node, existed = find_or_create_wav_playlist(plan.output_root, plan.wav_playlist_name)
     appended = 0
-    if existed:
-        present = set(playlist_keys(wav_node))
-        seen_this_run: set[str] = set()
-        for item in plan.tracks:
-            if item.dest_location not in dest_to_id:
-                continue
-            tid = dest_to_id[item.dest_location]
-            if tid in present or tid in seen_this_run:
-                continue
-            ET.SubElement(wav_node, "TRACK", {"Key": tid})
-            present.add(tid)
-            seen_this_run.add(tid)
-            appended += 1
-    else:
-        for item in plan.tracks:
-            if item.dest_location not in dest_to_id:
-                continue
-            tid = dest_to_id[item.dest_location]
-            ET.SubElement(wav_node, "TRACK", {"Key": tid})
-            appended += 1
-    rewrite_counts(plan.output_root, wav_node)
+    present = set(playlist_keys(wav_node)) if existed else set()
+    seen_this_run: set[str] = set()
+    for item in plan.tracks:
+        if item.dest_location not in dest_to_id:
+            continue
+        tid = dest_to_id[item.dest_location]
+        if tid in present or tid in seen_this_run:
+            continue
+        ET.SubElement(wav_node, "TRACK", {"Key": tid})
+        present.add(tid)
+        seen_this_run.add(tid)
+        appended += 1
     return appended
+
+
+def validate_import_xml(root: ET.Element) -> list[str]:
+    """Return integrity errors for a Rekordbox import XML tree (empty if ok)."""
+    errors: list[str] = []
+    if root.tag != "DJ_PLAYLISTS":
+        errors.append(f"root tag must be DJ_PLAYLISTS, got {root.tag}")
+        return errors
+    if root.get("Version") != "1.0.0":
+        errors.append(f'DJ_PLAYLISTS Version must be "1.0.0", got {root.get("Version")!r}')
+    if root.find("PRODUCT") is None:
+        errors.append("missing PRODUCT")
+    collections = root.findall("COLLECTION")
+    if len(collections) != 1:
+        errors.append(f"expected exactly one COLLECTION, found {len(collections)}")
+    playlists_els = root.findall("PLAYLISTS")
+    if len(playlists_els) != 1:
+        errors.append(f"expected exactly one PLAYLISTS, found {len(playlists_els)}")
+    if errors:
+        return errors
+    collection = collections[0]
+    playlists = playlists_els[0]
+    roots = [
+        n
+        for n in playlists
+        if n.tag == "NODE" and n.get("Name") == "ROOT" and n.get("Type") == "0"
+    ]
+    if len(roots) != 1:
+        errors.append(f"expected exactly one PLAYLISTS/ROOT, found {len(roots)}")
+
+    by_id: dict[str, ET.Element] = {}
+    locations: set[str] = set()
+    for track in collection.findall("TRACK"):
+        tid = track.get("TrackID", "")
+        if not tid or not tid.isdigit():
+            errors.append(f"TrackID must be numeric, got {tid!r}")
+        elif tid in by_id:
+            errors.append(f"duplicate TrackID {tid}")
+        else:
+            by_id[tid] = track
+        loc = track.get("Location", "")
+        if not loc.startswith("file://localhost"):
+            errors.append(f"Location must be file://localhost absolute, got {loc!r}")
+        elif loc in locations:
+            errors.append(f"duplicate Location {loc}")
+        else:
+            locations.add(loc)
+        kind = track.get("Kind", "")
+        if kind not in {"WAV File", "AIFF File"}:
+            errors.append(f"Kind must be WAV File or AIFF File, got {kind!r}")
+
+    expected_collection = str(len(collection.findall("TRACK")))
+    if collection.get("Entries") != expected_collection:
+        errors.append(
+            f"COLLECTION Entries={collection.get('Entries')!r} "
+            f"!= {expected_collection}"
+        )
+
+    def check_node(node: ET.Element) -> None:
+        if node.tag != "NODE":
+            return
+        if node.get("Type") == "1":
+            if node.get("KeyType") != "0":
+                errors.append(
+                    f"playlist {node.get('Name')!r} KeyType must be 0, "
+                    f"got {node.get('KeyType')!r}"
+                )
+            tracks = node.findall("TRACK")
+            expected = str(len(tracks))
+            if node.get("Entries") != expected:
+                errors.append(
+                    f"playlist {node.get('Name')!r} Entries={node.get('Entries')!r} "
+                    f"!= {expected}"
+                )
+            for entry in tracks:
+                key = entry.get("Key", "")
+                if key not in by_id:
+                    errors.append(
+                        f"playlist {node.get('Name')!r} Key={key!r} missing in COLLECTION"
+                    )
+            return
+        if node.get("Type") == "0":
+            children = [c for c in node if c.tag == "NODE"]
+            expected = str(len(children))
+            if node.get("Count") != expected:
+                errors.append(
+                    f"folder {node.get('Name')!r} Count={node.get('Count')!r} "
+                    f"!= {expected}"
+                )
+            for child in children:
+                check_node(child)
+
+    for child in playlists:
+        check_node(child)
+    return errors
+
+
+def write_import_xml(root: ET.Element, path: Path) -> None:
+    """Validate then atomically write import XML; refuse on integrity errors."""
+    rewrite_counts(root)
+    problems = validate_import_xml(root)
+    if problems:
+        raise CliError("import XML failed integrity checks:\n" + "\n".join(problems))
+    atomic_write_xml(root, path)
 
 
 def atomic_write_xml(root: ET.Element, path: Path) -> None:

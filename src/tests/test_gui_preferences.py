@@ -31,12 +31,10 @@ class LoadPreferencesTests(unittest.TestCase):
             config = Path(tmp) / "preferences.json"
             wav_dir = Path(tmp) / "wav-out"
             wav_dir.mkdir()
-            import_xml = wav_dir / "import.xml"
             source_xml = Path(tmp) / "Rekordbox-collection.xml"
             source_xml.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
             save_preferences(
                 wav_dir,
-                import_xml,
                 source_xml=source_xml,
                 output_format="aiff",
                 bit_depth=24,
@@ -45,11 +43,34 @@ class LoadPreferencesTests(unittest.TestCase):
             )
             loaded = load_preferences(config_path=config)
             self.assertEqual(loaded["wav_dir"], str(wav_dir.resolve()))
-            self.assertEqual(loaded["import_xml"], str(import_xml.resolve()))
+            self.assertNotIn("import_xml", loaded)
             self.assertEqual(loaded["source_xml"], str(source_xml.resolve()))
             self.assertEqual(loaded["output_format"], "aiff")
             self.assertEqual(loaded["bit_depth"], "24")
             self.assertEqual(loaded["sample_rate"], "48000")
+            raw = json.loads(config.read_text(encoding="utf-8"))
+            self.assertNotIn("import_xml", raw)
+
+    def test_load_preferences_tolerates_legacy_import_xml(self) -> None:
+        """Given prefs JSON with legacy import_xml: When load_preferences runs:
+        Then it succeeds, exposes wav_dir, and ignores import_xml."""
+        from gui_preferences import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "wav_dir": "/tmp/x",
+                        "import_xml": "/tmp/y.xml",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            loaded = load_preferences(config_path=config)
+            self.assertEqual(loaded["wav_dir"], "/tmp/x")
+            self.assertNotIn("import_xml", loaded)
 
     def test_load_preferences_ignores_invalid_output_format(self) -> None:
         from gui_preferences import load_preferences
@@ -82,19 +103,17 @@ class LoadPreferencesTests(unittest.TestCase):
             config = Path(tmp) / "preferences.json"
             wav_dir = Path(tmp) / "wav-out"
             wav_dir.mkdir()
-            import_xml = wav_dir / "import.xml"
             source_xml = Path(tmp) / "Rekordbox-collection.xml"
             source_xml.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
             save_preferences(
-                wav_dir, import_xml, source_xml=source_xml, config_path=config
+                wav_dir, source_xml=source_xml, config_path=config
             )
             new_wav = Path(tmp) / "wav-out-2"
             new_wav.mkdir()
-            new_import = new_wav / "import.xml"
-            save_preferences(new_wav, new_import, config_path=config)
+            save_preferences(new_wav, config_path=config)
             loaded = load_preferences(config_path=config)
             self.assertEqual(loaded["wav_dir"], str(new_wav.resolve()))
-            self.assertEqual(loaded["import_xml"], str(new_import.resolve()))
+            self.assertNotIn("import_xml", loaded)
             self.assertEqual(Path(loaded["source_xml"]), source_xml.resolve())
 
     def test_load_preferences_tolerates_corrupt_json(self) -> None:
@@ -369,16 +388,19 @@ class ResolveStartupPathsTests(unittest.TestCase):
             self.assertEqual(wav, fallback_wav)
             self.assertEqual(xml, fallback_xml)
 
-    def test_resolve_startup_paths_restores_valid_saved_paths(self) -> None:
+    def test_resolve_startup_paths_ignores_legacy_import_xml(self) -> None:
+        """Given saved prefs with a custom import_xml: When resolve_startup_paths
+        runs: Then XML is always <wav_dir>/rekordbox-import.xml."""
         from gui_preferences import resolve_startup_paths
 
         with tempfile.TemporaryDirectory() as tmp:
             wav_dir = Path(tmp) / "saved-wav"
             wav_dir.mkdir()
-            import_xml = wav_dir / "my-import.xml"
+            legacy_xml = wav_dir / "my-import.xml"
+            legacy_xml.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
             saved = {
                 "wav_dir": str(wav_dir),
-                "import_xml": str(import_xml),
+                "import_xml": str(legacy_xml),
             }
             wav, xml = resolve_startup_paths(
                 saved,
@@ -386,7 +408,7 @@ class ResolveStartupPathsTests(unittest.TestCase):
                 default_import_xml=DEFAULT_OUTPUT,
             )
             self.assertEqual(wav, wav_dir.resolve())
-            self.assertEqual(xml, import_xml.resolve())
+            self.assertEqual(xml, (wav_dir / "rekordbox-import.xml").resolve())
 
     def test_resolve_startup_paths_falls_back_when_saved_wav_dir_missing(self) -> None:
         from gui_preferences import resolve_startup_paths
