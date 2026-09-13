@@ -23,13 +23,14 @@ from cdj_wav import (
     is_cdj_safe_wav,
 )
 from cli_error import CancelledError, CliError
+from convert.quality import coerce_output_format
 
 _COPY_CHUNK_SIZE = 1024 * 1024
 
 
 def pcm_codec_for_depth(bit_depth: int, *, output_format: str = "wav") -> str:
     """Map effective bit depth to an ffmpeg PCM codec for the output container."""
-    if output_format == "aiff":
+    if coerce_output_format(output_format) == "aiff":
         return "pcm_s16be" if bit_depth == 16 else "pcm_s24be"
     return "pcm_s16le" if bit_depth == 16 else "pcm_s24le"
 
@@ -99,6 +100,7 @@ def run_ffmpeg(
     bit_depth: int | None = None,
     cancel_event: threading.Event | None = None,
     convert_workers: int = 1,
+    output_format: str = "wav",
 ) -> None:
     """Encode dest as PCM WAV or AIFF at the planned depth/rate (no ID3)."""
     exe = ffmpeg_tools.tool_path("ffmpeg")
@@ -106,7 +108,7 @@ def run_ffmpeg(
         raise CliError(
             "ffmpeg not found on PATH (install with: brew install ffmpeg)"
         )
-    is_aiff = dest.suffix.lower() == ".aiff"
+    is_aiff = coerce_output_format(output_format) == "aiff"
     rate = sample_rate if sample_rate in (44100, 48000) else 44100
     if bit_depth in (16, 24):
         depth = bit_depth
@@ -248,6 +250,7 @@ def write_aiff_output(
                 bit_depth=bit_depth,
                 cancel_event=cancel_event,
                 convert_workers=convert_workers,
+                output_format="aiff",
             )
             if not is_cdj_safe_aiff(tmp, bit_depth=bit_depth, sample_rate=sample_rate):
                 raise CliError(f"AIFF audio stage failed for {source}")

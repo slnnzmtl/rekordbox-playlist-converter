@@ -11,6 +11,7 @@ from pathlib import Path
 import convert_plan
 import ffmpeg_tools
 from cli_error import CliError
+from convert.quality import coerce_output_format
 from convert_plan import Plan, PlannedTrack
 from rekordbox_xml import (
     collection_indexes,
@@ -117,12 +118,21 @@ def probe_dest_tech(path: Path) -> tuple[str, str, str]:
     return size, bitrate, rate or "0"
 
 
-def clone_track(source_el: ET.Element, track_id: str, dest_path: Path, dest_location: str) -> ET.Element:
+def clone_track(
+    source_el: ET.Element,
+    track_id: str,
+    dest_path: Path,
+    dest_location: str,
+    *,
+    output_format: str = "wav",
+) -> ET.Element:
     clone = copy.deepcopy(source_el)
     size, bitrate, sample_rate = probe_dest_tech(dest_path)
     clone.set("TrackID", track_id)
     clone.set("Location", dest_location)
-    kind = "AIFF File" if dest_path.suffix.lower() == ".aiff" else "WAV File"
+    kind = (
+        "AIFF File" if coerce_output_format(output_format) == "aiff" else "WAV File"
+    )
     clone.set("Kind", kind)
     clone.set("Size", size)
     clone.set("BitRate", bitrate)
@@ -135,11 +145,15 @@ def refresh_track(
     source_el: ET.Element,
     dest_path: Path,
     dest_location: str,
+    *,
+    output_format: str = "wav",
 ) -> None:
     """Update an existing collection TRACK from source_el; keep TrackID."""
     tid = existing.get("TrackID", "")
     # Replace children and attributes from a fresh clone, then restore TrackID.
-    refreshed = clone_track(source_el, tid, dest_path, dest_location)
+    refreshed = clone_track(
+        source_el, tid, dest_path, dest_location, output_format=output_format
+    )
     existing.clear()
     existing.attrib.update(refreshed.attrib)
     existing.set("TrackID", tid)
@@ -150,7 +164,7 @@ def refresh_track(
 
 def assignment_key(item: PlannedTrack) -> tuple[str, str]:
     """(source_key, format) for success-set membership."""
-    fmt = "aiff" if item.dest_path.suffix.lower() == ".aiff" else "wav"
+    fmt = coerce_output_format(item.output_format)
     return convert_plan.source_key(item.source_path), fmt
 
 
@@ -172,13 +186,23 @@ def apply_xml(plan: Plan, success: set[tuple[str, str]]) -> int:
         existing = by_location.get(item.dest_location)
         if existing is not None:
             refresh_track(
-                existing, item.source_el, item.dest_path, item.dest_location
+                existing,
+                item.source_el,
+                item.dest_path,
+                item.dest_location,
+                output_format=item.output_format,
             )
             dest_to_id[item.dest_location] = existing.get("TrackID", "")
             continue
         tid = str(next_id)
         next_id += 1
-        clone = clone_track(item.source_el, tid, item.dest_path, item.dest_location)
+        clone = clone_track(
+            item.source_el,
+            tid,
+            item.dest_path,
+            item.dest_location,
+            output_format=item.output_format,
+        )
         collection.append(clone)
         dest_to_id[item.dest_location] = tid
         by_location[item.dest_location] = clone

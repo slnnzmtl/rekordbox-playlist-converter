@@ -30,6 +30,7 @@ class ConversionPreviewTests(unittest.TestCase):
         output_format: str = "wav",
         cover_cache: dict | None = None,
     ) -> rb.Plan:
+        item.output_format = output_format
         return rb.Plan(
             playlist_name="P",
             wav_playlist_name="P [WAV]" if output_format == "wav" else "P [AIFF]",

@@ -174,7 +174,7 @@ def planned_action(
     """Classify read-only action: reuse, copy, or transcode."""
     if item.noop:
         return "reuse"
-    is_aiff = item.dest_path.suffix.lower() == ".aiff"
+    is_aiff = coerce_output_format(item.output_format) == "aiff"
     if not force:
         if is_aiff:
             # One dest parse: gate cover extract, then canonical ID3/cover check.
@@ -428,7 +428,7 @@ def convert_unique(
         bar.update(done, action, name)
 
     def mark_succeeded(item: PlannedTrack) -> None:
-        fmt = "aiff" if item.dest_path.suffix.lower() == ".aiff" else "wav"
+        fmt = coerce_output_format(item.output_format)
         with stats_lock:
             stats.succeeded.add((source_key(item.source_path), fmt))
 
@@ -436,7 +436,7 @@ def convert_unique(
         if cancel_event is not None and cancel_event.is_set():
             return
         name = item.dest_name
-        is_aiff = item.dest_path.suffix.lower() == ".aiff"
+        is_aiff = coerce_output_format(item.output_format) == "aiff"
         action = planned_action(
             plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
         )
@@ -490,6 +490,7 @@ def convert_unique(
                 sample_rate=item.sample_rate,
                 bit_depth=item.bit_depth,
                 cancel_event=cancel_event,
+                output_format=item.output_format,
             )
             with stats_lock:
                 stats.converted += 1
@@ -620,6 +621,7 @@ def build_plan(
                 codec=None,
                 copy_wav=False,
                 noop=False,
+                output_format=output_format,
             )
         )
 

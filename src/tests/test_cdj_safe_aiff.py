@@ -452,6 +452,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
+                output_format="aiff",
             )
             plan = rb.Plan(
                 playlist_name="P",
@@ -464,6 +465,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 source_root=ET.Element("DJ_PLAYLISTS"),
                 output_root=ET.Element("DJ_PLAYLISTS"),
                 output_existed=False,
+                output_format="aiff",
             )
             stats = rb.convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 1)
@@ -486,6 +488,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
+                output_format="aiff",
             )
             plan = rb.Plan(
                 playlist_name="P",
@@ -498,6 +501,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 source_root=ET.Element("DJ_PLAYLISTS"),
                 output_root=ET.Element("DJ_PLAYLISTS"),
                 output_existed=False,
+                output_format="aiff",
             )
             with mock.patch.object(
                 convert_plan, "extract_cover_jpeg", return_value=None
@@ -537,6 +541,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
+                output_format="aiff",
             )
             plan = rb.Plan(
                 playlist_name="P",
@@ -748,7 +753,9 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             )
             size, bitrate, sample_rate = rb.probe_dest_tech(dest)
             self.assertEqual(sample_rate, "48000")
-            clone = rb.clone_track(el, "1", dest, rb.encode_location(dest))
+            clone = rb.clone_track(
+                el, "1", dest, rb.encode_location(dest), output_format="aiff"
+            )
             self.assertEqual(clone.get("Kind"), "AIFF File")
             self.assertEqual(clone.get("SampleRate"), "48000")
 
@@ -782,7 +789,11 @@ class ApplyXmlRefreshTests(unittest.TestCase):
             output_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
             collection = ET.SubElement(output_root, "COLLECTION", {"Entries": "1"})
             existing = rb.clone_track(
-                source_old, "42", dest, rb.encode_location(dest)
+                source_old,
+                "42",
+                dest,
+                rb.encode_location(dest),
+                output_format="aiff",
             )
             collection.append(existing)
             item = rb.PlannedTrack(
@@ -794,6 +805,7 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                 codec=None,
                 copy_wav=True,
                 noop=False,
+                output_format="aiff",
             )
             plan = rb.Plan(
                 playlist_name="P",
@@ -806,6 +818,7 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                 source_root=ET.Element("DJ_PLAYLISTS"),
                 output_root=output_root,
                 output_existed=True,
+                output_format="aiff",
             )
             with mock.patch.object(xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")):
                 success = {(rb.source_key(item.source_path), "aiff")}

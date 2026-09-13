@@ -72,6 +72,7 @@ class PlannedTrack:
     bit_depth: int = 24
     sample_rate: int = 48000
     duration_seconds: float | None = None
+    output_format: str = "wav"
 
 
 @dataclass

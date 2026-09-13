@@ -289,5 +289,59 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
                 self.assertIn(tid, [t.get("Key") for t in pl.findall("TRACK")])
 
 
+class OutputFormatSourceOfTruthTests(unittest.TestCase):
+    """Kind / assignment_key follow PlannedTrack.output_format, not dest suffix."""
+
+    def test_assignment_key_follows_output_format_not_dest_suffix(self) -> None:
+        """Given dest .wav but output_format aiff: assignment_key is aiff."""
+        dest = Path("/out/WAV/Artist - Track.wav")
+        item = rb.PlannedTrack(
+            source_el=ET.Element("TRACK", {"Name": "Track"}),
+            source_path=Path("/music/track.flac"),
+            dest_path=dest,
+            dest_location=rb.encode_location(dest),
+            dest_name=dest.name,
+            codec="pcm_s24be",
+            copy_wav=False,
+            noop=False,
+            output_format="aiff",
+        )
+        _, fmt = xml_output.assignment_key(item)
+        self.assertEqual(fmt, "aiff")
+
+    def test_assignment_key_coerces_output_format(self) -> None:
+        """Given dest .wav but output_format AIFF: assignment_key still aiff."""
+        dest = Path("/out/WAV/Artist - Track.wav")
+        item = rb.PlannedTrack(
+            source_el=ET.Element("TRACK", {"Name": "Track"}),
+            source_path=Path("/music/track.flac"),
+            dest_path=dest,
+            dest_location=rb.encode_location(dest),
+            dest_name=dest.name,
+            codec="pcm_s24be",
+            copy_wav=False,
+            noop=False,
+            output_format="AIFF",
+        )
+        _, fmt = xml_output.assignment_key(item)
+        self.assertEqual(fmt, "aiff")
+
+    def test_clone_track_kind_follows_output_format_not_dest_suffix(self) -> None:
+        """Given dest .wav but output_format aiff: Kind is AIFF File."""
+        dest = Path("/out/WAV/Artist - Track.wav")
+        el = ET.Element("TRACK", {"Name": "Track", "Artist": "Artist"})
+        with patch.object(
+            xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
+        ):
+            clone = xml_output.clone_track(
+                el,
+                "1",
+                dest,
+                rb.encode_location(dest),
+                output_format="aiff",
+            )
+        self.assertEqual(clone.get("Kind"), "AIFF File")
+
+
 if __name__ == "__main__":
     unittest.main()

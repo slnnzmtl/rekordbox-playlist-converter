@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Internal: WAV/AIFF branching uses `PlannedTrack.output_format` (stamped in
+  `build_plan`) instead of `dest_path.suffix == ".aiff"` in plan, encode, and
+  import XML Kind / assignment keys.
 - Internal: drop private CDJ re-exports from `rb_playlist_to_wav` (tests import
   `cdj_aiff` / `cdj_wav`); shared `prepare_batch` + `PreparedConversion` in
   `convert/models.py`; `bits_from_raw_sample` for ffprobe bit parse; one

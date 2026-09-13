@@ -229,6 +229,7 @@ def mock_convert_plan(*, n_unique: int = 2):
             duration_seconds=1.0,
             noop=False,
             copy_wav=False,
+            output_format="wav",
         )
         for i in range(n_unique)
     ]
