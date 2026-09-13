@@ -12,10 +12,13 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import convert_plan
 import ffmpeg_tools
-import rb_playlist_to_wav as rb
+from rekordbox_xml import encode_location, find_playlists_by_name, skeleton_from
+from cli_error import CancelledError, CliError
+import convert.plan
 import xml_output
+import rb_playlist_to_wav as rb
+from convert.models import PlannedTrack
 
 
 def write_flac(path: Path) -> None:
@@ -114,7 +117,7 @@ class ValidateImportXmlUnitTests(unittest.TestCase):
         ET.SubElement(
             source, "PRODUCT", {"Name": "rekordbox", "Version": "7.0.4", "Company": "X"}
         )
-        out = rb.skeleton_from(source)
+        out = skeleton_from(source)
         self.assertEqual(out.get("Version"), "1.0.0")
         product = out.find("PRODUCT")
         assert product is not None
@@ -124,7 +127,7 @@ class ValidateImportXmlUnitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad.xml"
             root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
-            with self.assertRaises(rb.CliError) as ctx:
+            with self.assertRaises(CliError) as ctx:
                 xml_output.write_import_xml(root, path)
             self.assertIn("integrity", str(ctx.exception).lower())
             self.assertFalse(path.exists())
@@ -153,8 +156,8 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
             write_flac(b)
             xml_path = root / "collection.xml"
             text = fixture
-            text = text.replace("{loc_a}", rb.encode_location(a))
-            text = text.replace("{loc_b}", rb.encode_location(b))
+            text = text.replace("{loc_a}", encode_location(a))
+            text = text.replace("{loc_b}", encode_location(b))
             xml_path.write_text(text, encoding="utf-8")
             wav_dir = root / "WAV"
             output = root / "rekordbox-import.xml"
@@ -167,8 +170,8 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
 
             with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
                 ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-            ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-                convert_plan, "is_cdj_safe_wav", return_value=False
+            ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+                convert.format_policy, "is_cdj_safe_wav", return_value=False
             ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("100", "2116", "44100")
             ):
@@ -215,7 +218,7 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
             any(ch in joined for ch in ("%26", "%27", "%23", "%25", "Caf")),
             f"expected special-char encoding in Locations: {joined!r}",
         )
-        pl = rb.find_playlists_by_name(out, "Night Set [WAV]")
+        pl = find_playlists_by_name(out, "Night Set [WAV]")
         self.assertEqual(len(pl), 1)
         # Repeated source Key in playlist → one Key after dedup on new node.
         self.assertEqual(len(pl[0].findall("TRACK")), 2)
@@ -234,10 +237,10 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="2">
     <TRACK TrackID="1" Name="Shared" Artist="A" Album="B" Kind="FLAC File"
-           Size="1" TotalTime="1" Location="{rb.encode_location(a)}"
+           Size="1" TotalTime="1" Location="{encode_location(a)}"
            SampleRate="44100" AverageBpm="120.00"/>
     <TRACK TrackID="2" Name="Other" Artist="A" Album="B" Kind="FLAC File"
-           Size="1" TotalTime="1" Location="{rb.encode_location(b)}"
+           Size="1" TotalTime="1" Location="{encode_location(b)}"
            SampleRate="44100" AverageBpm="120.00"/>
   </COLLECTION>
   <PLAYLISTS>
@@ -264,8 +267,8 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
 
             with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
                 ffmpeg_tools, "run_ffprobe", side_effect=self._probe
-            ), patch.object(convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-                convert_plan, "is_cdj_safe_wav", return_value=False
+            ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+                convert.format_policy, "is_cdj_safe_wav", return_value=False
             ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
             ):
@@ -285,8 +288,62 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
             self.assertEqual(len(shared), 1)
             tid = shared[0].get("TrackID")
             for name in ("One [WAV]", "Two [WAV]"):
-                pl = rb.find_playlists_by_name(out, name)[0]
+                pl = find_playlists_by_name(out, name)[0]
                 self.assertIn(tid, [t.get("Key") for t in pl.findall("TRACK")])
+
+
+class OutputFormatSourceOfTruthTests(unittest.TestCase):
+    """Kind / assignment_key follow PlannedTrack.output_format, not dest suffix."""
+
+    def test_assignment_key_follows_output_format_not_dest_suffix(self) -> None:
+        """Given dest .wav but output_format aiff: assignment_key is aiff."""
+        dest = Path("/out/WAV/Artist - Track.wav")
+        item = PlannedTrack(
+            source_el=ET.Element("TRACK", {"Name": "Track"}),
+            source_path=Path("/music/track.flac"),
+            dest_path=dest,
+            dest_location=encode_location(dest),
+            dest_name=dest.name,
+            codec="pcm_s24be",
+            passthrough=False,
+            noop=False,
+            output_format="aiff",
+        )
+        _, fmt = xml_output.assignment_key(item)
+        self.assertEqual(fmt, "aiff")
+
+    def test_assignment_key_coerces_output_format(self) -> None:
+        """Given dest .wav but output_format AIFF: assignment_key still aiff."""
+        dest = Path("/out/WAV/Artist - Track.wav")
+        item = PlannedTrack(
+            source_el=ET.Element("TRACK", {"Name": "Track"}),
+            source_path=Path("/music/track.flac"),
+            dest_path=dest,
+            dest_location=encode_location(dest),
+            dest_name=dest.name,
+            codec="pcm_s24be",
+            passthrough=False,
+            noop=False,
+            output_format="AIFF",
+        )
+        _, fmt = xml_output.assignment_key(item)
+        self.assertEqual(fmt, "aiff")
+
+    def test_clone_track_kind_follows_output_format_not_dest_suffix(self) -> None:
+        """Given dest .wav but output_format aiff: Kind is AIFF File."""
+        dest = Path("/out/WAV/Artist - Track.wav")
+        el = ET.Element("TRACK", {"Name": "Track", "Artist": "Artist"})
+        with patch.object(
+            xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
+        ):
+            clone = xml_output.clone_track(
+                el,
+                "1",
+                dest,
+                encode_location(dest),
+                output_format="aiff",
+            )
+        self.assertEqual(clone.get("Kind"), "AIFF File")
 
 
 if __name__ == "__main__":

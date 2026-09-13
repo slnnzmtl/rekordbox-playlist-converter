@@ -12,7 +12,9 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import rb_playlist_to_wav as rb
+import rekordbox_xml as rx
+from cli_error import CliError
+from convert.format_policy import SUPPORTED_LOSSLESS_EXT
 
 
 class LoadDjPlaylistsTests(unittest.TestCase):
@@ -22,8 +24,8 @@ class LoadDjPlaylistsTests(unittest.TestCase):
             "rekordbox_xml.ET.parse",
             side_effect=PermissionError("denied"),
         ):
-            with self.assertRaises(rb.CliError) as ctx:
-                rb.load_dj_playlists(path)
+            with self.assertRaises(CliError) as ctx:
+                rx.load_dj_playlists(path)
         self.assertIn(str(path), str(ctx.exception))
 
     def test_file_not_found_becomes_cli_error(self) -> None:
@@ -32,30 +34,30 @@ class LoadDjPlaylistsTests(unittest.TestCase):
             "rekordbox_xml.ET.parse",
             side_effect=FileNotFoundError("no such file"),
         ):
-            with self.assertRaises(rb.CliError) as ctx:
-                rb.load_dj_playlists(path)
+            with self.assertRaises(CliError) as ctx:
+                rx.load_dj_playlists(path)
         self.assertIn(str(path), str(ctx.exception))
 
 
 class LocationTests(unittest.TestCase):
     def test_roundtrip_percent_encoding(self) -> None:
         path = Path("/Users/me/It's just a bad dream/07 - Bestial.flac")
-        url = rb.encode_location(path)
+        url = rx.encode_location(path)
         self.assertTrue(url.startswith("file://localhost/"))
         self.assertIn("It%27s", url)
         self.assertIn("%20", url)
-        self.assertEqual(rb.decode_location(url), path)
+        self.assertEqual(rx.decode_location(url), path)
 
     def test_decode_file_triple_slash(self) -> None:
         self.assertEqual(
-            rb.decode_location("file:///Users/me/track.flac"),
+            rx.decode_location("file:///Users/me/track.flac"),
             Path("/Users/me/track.flac"),
         )
 
     def test_invalid_url(self) -> None:
-        self.assertIsNone(rb.decode_location("http://example.com/a.flac"))
-        self.assertIsNone(rb.decode_location(""))
-        self.assertIsNone(rb.decode_location("C:/not/a/url.flac"))
+        self.assertIsNone(rx.decode_location("http://example.com/a.flac"))
+        self.assertIsNone(rx.decode_location(""))
+        self.assertIsNone(rx.decode_location("C:/not/a/url.flac"))
 
 
 class PlaylistXmlHelperTests(unittest.TestCase):
@@ -65,7 +67,7 @@ class PlaylistXmlHelperTests(unittest.TestCase):
             hit = cwd / "rekordbox.xml"
             hit.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
             (cwd / "other.txt").write_text("x", encoding="utf-8")
-            found = rb.discover_xml_candidates(
+            found = rx.discover_xml_candidates(
                 cwd,
                 candidates=(Path("rekordbox.xml"), Path("missing.xml")),
             )
@@ -82,7 +84,7 @@ class PlaylistXmlHelperTests(unittest.TestCase):
             cwd.mkdir()
             local = cwd / "rekordbox.xml"
             local.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
-            found = rb.discover_xml_candidates(
+            found = rx.discover_xml_candidates(
                 cwd,
                 candidates=(
                     Path("rekordbox.xml"),
@@ -100,7 +102,7 @@ class PlaylistXmlHelperTests(unittest.TestCase):
             documents.mkdir(parents=True)
             docs_xml = documents / "rekordbox.xml"
             docs_xml.write_text("<DJ_PLAYLISTS/>", encoding="utf-8")
-            found = rb.discover_xml_candidates(
+            found = rx.discover_xml_candidates(
                 home,
                 candidates=(home / "Documents" / "rekordbox" / "rekordbox.xml",),
                 documents_accessible=True,
@@ -129,15 +131,15 @@ class PlaylistXmlHelperTests(unittest.TestCase):
 </DJ_PLAYLISTS>
 """
         root = ET.fromstring(xml)
-        entries = rb.iter_playlists(root)
+        entries = rx.iter_playlists(root)
         self.assertEqual(len(entries), 2)
         self.assertEqual(entries[0][0], "")
         self.assertEqual(entries[0][1], "Top")
         self.assertEqual(entries[1][0], "Intelligent playlists")
         self.assertEqual(entries[1][1], "Nested")
-        self.assertEqual(rb.playlist_track_count(entries[1][2]), 2)
+        self.assertEqual(rx.playlist_track_count(entries[1][2]), 2)
 
-        nodes = rb.iter_playlist_nodes(root)
+        nodes = rx.iter_playlist_nodes(root)
         self.assertEqual(
             [(kind, folder, name) for kind, folder, name, _node in nodes],
             [
@@ -173,14 +175,14 @@ class PlaylistXmlHelperTests(unittest.TestCase):
 </DJ_PLAYLISTS>
 """
         root = ET.fromstring(xml)
-        node = rb.iter_playlists(root)[0][2]
-        by_id, by_location = rb.collection_indexes(root)
+        node = rx.iter_playlists(root)[0][2]
+        by_id, by_location = rx.collection_indexes(root)
         self.assertEqual(
-            rb.playlist_preview_track_count(
+            rx.playlist_preview_track_count(
                 node,
                 by_id,
                 by_location,
-                supported_ext=rb.SUPPORTED_LOSSLESS_EXT,
+                supported_ext=SUPPORTED_LOSSLESS_EXT,
             ),
             2,
         )
@@ -202,7 +204,7 @@ class PlaylistXmlHelperTests(unittest.TestCase):
 </DJ_PLAYLISTS>
 """
         root = ET.fromstring(xml)
-        nodes = rb.iter_playlist_nodes(root)
+        nodes = rx.iter_playlist_nodes(root)
         self.assertEqual(
             [(kind, folder, name) for kind, folder, name, _node in nodes],
             [
@@ -210,7 +212,7 @@ class PlaylistXmlHelperTests(unittest.TestCase):
                 ("playlist", "", "Has One"),
             ],
         )
-        leaves = rb.iter_playlists(root)
+        leaves = rx.iter_playlists(root)
         self.assertEqual([(f, n) for f, n, _ in leaves], [("", "Has One")])
 
     def test_resolve_playlist_disambiguates_same_leaf_name(self) -> None:
@@ -238,14 +240,14 @@ class PlaylistXmlHelperTests(unittest.TestCase):
 </DJ_PLAYLISTS>
 """
         root = ET.fromstring(xml)
-        found, errors = rb.resolve_playlist(root, "Darkprog")
+        found, errors = rx.resolve_playlist(root, "Darkprog")
         self.assertIsNone(found)
         self.assertEqual(len(errors), 1)
         self.assertIn("duplicate playlist name: Darkprog", errors[0])
         self.assertIn("Selections / Night / Darkprog", errors[0])
         self.assertIn("Genres / Psychedelic / Progressive / Darkprog", errors[0])
 
-        found, errors = rb.resolve_playlist(
+        found, errors = rx.resolve_playlist(
             root, "Darkprog", folder="Selections / Night"
         )
         self.assertEqual(errors, [])
@@ -254,7 +256,7 @@ class PlaylistXmlHelperTests(unittest.TestCase):
         self.assertEqual(found[1], "Darkprog")
         self.assertEqual(found[2].get("Entries"), "5")
 
-        found, errors = rb.resolve_playlist(
+        found, errors = rx.resolve_playlist(
             root, "Genres / Psychedelic / Progressive / Darkprog"
         )
         self.assertEqual(errors, [])
@@ -267,13 +269,13 @@ class PlaylistXmlHelperTests(unittest.TestCase):
             ("f", "B", ET.Element("NODE")),
             ("f", "C", ET.Element("NODE")),
         ]
-        chosen, errors = rb.parse_playlist_selection("1", entries)
+        chosen, errors = rx.parse_playlist_selection("1", entries)
         self.assertEqual(errors, [])
         self.assertEqual([n for _f, n, _e in chosen], ["A"])
-        chosen, errors = rb.parse_playlist_selection("1,3", entries)
+        chosen, errors = rx.parse_playlist_selection("1,3", entries)
         self.assertEqual(errors, [])
         self.assertEqual([n for _f, n, _e in chosen], ["A", "C"])
-        chosen, errors = rb.parse_playlist_selection("all", entries)
+        chosen, errors = rx.parse_playlist_selection("all", entries)
         self.assertEqual(errors, [])
         self.assertEqual(len(chosen), 3)
 
@@ -283,16 +285,16 @@ class PlaylistXmlHelperTests(unittest.TestCase):
             ("two", "Same", ET.Element("NODE")),
             ("", "Other", ET.Element("NODE")),
         ]
-        chosen, errors = rb.parse_playlist_selection("1,2", entries)
+        chosen, errors = rx.parse_playlist_selection("1,2", entries)
         self.assertEqual(chosen, [])
         self.assertTrue(any("same name" in e for e in errors))
-        chosen, errors = rb.parse_playlist_selection("all", entries)
+        chosen, errors = rx.parse_playlist_selection("all", entries)
         self.assertEqual(chosen, [])
         self.assertTrue(any("same name" in e for e in errors))
 
     def test_parse_selection_out_of_range(self) -> None:
         entries = [("", "A", ET.Element("NODE"))]
-        _, errors = rb.parse_playlist_selection("2", entries)
+        _, errors = rx.parse_playlist_selection("2", entries)
         self.assertTrue(any("out of range" in e for e in errors))
 
 

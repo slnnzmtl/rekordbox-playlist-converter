@@ -1,37 +1,27 @@
-"""Per-format sticky dest assignments under wav_dir (private to convert_plan/batch)."""
+"""Per-format sticky dest assignments under wav_dir (private to convert/prepare batch)."""
 
 from __future__ import annotations
 
 import json
 import os
 import tempfile
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from cli_error import CliError
+from convert.paths import abs_path, collision_key, same_file
+from convert.quality import OUTPUT_FORMATS, FORMAT_DIR_NAMES
 
 MANIFEST_NAME = ".rekordbox-converter-manifest.json"
 MANIFEST_VERSION = 1
 MANIFEST_LAYOUT = "format-flat"
-SUPPORTED_FORMATS = frozenset({"wav", "aiff"})
-_FORMAT_DIRS = {"wav": "WAV", "aiff": "AIFF"}
+SUPPORTED_FORMATS = OUTPUT_FORMATS
+_FORMAT_DIRS = FORMAT_DIR_NAMES
 
 
 class ManifestError(CliError):
     """Invalid or unusable converter manifest."""
-
-
-def _abs_path(path: Path) -> Path:
-    path = path.expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    return path
-
-
-def collision_key(name: str) -> str:
-    return unicodedata.normalize("NFC", name).casefold()
 
 
 @dataclass
@@ -70,7 +60,7 @@ class ConverterManifest:
 
 
 def manifest_path(wav_dir: Path) -> Path:
-    return _abs_path(wav_dir) / MANIFEST_NAME
+    return abs_path(wav_dir) / MANIFEST_NAME
 
 
 def empty_manifest() -> ConverterManifest:
@@ -78,7 +68,7 @@ def empty_manifest() -> ConverterManifest:
 
 
 def _require_under_wav_dir(wav_dir: Path, dest: Path, detail: str) -> Path:
-    root = _abs_path(wav_dir).resolve()
+    root = abs_path(wav_dir).resolve()
     try:
         dest.relative_to(root)
     except ValueError as exc:
@@ -88,7 +78,7 @@ def _require_under_wav_dir(wav_dir: Path, dest: Path, detail: str) -> Path:
 
 def resolve_dest_under_wav_dir(wav_dir: Path, relative_dest: str) -> Path:
     """Resolve relative_dest under wav_dir; raise if it escapes wav_dir."""
-    root = _abs_path(wav_dir).resolve()
+    root = abs_path(wav_dir).resolve()
     dest = root.joinpath(*PurePosixPath(relative_dest).parts).resolve()
     return _require_under_wav_dir(
         wav_dir,
@@ -218,7 +208,7 @@ def load_manifest(wav_dir: Path) -> ConverterManifest:
         ) from exc
     except (OSError, UnicodeDecodeError) as exc:
         raise ManifestError(f"cannot read converter manifest: {path}: {exc}") from exc
-    errors = validate_manifest_data(data, _abs_path(wav_dir))
+    errors = validate_manifest_data(data, abs_path(wav_dir))
     if errors:
         raise ManifestError(errors[0])
     tracks = data["tracks"]
@@ -306,7 +296,7 @@ def validate_library_folder(wav_dir: Path) -> str | None:
 
 def save_manifest(manifest: ConverterManifest, wav_dir: Path) -> None:
     """Atomically write manifest under wav_dir (tempfile + os.replace)."""
-    root = _abs_path(wav_dir)
+    root = abs_path(wav_dir)
     root.mkdir(parents=True, exist_ok=True)
     path = root / MANIFEST_NAME
     payload = json.dumps(manifest.to_dict(), indent=2, ensure_ascii=False) + "\n"
@@ -346,12 +336,7 @@ def relative_dest_occupied(
         return True
 
     def _is_source(path: Path) -> bool:
-        if source_path is None:
-            return False
-        try:
-            return path.exists() and source_path.exists() and path.samefile(source_path)
-        except OSError:
-            return False
+        return source_path is not None and same_file(path, source_path)
 
     if dest.is_file():
         return not _is_source(dest)

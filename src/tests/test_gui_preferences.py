@@ -16,7 +16,7 @@ from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR
 
 class LoadPreferencesTests(unittest.TestCase):
     def test_load_preferences_returns_empty_when_file_missing(self) -> None:
-        from gui_preferences import load_preferences
+        from gui_prefs import load_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
             missing = Path(tmp) / "preferences.json"
@@ -25,7 +25,7 @@ class LoadPreferencesTests(unittest.TestCase):
             self.assertEqual(result, {})
 
     def test_save_and_load_round_trip(self) -> None:
-        from gui_preferences import load_preferences, save_preferences
+        from gui_prefs import load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "preferences.json"
@@ -42,7 +42,7 @@ class LoadPreferencesTests(unittest.TestCase):
                 config_path=config,
             )
             loaded = load_preferences(config_path=config)
-            self.assertEqual(loaded["wav_dir"], str(wav_dir.resolve()))
+            self.assertEqual(loaded["library_dir"], str(wav_dir.resolve()))
             self.assertNotIn("import_xml", loaded)
             self.assertEqual(loaded["source_xml"], str(source_xml.resolve()))
             self.assertEqual(loaded["output_format"], "aiff")
@@ -54,7 +54,7 @@ class LoadPreferencesTests(unittest.TestCase):
     def test_load_preferences_tolerates_legacy_import_xml(self) -> None:
         """Given prefs JSON with legacy import_xml: When load_preferences runs:
         Then it succeeds, exposes wav_dir, and ignores import_xml."""
-        from gui_preferences import load_preferences
+        from gui_prefs import load_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "preferences.json"
@@ -69,11 +69,11 @@ class LoadPreferencesTests(unittest.TestCase):
                 encoding="utf-8",
             )
             loaded = load_preferences(config_path=config)
-            self.assertEqual(loaded["wav_dir"], "/tmp/x")
+            self.assertEqual(loaded["library_dir"], "/tmp/x")
             self.assertNotIn("import_xml", loaded)
 
     def test_load_preferences_ignores_invalid_output_format(self) -> None:
-        from gui_preferences import load_preferences
+        from gui_prefs import load_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "preferences.json"
@@ -91,13 +91,13 @@ class LoadPreferencesTests(unittest.TestCase):
                 encoding="utf-8",
             )
             loaded = load_preferences(config_path=config)
-            self.assertEqual(loaded["wav_dir"], "/tmp/x")
+            self.assertEqual(loaded["library_dir"], "/tmp/x")
             self.assertNotIn("output_format", loaded)
             self.assertNotIn("bit_depth", loaded)
             self.assertNotIn("sample_rate", loaded)
 
     def test_save_without_source_xml_preserves_existing_source_xml(self) -> None:
-        from gui_preferences import load_preferences, save_preferences
+        from gui_prefs import load_preferences, save_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "preferences.json"
@@ -112,12 +112,12 @@ class LoadPreferencesTests(unittest.TestCase):
             new_wav.mkdir()
             save_preferences(new_wav, config_path=config)
             loaded = load_preferences(config_path=config)
-            self.assertEqual(loaded["wav_dir"], str(new_wav.resolve()))
+            self.assertEqual(loaded["library_dir"], str(new_wav.resolve()))
             self.assertNotIn("import_xml", loaded)
             self.assertEqual(Path(loaded["source_xml"]), source_xml.resolve())
 
     def test_load_preferences_tolerates_corrupt_json(self) -> None:
-        from gui_preferences import load_preferences
+        from gui_prefs import load_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "preferences.json"
@@ -125,7 +125,7 @@ class LoadPreferencesTests(unittest.TestCase):
             self.assertEqual(load_preferences(config_path=config), {})
 
     def test_load_preferences_ignores_wrong_version(self) -> None:
-        from gui_preferences import load_preferences
+        from gui_prefs import load_preferences
 
         with tempfile.TemporaryDirectory() as tmp:
             config = Path(tmp) / "preferences.json"
@@ -138,7 +138,7 @@ class LoadPreferencesTests(unittest.TestCase):
 
 class DefaultOutputPathsTests(unittest.TestCase):
     def test_default_output_paths_uses_documents_when_access_ok(self) -> None:
-        from gui_preferences import default_output_paths
+        from gui_prefs import default_output_paths
 
         wav_dir, import_xml = default_output_paths(documents_accessible=True)
         self.assertEqual(wav_dir, Path.home() / "Documents" / "rekordbox-converter")
@@ -148,7 +148,7 @@ class DefaultOutputPathsTests(unittest.TestCase):
         )
 
     def test_default_output_paths_uses_home_when_documents_not_accessible(self) -> None:
-        from gui_preferences import default_output_paths
+        from gui_prefs import default_output_paths
 
         wav_dir, import_xml = default_output_paths(documents_accessible=False)
         self.assertEqual(wav_dir, Path.home() / "rekordbox-converter")
@@ -160,7 +160,7 @@ class DefaultOutputPathsTests(unittest.TestCase):
 
 class ProbeFolderAccessTests(unittest.TestCase):
     def test_probe_folder_access_returns_false_when_probe_times_out(self) -> None:
-        from gui_preferences import probe_folder_access
+        from gui_prefs import probe_folder_access
         import time
 
         def slow() -> bool:
@@ -172,7 +172,7 @@ class ProbeFolderAccessTests(unittest.TestCase):
         )
 
     def test_probe_folder_access_returns_false_when_probe_raises(self) -> None:
-        from gui_preferences import probe_folder_access
+        from gui_prefs import probe_folder_access
 
         def boom() -> bool:
             raise OSError("denied")
@@ -182,7 +182,7 @@ class ProbeFolderAccessTests(unittest.TestCase):
         )
 
     def test_probe_path_via_child_returns_true_when_child_exits_zero(self) -> None:
-        from gui_preferences import probe_path_via_child
+        from gui_prefs import probe_path_via_child
         import subprocess
 
         def ok(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -191,7 +191,7 @@ class ProbeFolderAccessTests(unittest.TestCase):
         self.assertTrue(probe_path_via_child(Path("/tmp"), run=ok))
 
     def test_probe_path_via_child_returns_false_when_child_exits_nonzero(self) -> None:
-        from gui_preferences import probe_path_via_child
+        from gui_prefs import probe_path_via_child
         import subprocess
 
         def denied(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -200,7 +200,7 @@ class ProbeFolderAccessTests(unittest.TestCase):
         self.assertFalse(probe_path_via_child(Path("/tmp"), run=denied))
 
     def test_probe_path_via_child_returns_false_when_child_times_out(self) -> None:
-        from gui_preferences import probe_path_via_child
+        from gui_prefs import probe_path_via_child
         import subprocess
 
         def hang(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
@@ -211,7 +211,7 @@ class ProbeFolderAccessTests(unittest.TestCase):
         )
 
     def test_documents_probe_command_uses_this_app_not_system_test(self) -> None:
-        from gui_preferences import documents_probe_command
+        from gui_prefs import documents_probe_command
 
         cmd = documents_probe_command(Path("/tmp/Documents"))
         self.assertIn("--probe-documents", cmd)
@@ -219,13 +219,13 @@ class ProbeFolderAccessTests(unittest.TestCase):
         self.assertNotEqual(cmd[0], "/bin/test")
 
     def test_run_documents_probe_cli_exits_zero_for_existing_dir(self) -> None:
-        from gui_preferences import run_documents_probe_cli
+        from gui_prefs import run_documents_probe_cli
 
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(run_documents_probe_cli(["--probe-documents", tmp]), 0)
 
     def test_run_documents_probe_cli_exits_one_for_missing_path(self) -> None:
-        from gui_preferences import run_documents_probe_cli
+        from gui_prefs import run_documents_probe_cli
 
         self.assertEqual(
             run_documents_probe_cli(["--probe-documents", "/no/such/documents-dir"]),
@@ -235,7 +235,7 @@ class ProbeFolderAccessTests(unittest.TestCase):
 
 class IterRekordboxXmlFilesTests(unittest.TestCase):
     def test_iter_rekordbox_xml_files_finds_nested_documents_hit(self) -> None:
-        from gui_preferences import iter_rekordbox_xml_files
+        from gui_prefs import iter_rekordbox_xml_files
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -253,7 +253,7 @@ class IterRekordboxXmlFilesTests(unittest.TestCase):
             self.assertEqual(found, [hit.resolve()])
 
     def test_iter_rekordbox_xml_files_finds_home_root_and_skips_siblings(self) -> None:
-        from gui_preferences import iter_rekordbox_xml_files
+        from gui_prefs import iter_rekordbox_xml_files
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -278,7 +278,7 @@ class IterRekordboxXmlFilesTests(unittest.TestCase):
             )
 
     def test_iter_rekordbox_xml_files_skips_icloud_under_documents(self) -> None:
-        from gui_preferences import iter_rekordbox_xml_files
+        from gui_prefs import iter_rekordbox_xml_files
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -295,7 +295,7 @@ class IterRekordboxXmlFilesTests(unittest.TestCase):
 
 class FindRekordboxXmlChildTests(unittest.TestCase):
     def test_find_rekordbox_xml_command_uses_this_app(self) -> None:
-        from gui_preferences import FIND_REKORDBOX_XML_FLAG, find_rekordbox_xml_command
+        from gui_prefs import FIND_REKORDBOX_XML_FLAG, find_rekordbox_xml_command
 
         cmd = find_rekordbox_xml_command(Path("/tmp/home"))
         self.assertIn(FIND_REKORDBOX_XML_FLAG, cmd)
@@ -303,7 +303,7 @@ class FindRekordboxXmlChildTests(unittest.TestCase):
         self.assertNotEqual(cmd[0], "/bin/test")
 
     def test_run_find_rekordbox_xml_cli_prints_paths(self) -> None:
-        from gui_preferences import run_find_rekordbox_xml_cli
+        from gui_prefs import run_find_rekordbox_xml_cli
         import io
         from contextlib import redirect_stdout
 
@@ -322,7 +322,7 @@ class FindRekordboxXmlChildTests(unittest.TestCase):
             self.assertEqual(lines, [str(hit.resolve())])
 
     def test_find_rekordbox_xml_via_child_parses_stdout(self) -> None:
-        from gui_preferences import find_rekordbox_xml_via_child
+        from gui_prefs import find_rekordbox_xml_via_child
         import subprocess
 
         def fake_run(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -343,7 +343,7 @@ class FindRekordboxXmlChildTests(unittest.TestCase):
         )
 
     def test_find_rekordbox_xml_via_child_returns_empty_on_error(self) -> None:
-        from gui_preferences import find_rekordbox_xml_via_child
+        from gui_prefs import find_rekordbox_xml_via_child
         import subprocess
 
         def boom(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -354,7 +354,7 @@ class FindRekordboxXmlChildTests(unittest.TestCase):
 
 class ResolveStartupPathsTests(unittest.TestCase):
     def test_resolve_startup_paths_uses_defaults_when_saved_empty(self) -> None:
-        from gui_preferences import resolve_startup_paths
+        from gui_prefs import resolve_startup_paths
 
         wav_dir, import_xml = resolve_startup_paths(
             {},
@@ -365,7 +365,7 @@ class ResolveStartupPathsTests(unittest.TestCase):
         self.assertEqual(import_xml, DEFAULT_OUTPUT)
 
     def test_resolve_startup_paths_skips_documents_saved_when_not_accessible(self) -> None:
-        from gui_preferences import default_output_paths, resolve_startup_paths
+        from gui_prefs import default_output_paths, resolve_startup_paths
 
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)
@@ -391,7 +391,7 @@ class ResolveStartupPathsTests(unittest.TestCase):
     def test_resolve_startup_paths_ignores_legacy_import_xml(self) -> None:
         """Given saved prefs with a custom import_xml: When resolve_startup_paths
         runs: Then XML is always <wav_dir>/rekordbox-import.xml."""
-        from gui_preferences import resolve_startup_paths
+        from gui_prefs import resolve_startup_paths
 
         with tempfile.TemporaryDirectory() as tmp:
             wav_dir = Path(tmp) / "saved-wav"
@@ -411,7 +411,7 @@ class ResolveStartupPathsTests(unittest.TestCase):
             self.assertEqual(xml, (wav_dir / "rekordbox-import.xml").resolve())
 
     def test_resolve_startup_paths_falls_back_when_saved_wav_dir_missing(self) -> None:
-        from gui_preferences import resolve_startup_paths
+        from gui_prefs import resolve_startup_paths
 
         saved = {"wav_dir": "/nonexistent/path/wav", "import_xml": "/tmp/x.xml"}
         wav_dir, import_xml = resolve_startup_paths(
@@ -423,7 +423,7 @@ class ResolveStartupPathsTests(unittest.TestCase):
         self.assertEqual(import_xml, DEFAULT_OUTPUT)
 
     def test_resolve_startup_paths_partial_restore_wav_only(self) -> None:
-        from gui_preferences import resolve_startup_paths
+        from gui_prefs import resolve_startup_paths
 
         with tempfile.TemporaryDirectory() as tmp:
             wav_dir = Path(tmp) / "only-wav"
@@ -438,7 +438,7 @@ class ResolveStartupPathsTests(unittest.TestCase):
             self.assertEqual(xml, (wav_dir / "rekordbox-import.xml").resolve())
 
     def test_resolve_startup_paths_derives_import_xml_when_saved_xml_invalid(self) -> None:
-        from gui_preferences import resolve_startup_paths
+        from gui_prefs import resolve_startup_paths
 
         with tempfile.TemporaryDirectory() as tmp:
             wav_dir = Path(tmp) / "saved-wav"

@@ -12,6 +12,9 @@ _RIFF_READ = 4096
 _CONTAINER = {b"moov", b"trak", b"mdia", b"minf", b"stbl"}
 
 PREVIEW_CACHE_MAX = 4096
+# One probe worker; apply this many depths per UI callback so Tk can paint.
+PREVIEW_BIT_DEPTH_BATCH = 24
+PREVIEW_BIT_DEPTH_YIELD_S = 0.02
 
 
 def read_preview_bit_depth(path: Path) -> int | None:

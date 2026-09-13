@@ -13,10 +13,19 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import rb_playlist_to_wav as rb
-import convert_plan
+from cli_error import CliError
+from convert.paths import format_dir_name, format_media_dir, preferred_relative_dest, source_key
+from convert.format_policy import classify_source
+import convert.plan
+from convert import encode
+import cdj_aiff
 import xml_output
 import ffmpeg_tools
+from convert.models import Plan, PlannedTrack
+from convert.prepare import prepare
+from convert.write import convert_unique
+from rekordbox_xml import encode_location
+from xml_output import apply_xml, clone_track, probe_dest_tech
 
 # IEEE 80-bit extended floats for common rates (big-endian).
 RATE_44100 = bytes.fromhex("400eac44000000000000")
@@ -97,7 +106,7 @@ class CdjSafeAiffTests(unittest.TestCase):
             body += b"SSND" + struct.pack(">I", len(ssnd)) + ssnd
             form = b"AIFF" + body
             path.write_bytes(b"FORM" + struct.pack(">I", len(form)) + form)
-            self.assertEqual(rb._ssnd_pcm_bytes(path), pcm)
+            self.assertEqual(cdj_aiff.ssnd_pcm_bytes(path), pcm)
 
     def test_parse_rejects_ssnd_shorter_than_frames_after_offset(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -113,8 +122,8 @@ class CdjSafeAiffTests(unittest.TestCase):
             body += b"SSND" + struct.pack(">I", len(ssnd)) + ssnd
             form = b"AIFF" + body
             path.write_bytes(b"FORM" + struct.pack(">I", len(form)) + form)
-            with self.assertRaises(rb.CliError) as ctx:
-                rb._parse_aiff_audio(path)
+            with self.assertRaises(CliError) as ctx:
+                cdj_aiff.parse_aiff_audio(path)
             self.assertIn("SSND payload shorter", str(ctx.exception))
 
     def test_safe_16_44100_and_24_48000_stereo(self) -> None:
@@ -122,28 +131,28 @@ class CdjSafeAiffTests(unittest.TestCase):
             root = Path(tmp)
             a16 = root / "a16.aiff"
             write_pcm_aiff(a16, sample_rate_bytes=RATE_44100, bits=16)
-            self.assertTrue(rb.is_cdj_safe_aiff(a16, bit_depth=16, sample_rate=44100))
+            self.assertTrue(cdj_aiff.is_cdj_safe_aiff(a16, bit_depth=16, sample_rate=44100))
             a24 = root / "a24.aiff"
             write_pcm_aiff(a24, sample_rate_bytes=RATE_48000, bits=24)
             self.assertTrue(
-                rb.is_cdj_safe_aiff(a24, bit_depth=24, sample_rate=48000)
+                cdj_aiff.is_cdj_safe_aiff(a24, bit_depth=24, sample_rate=48000)
             )
             a16_48 = root / "a16_48.aiff"
             write_pcm_aiff(a16_48, sample_rate_bytes=RATE_48000, bits=16)
             self.assertTrue(
-                rb.is_cdj_safe_aiff(a16_48, bit_depth=16, sample_rate=48000)
+                cdj_aiff.is_cdj_safe_aiff(a16_48, bit_depth=16, sample_rate=48000)
             )
             a24_44 = root / "a24_44.aiff"
             write_pcm_aiff(a24_44, sample_rate_bytes=RATE_44100, bits=24)
             self.assertTrue(
-                rb.is_cdj_safe_aiff(a24_44, bit_depth=24, sample_rate=44100)
+                cdj_aiff.is_cdj_safe_aiff(a24_44, bit_depth=24, sample_rate=44100)
             )
 
     def test_name_chunk_still_audio_safe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "named.aiff"
             write_pcm_aiff(path, extra_chunks=[(b"NAME", b"t\x00")])
-            self.assertTrue(rb.is_cdj_safe_aiff(path, bit_depth=16, sample_rate=44100))
+            self.assertTrue(cdj_aiff.is_cdj_safe_aiff(path, bit_depth=16, sample_rate=44100))
 
     def test_rejects_aifc_wrong_rate_depth_and_missing(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -158,8 +167,8 @@ class CdjSafeAiffTests(unittest.TestCase):
             for name, kwargs in cases:
                 path = root / name
                 write_pcm_aiff(path, **kwargs)
-                self.assertFalse(rb.is_cdj_safe_aiff(path), msg=name)
-            self.assertFalse(rb.is_cdj_safe_aiff(Path("/no/such/file.aiff")))
+                self.assertFalse(cdj_aiff.is_cdj_safe_aiff(path), msg=name)
+            self.assertFalse(cdj_aiff.is_cdj_safe_aiff(Path("/no/such/file.aiff")))
 
 
 class DestNameAndClassifyAiffTests(unittest.TestCase):
@@ -175,15 +184,15 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el),
+            preferred_relative_dest(el),
             "WAV/ABSL - Bestial.wav",
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el, output_format="wav"),
+            preferred_relative_dest(el, output_format="wav"),
             "WAV/ABSL - Bestial.wav",
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el, output_format="aiff"),
+            preferred_relative_dest(el, output_format="aiff"),
             "AIFF/ABSL - Bestial.aiff",
         )
 
@@ -195,7 +204,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             {"Name": "  ", "Artist": "", "Album": "\t"},
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el, stem_fallback="07 - Bestial"),
+            preferred_relative_dest(el, stem_fallback="07 - Bestial"),
             "WAV/Unknown Artist - 07 - Bestial.wav",
         )
         el_dot = ET.Element(
@@ -203,7 +212,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             {"Name": "Track", "Artist": ".", "Album": ".."},
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el_dot),
+            preferred_relative_dest(el_dot),
             "WAV/Unknown Artist - Track.wav",
         )
 
@@ -219,20 +228,20 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el),
+            preferred_relative_dest(el),
             "WAV/X_Y_Z - A_B_C_.wav",
         )
 
     def test_format_dir_name_and_media_dir(self) -> None:
         """Given wav/aiff/other: When format_dir_name / format_media_dir run:
         Then WAV/AIFF dirs or CliError for unsupported formats."""
-        self.assertEqual(rb.format_dir_name("wav"), "WAV")
-        self.assertEqual(rb.format_dir_name("aiff"), "AIFF")
-        with self.assertRaises(rb.CliError):
-            rb.format_dir_name("flac")
+        self.assertEqual(format_dir_name("wav"), "WAV")
+        self.assertEqual(format_dir_name("aiff"), "AIFF")
+        with self.assertRaises(CliError):
+            format_dir_name("flac")
         root = Path("/tmp/out")
-        self.assertEqual(rb.format_media_dir(root, "wav"), root / "WAV")
-        self.assertEqual(rb.format_media_dir(root, "aiff"), root / "AIFF")
+        self.assertEqual(format_media_dir(root, "wav"), root / "WAV")
+        self.assertEqual(format_media_dir(root, "aiff"), root / "AIFF")
 
     def test_classify_aiff_passthrough_and_transcode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -247,7 +256,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
 
             write_pcm_wav(wav)
 
-            codec, is_copy, bits, rate = rb.classify_source(
+            codec, is_copy, bits, rate = classify_source(
                 safe,
                 {"codec_name": "pcm_s16be", "sample_fmt": "s16"},
                 output_format="aiff",
@@ -256,7 +265,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             self.assertEqual(codec, "copy")
             self.assertEqual((bits, rate), (16, 44100))
 
-            codec, is_copy, bits, rate = rb.classify_source(
+            codec, is_copy, bits, rate = classify_source(
                 flac,
                 {
                     "codec_name": "flac",
@@ -271,7 +280,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             self.assertEqual(codec, "pcm_s16be")
 
             # CDJ-safe WAV must not be copied when outputting AIFF.
-            codec, is_copy, bits, rate = rb.classify_source(
+            codec, is_copy, bits, rate = classify_source(
                 wav,
                 {"codec_name": "pcm_s16le", "sample_fmt": "s16"},
                 output_format="aiff",
@@ -280,7 +289,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             self.assertEqual(codec, "pcm_s16be")
 
             # WAV output still copies only CDJ-safe WAV.
-            codec, is_copy, bits, rate = rb.classify_source(
+            codec, is_copy, bits, rate = classify_source(
                 wav, {"codec_name": "pcm_s16le", "sample_fmt": "s16"}
             )
             self.assertTrue(is_copy)
@@ -304,7 +313,7 @@ class InPlaceAiffTests(unittest.TestCase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
     <TRACK TrackID="1" Name="Expected Title" Artist="A"
-           Location="{rb.encode_location(src)}" Kind="AIFF File"/>
+           Location="{encode_location(src)}" Kind="AIFF File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -318,7 +327,7 @@ class InPlaceAiffTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with mock.patch.object(ffmpeg_tools, "require_tools", return_value=[]):
-                _, errors = rb.prepare(
+                _, errors = prepare(
                     xml_path,
                     playlist,
                     wav_dir,
@@ -333,33 +342,29 @@ class InPlaceAiffTests(unittest.TestCase):
 
 class Id3AndConvertAiffTests(unittest.TestCase):
     def test_canonical_aiff_output_parses_dest_once(self) -> None:
-        """Given a canonical AIFF dest: When _is_canonical_aiff_output runs:
-        Then _parse_aiff_audio is invoked once (no separate is_cdj_safe + ID3 walk)."""
+        """Given a canonical AIFF dest: When is_canonical_aiff_output runs:
+        Then parse_aiff_audio is invoked once (no separate is_cdj_safe + ID3 walk)."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             dest = root / "out.aiff"
             write_pcm_aiff(dest)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
-            rb.write_aiff_id3(dest, el, None)
-            real_parse = rb._parse_aiff_audio
+            cdj_aiff.write_aiff_id3(dest, el, None)
+            real_parse = cdj_aiff.parse_aiff_audio
             calls = {"n": 0}
 
             def counting_parse(path: Path):
                 calls["n"] += 1
                 return real_parse(path)
 
-            with mock.patch.object(rb, "_parse_aiff_audio", side_effect=counting_parse):
-                # Patch the name used inside cdj_aiff / convert_plan facades.
-                import cdj_aiff
-
-                with mock.patch.object(
-                    cdj_aiff, "_parse_aiff_audio", side_effect=counting_parse
-                ):
-                    self.assertTrue(
-                        rb._is_canonical_aiff_output(
-                            dest, el, None, bit_depth=16, sample_rate=44100
-                        )
+            with mock.patch.object(
+                cdj_aiff, "parse_aiff_audio", side_effect=counting_parse
+            ):
+                self.assertTrue(
+                    cdj_aiff.is_canonical_aiff_output(
+                        dest, el, None, bit_depth=16, sample_rate=44100
                     )
+                )
             self.assertEqual(calls["n"], 1)
 
     def test_extract_id3_chunk_does_not_read_ssnd_payload(self) -> None:
@@ -370,7 +375,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "large.aiff"
             # ~2 MiB SSND; ID3 is a small trailing chunk.
-            id3 = rb.build_id3v23_tag({"TIT2": "Song", "TPE1": "DJ"}, None)
+            id3 = cdj_aiff.build_id3v23_tag({"TIT2": "Song", "TPE1": "DJ"}, None)
             write_pcm_aiff(
                 path,
                 frames=512 * 1024,
@@ -381,11 +386,11 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             bytes_read = {"n": 0}
             open_patch, read_bytes_patch = patch_counting_open(path, bytes_read)
             with open_patch, read_bytes_patch:
-                tag = rb._extract_id3_chunk(path)
+                tag = cdj_aiff._extract_id3_chunk(path)
 
             self.assertIsNotNone(tag)
             assert tag is not None
-            text, cover = rb._read_id3_frames(tag)
+            text, cover = cdj_aiff._read_id3_frames(tag)
             self.assertEqual(text.get("TIT2"), "Song")
             self.assertIsNone(cover)
             # Headers + COMM + ID3 tag only; far below SSND size.
@@ -407,18 +412,18 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             )
             shutil_copy = __import__("shutil").copy2
             shutil_copy(src, dest)
-            rb.write_aiff_id3(dest, el, None)
+            cdj_aiff.write_aiff_id3(dest, el, None)
             self.assertTrue(
-                rb.is_cdj_safe_aiff(dest, bit_depth=16, sample_rate=44100)
+                cdj_aiff.is_cdj_safe_aiff(dest, bit_depth=16, sample_rate=44100)
             )
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff.is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
-            tag = rb._extract_id3_chunk(dest)
+            tag = cdj_aiff._extract_id3_chunk(dest)
             assert tag is not None
-            text, cover = rb._read_id3_frames(tag)
+            text, cover = cdj_aiff._read_id3_frames(tag)
             self.assertEqual(text.get("TIT2"), "Пісня")
             self.assertEqual(text.get("TPE1"), "Артист")
             self.assertIsNone(cover)
@@ -430,44 +435,46 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             root = Path(tmp)
             src = root / "safe.aiff"
             write_pcm_aiff(src, extra_chunks=[(b"NAME", b"x\x00")])
-            before = rb._ssnd_pcm_bytes(src)
+            before = cdj_aiff.ssnd_pcm_bytes(src)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             dest = root / "out.aiff"
-            rb.write_aiff_output(
+            convert.plan.write_aiff_output(
                 src, dest, el, passthrough=True, codec=None,
                 bit_depth=16, sample_rate=44100,
             )
-            self.assertEqual(rb._ssnd_pcm_bytes(dest), before)
+            self.assertEqual(cdj_aiff.ssnd_pcm_bytes(dest), before)
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff.is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
-            plan_item = rb.PlannedTrack(
+            plan_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
-                copy_wav=True,
+                passthrough=True,
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
+                output_format="aiff",
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
-                wav_dir=root,
-                playlist_dir=root,
+                library_dir=root,
+                media_dir=root,
                 output=root / "o.xml",
                 tracks=[plan_item],
                 unique=[plan_item],
                 source_root=ET.Element("DJ_PLAYLISTS"),
                 output_root=ET.Element("DJ_PLAYLISTS"),
                 output_existed=False,
+                output_format="aiff",
             )
-            stats = rb.convert_unique(plan, force=False)
+            stats = convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 1)
 
     def test_convert_unique_extracts_cover_once_per_source(self) -> None:
@@ -477,34 +484,36 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             write_pcm_aiff(src)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             dest = root / "out.aiff"
-            plan_item = rb.PlannedTrack(
+            plan_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
-                copy_wav=True,
+                passthrough=True,
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
+                output_format="aiff",
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
-                wav_dir=root,
-                playlist_dir=root,
+                library_dir=root,
+                media_dir=root,
                 output=root / "o.xml",
                 tracks=[plan_item],
                 unique=[plan_item],
                 source_root=ET.Element("DJ_PLAYLISTS"),
                 output_root=ET.Element("DJ_PLAYLISTS"),
                 output_existed=False,
+                output_format="aiff",
             )
             with mock.patch.object(
-                convert_plan, "extract_cover_jpeg", return_value=None
+                convert.plan, "extract_cover_jpeg", return_value=None
             ) as cover:
-                stats = rb.convert_unique(plan, force=False)
+                stats = convert_unique(plan, force=False)
             self.assertEqual(stats.copied, 1)
             self.assertEqual(cover.call_count, 1)
             cover.assert_called_with(src, cancel_event=None)
@@ -517,34 +526,35 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             dest = root / "out.aiff"
             write_pcm_aiff(dest, sample_rate_bytes=RATE_48000, bits=24)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
-            rb.write_aiff_id3(dest, el, None)
+            cdj_aiff.write_aiff_id3(dest, el, None)
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff.is_canonical_aiff_output(
                     dest, el, None, bit_depth=24, sample_rate=48000
                 )
             )
             self.assertFalse(
-                rb._is_canonical_aiff_output(
+                cdj_aiff.is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
-            plan_item = rb.PlannedTrack(
+            plan_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec="pcm_s16be",
-                copy_wav=False,
+                passthrough=False,
                 noop=False,
                 bit_depth=16,
                 sample_rate=44100,
+                output_format="aiff",
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
-                wav_dir=root,
-                playlist_dir=root,
+                library_dir=root,
+                media_dir=root,
                 output=root / "o.xml",
                 tracks=[plan_item],
                 unique=[plan_item],
@@ -558,8 +568,8 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             def fake_write(*_a, **_k):
                 wrote.append(dest)
 
-            with mock.patch.object(convert_plan, "write_aiff_output", side_effect=fake_write):
-                stats = rb.convert_unique(plan, force=False)
+            with mock.patch.object(convert.plan, "write_aiff_output", side_effect=fake_write):
+                stats = convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 0)
             self.assertEqual(stats.converted, 1)
             self.assertEqual(wrote, [dest])
@@ -569,7 +579,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             root = Path(tmp)
             src = root / "hi.aiff"
             write_pcm_aiff(src, sample_rate_bytes=RATE_48000, bits=24)
-            codec, is_copy, bits, rate = rb.classify_source(
+            codec, is_copy, bits, rate = classify_source(
                 src,
                 {
                     "codec_name": "pcm_s24be",
@@ -586,7 +596,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
 
             low = root / "lo.aiff"
             write_pcm_aiff(low, sample_rate_bytes=RATE_44100, bits=16)
-            codec, is_copy, bits, rate = rb.classify_source(
+            codec, is_copy, bits, rate = classify_source(
                 low,
                 {
                     "codec_name": "pcm_s16be",
@@ -600,7 +610,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             self.assertTrue(is_copy)
             self.assertEqual((bits, rate), (16, 44100))
 
-            codec, is_copy, bits, rate = rb.classify_source(
+            codec, is_copy, bits, rate = classify_source(
                 src,
                 {
                     "codec_name": "pcm_s24be",
@@ -626,7 +636,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             src.write_bytes(b"flac")
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             normalize_calls: list[tuple[Path, Path]] = []
-            real_norm = convert_plan._normalize_aiff_audio_chunks
+            real_norm = encode.normalize_aiff_audio_chunks
 
             def tracking_norm(source: Path, out: Path) -> None:
                 normalize_calls.append((source, out))
@@ -642,13 +652,13 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 write_pcm_aiff(out, bits=16, sample_rate_bytes=RATE_44100)
 
             with mock.patch.object(
-                convert_plan, "run_ffmpeg", side_effect=fake_ffmpeg
+                encode, "run_ffmpeg", side_effect=fake_ffmpeg
             ), mock.patch.object(
-                convert_plan, "extract_cover_jpeg", return_value=None
+                encode, "extract_cover_jpeg", return_value=None
             ), mock.patch.object(
-                convert_plan, "_normalize_aiff_audio_chunks", side_effect=tracking_norm
+                encode, "normalize_aiff_audio_chunks", side_effect=tracking_norm
             ):
-                rb.write_aiff_output(
+                convert.plan.write_aiff_output(
                     src,
                     dest,
                     el,
@@ -659,7 +669,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 )
             self.assertEqual(normalize_calls, [])
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff.is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
@@ -691,15 +701,15 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             el = ET.Element("TRACK", {"Name": "Tone", "Artist": "Test"})
-            rb.write_aiff_output(
+            convert.plan.write_aiff_output(
                 src, dest, el, passthrough=False, codec="pcm_s16be",
                 bit_depth=16, sample_rate=44100,
             )
-            info = rb._parse_aiff_audio(dest)
+            info = cdj_aiff.parse_aiff_audio(dest)
             self.assertEqual(info.bits_per_sample, 16)
             self.assertEqual(info.sample_rate_bytes, RATE_44100)
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff.is_canonical_aiff_output(
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
@@ -731,7 +741,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             el = ET.Element("TRACK", {"Name": "HiRes", "Artist": "Test"})
-            rb.write_aiff_output(
+            convert.plan.write_aiff_output(
                 src,
                 dest,
                 el,
@@ -740,17 +750,19 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 bit_depth=24,
                 sample_rate=48000,
             )
-            info = rb._parse_aiff_audio(dest)
+            info = cdj_aiff.parse_aiff_audio(dest)
             self.assertEqual(info.bits_per_sample, 24)
             self.assertEqual(info.sample_rate_bytes, RATE_48000)
             self.assertTrue(
-                rb._is_canonical_aiff_output(
+                cdj_aiff.is_canonical_aiff_output(
                     dest, el, None, bit_depth=24, sample_rate=48000
                 )
             )
-            size, bitrate, sample_rate = rb.probe_dest_tech(dest)
+            size, bitrate, sample_rate = probe_dest_tech(dest)
             self.assertEqual(sample_rate, "48000")
-            clone = rb.clone_track(el, "1", dest, rb.encode_location(dest))
+            clone = clone_track(
+                el, "1", dest, encode_location(dest), output_format="aiff"
+            )
             self.assertEqual(clone.get("Kind"), "AIFF File")
             self.assertEqual(clone.get("SampleRate"), "48000")
 
@@ -761,7 +773,7 @@ class ApplyXmlRefreshTests(unittest.TestCase):
             root = Path(tmp)
             dest = root / "t.aiff"
             write_pcm_aiff(dest)
-            rb.write_aiff_id3(
+            cdj_aiff.write_aiff_id3(
                 dest, ET.Element("TRACK", {"Name": "Old"}), None
             )
             source_old = ET.Element(
@@ -769,7 +781,7 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                 {
                     "TrackID": "9",
                     "Name": "Old",
-                    "Location": rb.encode_location(dest),
+                    "Location": encode_location(dest),
                 },
             )
             source_new = ET.Element(
@@ -778,40 +790,46 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                     "TrackID": "9",
                     "Name": "New Title",
                     "Artist": "X",
-                    "Location": rb.encode_location(Path("/orig/t.flac")),
+                    "Location": encode_location(Path("/orig/t.flac")),
                 },
             )
             output_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
             collection = ET.SubElement(output_root, "COLLECTION", {"Entries": "1"})
-            existing = rb.clone_track(
-                source_old, "42", dest, rb.encode_location(dest)
+            existing = clone_track(
+                source_old,
+                "42",
+                dest,
+                encode_location(dest),
+                output_format="aiff",
             )
             collection.append(existing)
-            item = rb.PlannedTrack(
+            item = PlannedTrack(
                 source_el=source_new,
                 source_path=Path("/orig/t.flac"),
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
-                copy_wav=True,
+                passthrough=True,
                 noop=False,
+                output_format="aiff",
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
-                wav_dir=root,
-                playlist_dir=root,
+                library_dir=root,
+                media_dir=root,
                 output=root / "import.xml",
                 tracks=[item],
                 unique=[item],
                 source_root=ET.Element("DJ_PLAYLISTS"),
                 output_root=output_root,
                 output_existed=True,
+                output_format="aiff",
             )
             with mock.patch.object(xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")):
-                success = {(rb.source_key(item.source_path), "aiff")}
-                rb.apply_xml(plan, success)
+                success = {(source_key(item.source_path), "aiff")}
+                apply_xml(plan, success)
             tracks = output_root.findall("COLLECTION/TRACK")
             self.assertEqual(len(tracks), 1)
             self.assertEqual(tracks[0].get("TrackID"), "42")

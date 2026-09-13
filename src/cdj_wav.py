@@ -8,6 +8,7 @@ from pathlib import Path
 
 import iff_chunks
 from cli_error import CliError
+from convert.quality import coerce_bit_depth, coerce_sample_rate
 
 CDJ_SAFE_CHANNELS = 2
 WAVE_FORMAT_PCM = 1
@@ -91,10 +92,8 @@ def is_cdj_safe_wav(
     sample_rate: int = 48000,
 ) -> bool:
     """True if path is stereo WAVE_FORMAT_PCM with fmt+data only at the given quality."""
-    if bit_depth not in (16, 24):
-        bit_depth = 24
-    if sample_rate not in (44100, 48000):
-        sample_rate = 48000
+    bit_depth = coerce_bit_depth(bit_depth)
+    sample_rate = coerce_sample_rate(sample_rate)
     if not path.is_file():
         return False
     try:
@@ -111,7 +110,7 @@ def is_cdj_safe_wav(
     )
 
 
-def _rewrite_wav_pcm(source: Path, dest: Path) -> None:
+def rewrite_wav_pcm(source: Path, dest: Path) -> None:
     """Rewrite as WAVE_FORMAT_PCM with only fmt + data (never EXTENSIBLE)."""
     try:
         with source.open("rb") as fp:
@@ -176,3 +175,4 @@ def _rewrite_wav_pcm(source: Path, dest: Path) -> None:
         raise CliError(f"cannot read WAV: {source}: {exc}") from exc
     except ValueError as exc:
         raise CliError(f"truncated WAV data while streaming copy") from exc
+

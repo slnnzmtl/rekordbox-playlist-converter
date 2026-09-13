@@ -5,5 +5,9 @@ class CliError(Exception):
     """Fatal error with a user-facing message."""
 
 
-class CancelledError(CliError):
-    """Conversion or prepare aborted because cancel was requested."""
+class CancelledError(Exception):
+    """Conversion or prepare aborted because cancel was requested.
+
+    Not a CliError: cancel is not a fatal user-facing failure, and
+    ``except CliError`` must not treat it as one.
+    """

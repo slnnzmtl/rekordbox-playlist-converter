@@ -14,12 +14,14 @@ import ffmpeg_tools
 import iff_chunks
 from cdj_wav import CDJ_SAFE_CHANNELS
 from cli_error import CancelledError, CliError
+from convert.quality import BIT_DEPTHS, coerce_bit_depth, coerce_sample_rate
 
 AIFF_RATE_BYTES = {
     44100: bytes.fromhex("400eac44000000000000"),
     48000: bytes.fromhex("400ebb80000000000000"),
 }
-AIFF_SAFE_BIT_DEPTHS = {16, 24}
+AIFF_SAFE_BIT_DEPTHS = set(BIT_DEPTHS)
+COVER_MAX_SIDE = 600
 
 
 @dataclass(frozen=True)
@@ -40,7 +42,7 @@ class _AiffAudioInfo:
     id3_payload_size: int = 0
 
 
-def _parse_aiff_audio(path: Path) -> _AiffAudioInfo:
+def parse_aiff_audio(path: Path) -> _AiffAudioInfo:
     """Parse FORM/AIFF structure for Pioneer-ceiling safety checks."""
     try:
         with path.open("rb") as fp:
@@ -132,16 +134,12 @@ def _parse_aiff_audio(path: Path) -> _AiffAudioInfo:
 def _normalize_aiff_quality(
     bit_depth: int, sample_rate: int
 ) -> tuple[int, bytes]:
-    if bit_depth not in AIFF_SAFE_BIT_DEPTHS:
-        bit_depth = 24
-    rate_bytes = AIFF_RATE_BYTES.get(sample_rate)
-    if rate_bytes is None:
-        rate_bytes = AIFF_RATE_BYTES[48000]
-        bit_depth = 24
-    return bit_depth, rate_bytes
+    bit_depth = coerce_bit_depth(bit_depth)
+    sample_rate = coerce_sample_rate(sample_rate)
+    return bit_depth, AIFF_RATE_BYTES[sample_rate]
 
 
-def _info_is_cdj_safe_aiff(
+def info_is_cdj_safe_aiff(
     info: _AiffAudioInfo,
     *,
     bit_depth: int = 24,
@@ -173,10 +171,10 @@ def is_cdj_safe_aiff(
     if not path.is_file():
         return False
     try:
-        info = _parse_aiff_audio(path)
+        info = parse_aiff_audio(path)
     except CliError:
         return False
-    return _info_is_cdj_safe_aiff(
+    return info_is_cdj_safe_aiff(
         info, bit_depth=bit_depth, sample_rate=sample_rate
     )
 
@@ -327,7 +325,7 @@ def _read_id3_frames(tag: bytes) -> tuple[dict[str, str], bytes | None]:
 def _extract_id3_chunk(path: Path) -> bytes | None:
     """Return the ID3 chunk payload, reading only that payload (not SSND PCM)."""
     try:
-        info = _parse_aiff_audio(path)
+        info = parse_aiff_audio(path)
     except CliError:
         return None
     return _read_id3_payload(path, info)
@@ -348,8 +346,8 @@ def _read_id3_payload(path: Path, info: _AiffAudioInfo) -> bytes | None:
         return None
 
 
-def _ssnd_pcm_bytes(path: Path) -> bytes:
-    info = _parse_aiff_audio(path)
+def ssnd_pcm_bytes(path: Path) -> bytes:
+    info = parse_aiff_audio(path)
     data = path.read_bytes()
     offset = 12
     for cid in info.chunk_ids:
@@ -389,9 +387,9 @@ def _write_form_aiff_chunks(
         out.write(extra)
 
 
-def _normalize_aiff_audio_chunks(source: Path, dest: Path) -> None:
+def normalize_aiff_audio_chunks(source: Path, dest: Path) -> None:
     """Copy COMM+SSND only from source into dest (SSND PCM bit-identical)."""
-    _parse_aiff_audio(source)
+    parse_aiff_audio(source)
     try:
         with source.open("rb") as src:
             src.seek(0, 2)
@@ -410,7 +408,7 @@ def write_aiff_id3(
     """Replace/add ID3 chunk; drop NAME and other non-COMM/SSND/ID3 chunks."""
     text = expected_id3_text_from_track(source_el)
     tag = build_id3v23_tag(text, cover_jpeg)
-    _parse_aiff_audio(path)
+    parse_aiff_audio(path)
     id3_chunk = b"ID3 " + struct.pack(">I", len(tag)) + tag
     if len(tag) % 2:
         id3_chunk += b"\x00"
@@ -434,7 +432,7 @@ def write_aiff_id3(
 def extract_cover_jpeg(
     source: Path,
     *,
-    max_side: int = 600,
+    max_side: int = COVER_MAX_SIDE,
     cancel_event: threading.Event | None = None,
 ) -> bytes | None:
     """Extract attached picture as JPEG ≤ max_side; None if absent."""
@@ -473,7 +471,7 @@ def extract_cover_jpeg(
             )
         except CancelledError:
             raise
-        except Exception:
+        except (OSError, subprocess.TimeoutExpired, CliError):
             return None
         if proc.returncode != 0 or not out.is_file() or out.stat().st_size == 0:
             return None
@@ -483,7 +481,7 @@ def extract_cover_jpeg(
         return data
 
 
-def _is_canonical_aiff_from_info(
+def is_canonical_aiff_from_info(
     path: Path,
     info: _AiffAudioInfo,
     source_el: ET.Element,
@@ -493,7 +491,7 @@ def _is_canonical_aiff_from_info(
     sample_rate: int = 48000,
 ) -> bool:
     """Canonical check using an already-parsed dest (no second structure walk)."""
-    if not _info_is_cdj_safe_aiff(
+    if not info_is_cdj_safe_aiff(
         info, bit_depth=bit_depth, sample_rate=sample_rate
     ):
         return False
@@ -513,7 +511,7 @@ def _is_canonical_aiff_from_info(
     return cover == expected_cover
 
 
-def _is_canonical_aiff_output(
+def is_canonical_aiff_output(
     path: Path,
     source_el: ET.Element,
     expected_cover: bytes | None,
@@ -525,10 +523,10 @@ def _is_canonical_aiff_output(
     if not path.is_file():
         return False
     try:
-        info = _parse_aiff_audio(path)
+        info = parse_aiff_audio(path)
     except CliError:
         return False
-    return _is_canonical_aiff_from_info(
+    return is_canonical_aiff_from_info(
         path,
         info,
         source_el,

@@ -4,8 +4,6 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
-
 _SRC = Path(__file__).resolve().parents[1]
 _REPO = Path(__file__).resolve().parents[2]
 if str(_SRC) not in sys.path:
@@ -13,6 +11,8 @@ if str(_SRC) not in sys.path:
 
 from update_check import UpdateCheckResult
 from version import __version__
+
+from gui_tk import app_patches
 
 
 class VersionDisplayTests(unittest.TestCase):
@@ -35,10 +35,9 @@ class VersionDisplayTests(unittest.TestCase):
 
         root = None
         try:
-            with patch(
-                "rb_converter_gui.check_for_update",
-                return_value=UpdateCheckResult(kind="up_to_date"),
-            ), patch("rb_converter_gui.rb.discover_xml_candidates", return_value=[]):
+            with app_patches(
+                check_for_update=UpdateCheckResult(kind="up_to_date"),
+                            ):
                 root = tk.Tk()
                 root.withdraw()
                 ConverterApp(root, documents_accessible=False)

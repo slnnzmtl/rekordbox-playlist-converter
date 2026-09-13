@@ -29,11 +29,12 @@ Skip this skill for docs-only edits, packaging/build scripts with no testable Py
 | --- | --- |
 | Runner | `python3 -m unittest discover -s src/tests -v` (CI uses the same discover path) |
 | Tests | `src/tests/test_*.py` — `unittest.TestCase`, Given-When-Then in method names or docstrings |
-| Conversion / XML | `src/rb_playlist_to_wav.py` (facade) plus `cdj_wav.py`, `cdj_aiff.py`, `rekordbox_xml.py`, `cli_error.py` |
-| Tk GUI | `src/rb_converter_gui.py` |
+| Conversion / XML | `src/rb_playlist_to_wav.py` (facade) plus `convert_plan.py`, `convert/encode.py`, `convert/models.py`, `convert/paths.py`, `cdj_wav.py`, `cdj_aiff.py`, `rekordbox_xml.py`, `cli_error.py` |
+| Tk GUI | `src/rb_converter_gui.py` (TCC entry) plus `gui/app.py`, `gui/runtime.py`, `gui/shell.py`, `gui/playlists.py`, `gui/convert_flow.py`, `gui/helpers.py`, `gui/constants.py`, `gui/layout.py`, `gui/dialogs.py`, `gui/browser.py`, `gui/tracklist.py` |
 | Shared help | `src/usage_guide.py` |
 | Version | `src/version.py` |
 | CLI launcher | `rb-converter.py` (keep thin; do not duplicate conversion logic) |
+| GUI test patches | Prefer `gui_tk.app_patches` / `startup_patches` / `patch_gui` with `GUI_MODULE` (`gui.runtime`); do not hardcode patch module strings |
 
 Intended behavior also lives in `README.md` and `USAGE.md`. Conversion **must not** mutate Rekordbox originals; it writes new WAVs and a separate import XML.
 
@@ -74,7 +75,7 @@ Write one sentence: the observable behavior and the seam you will test. If the r
 ### 1. RED — failing test only
 
 - Edit only `src/tests/test_*.py` (add a new test module if the behavior does not belong in an existing file).
-- Match style in `src/tests/test_rb_playlist_to_wav.py`, `test_rb_converter_gui.py`, `test_update_check.py`.
+- Match style in `src/tests/test_rb_playlist_to_wav.py`, `test_convert_unique.py`, `test_rb_converter_gui.py`, `test_update_check.py`. Use `gui_tk.app_patches` for GUI tests.
 - Run the new test first, then discover:
 
 ```bash
@@ -86,7 +87,8 @@ python3 -m unittest discover -s src/tests -v
 
 ### 2. GREEN — minimal production code
 
-- Change the smallest production surface that makes the new test pass (`src/rb_playlist_to_wav.py` or its leaf modules `cdj_wav.py` / `cdj_aiff.py` / `rekordbox_xml.py` / `cli_error.py`, `src/rb_converter_gui.py`, `src/usage_guide.py`, `src/version.py`, or the thin launcher only if the slice is launch behavior). Keep public names re-exported from `rb_playlist_to_wav` so `import rb_playlist_to_wav as rb` and existing patches keep working.- Re-run discover. Iterate on production code until green.
+- Change the smallest production surface that makes the new test pass (`src/rb_playlist_to_wav.py` or its leaf modules `convert_plan.py` / `convert/encode.py` / `convert/models.py` / `convert/paths.py` / `cdj_wav.py` / `cdj_aiff.py` / `rekordbox_xml.py` / `cli_error.py`, `src/rb_converter_gui.py` / `gui/app.py` / `gui/runtime.py` / mixins / `gui/layout.py` / `gui/dialogs.py` / `gui/browser.py` / `gui/tracklist.py`, `src/usage_guide.py`, `src/version.py`, or the thin launcher only if the slice is launch behavior). Keep public names re-exported from `rb_playlist_to_wav` so `import rb_playlist_to_wav as rb` and existing patches keep working. For GUI patches, use `gui_tk.GUI_MODULE` (`gui.runtime`).
+- Re-run discover. Iterate on production code until green.
 - If GREEN needs more cases, go back to RED for **one** additional test — do not bulk-add coverage.
 
 ### 3. REFACTOR — cleanup under green

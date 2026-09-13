@@ -1,0 +1,202 @@
+"""Conversion preview and output disk-space checks."""
+
+from __future__ import annotations
+
+import math
+import shutil
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
+from typing import Callable
+
+from cli_error import CancelledError
+from convert import format_policy
+from convert import plan as plan_module
+from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PlannedTrack
+from convert.paths import _format_size_mb
+
+
+def _preview_size(item: PlannedTrack, action: str) -> tuple[int | None, str]:
+    """Return (bytes, display). Reuse uses dest size; else estimate PCM."""
+    if action == "reuse":
+        try:
+            if item.dest_path.is_file():
+                size = item.dest_path.stat().st_size
+                return size, _format_size_mb(size)
+        except OSError:
+            pass
+        return None, "—"
+    duration = item.duration_seconds
+    if duration is None or not math.isfinite(duration) or duration < 0:
+        return None, "—"
+    bytes_per_sample = 2 if item.bit_depth == 16 else 3
+    estimated = int(duration * item.sample_rate * bytes_per_sample * 2)
+    return estimated, _format_size_mb(estimated, approximate=True)
+
+
+def build_conversion_preview(
+    plans: list[Plan],
+    items: list[PlannedTrack],
+    force: bool,
+    *,
+    cancel_event: threading.Event | None = None,
+    on_progress: Callable[[int, int, str, str], None] | None = None,
+    workers: int | None = None,
+) -> ConversionPreview:
+    """Build a read-only conversion preview from prepared plans and unique items."""
+    if not plans:
+        return ConversionPreview(
+            selected=0,
+            resolved=0,
+            unique_outputs=0,
+            duplicates=0,
+            missing=0,
+            items=[],
+        )
+    resolved = sum(len(plan.tracks) for plan in plans)
+    missing = sum(len(plan.warnings) for plan in plans)
+    selected = resolved + missing
+    unique_outputs = len(items)
+    duplicates = resolved - unique_outputs
+    library_dir = plans[0].library_dir
+    total = len(items)
+    if total == 0:
+        return ConversionPreview(
+            selected=selected,
+            resolved=resolved,
+            unique_outputs=unique_outputs,
+            duplicates=duplicates,
+            missing=missing,
+            items=[],
+        )
+
+    plan_by_item: dict[int, Plan] = {}
+    for plan in plans:
+        for item in plan.unique:
+            plan_by_item.setdefault(id(item), plan)
+
+    results: list[ConversionPreviewItem | None] = [None] * total
+    cover_lock = threading.Lock()
+    progress_lock = threading.Lock()
+    completed = 0
+
+    def classify_one(index: int, item: PlannedTrack) -> ConversionPreviewItem:
+        if cancel_event is not None and cancel_event.is_set():
+            raise CancelledError("conversion cancelled during preview")
+        plan = plan_by_item.get(id(item), plans[0])
+        action = format_policy.planned_action(
+            plan,
+            item,
+            force,
+            cover_lock=cover_lock,
+            cancel_event=cancel_event,
+        )
+        try:
+            relative_dest = item.dest_path.relative_to(library_dir).as_posix()
+        except ValueError:
+            relative_dest = item.dest_path.name
+        size_bytes, size_display = _preview_size(item, action)
+        return ConversionPreviewItem(
+            relative_dest=relative_dest,
+            action=action,
+            bit_depth=item.bit_depth,
+            sample_rate=item.sample_rate,
+            size_bytes=size_bytes,
+            size_display=size_display,
+            source_display=item.source_path.name,
+        )
+
+    workers = plan_module.convert_worker_count(total, workers=workers)
+    pool = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures = {
+            pool.submit(classify_one, index, item): index
+            for index, item in enumerate(items)
+        }
+        for fut in as_completed(futures):
+            if cancel_event is not None and cancel_event.is_set():
+                break
+            index = futures[fut]
+            try:
+                results[index] = fut.result()
+            except CancelledError:
+                if cancel_event is not None:
+                    cancel_event.set()
+                break
+            with progress_lock:
+                completed += 1
+                done = completed
+            if on_progress is not None:
+                on_progress(done, total, "preview", items[index].dest_name)
+    finally:
+        plan_module._shutdown_cancelable_pool(pool, cancel_event)
+    if cancel_event is not None and cancel_event.is_set():
+        raise CancelledError("conversion cancelled during preview")
+
+    preview_items = [item for item in results if item is not None]
+    if len(preview_items) != total:
+        raise CancelledError("conversion cancelled during preview")
+    return ConversionPreview(
+        selected=selected,
+        resolved=resolved,
+        unique_outputs=unique_outputs,
+        duplicates=duplicates,
+        missing=missing,
+        items=preview_items,
+    )
+
+
+def preview_write_bytes(preview: ConversionPreview) -> int:
+    """Bytes that copy/transcode will write; reuse needs no extra space."""
+    total = 0
+    for item in preview.items:
+        if item.action == "reuse":
+            continue
+        if item.size_bytes is None:
+            continue
+        total += item.size_bytes
+    return total
+
+
+def _disk_usage_path(path: Path) -> Path:
+    """Nearest existing ancestor suitable for shutil.disk_usage."""
+    candidate = path.expanduser()
+    try:
+        candidate = candidate.resolve(strict=False)
+    except OSError:
+        pass
+    while True:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            pass
+        parent = candidate.parent
+        if parent == candidate:
+            return candidate
+        candidate = parent
+
+
+def insufficient_output_space_message(
+    path: Path,
+    required_bytes: int,
+    *,
+    disk_usage: Callable[[str | Path], object] | None = None,
+) -> str | None:
+    """Return an issue message when free space on path is below required_bytes."""
+    if required_bytes <= 0:
+        return None
+    probe = disk_usage if disk_usage is not None else shutil.disk_usage
+    try:
+        usage = probe(_disk_usage_path(path))
+        free = int(getattr(usage, "free"))
+    except (OSError, TypeError, ValueError, AttributeError):
+        return None
+    if free >= required_bytes:
+        return None
+    needed = _format_size_mb(required_bytes, approximate=True)
+    available = _format_size_mb(free)
+    return (
+        "Not enough free space in the output folder. "
+        f"About {needed.removeprefix('≈ ')} needed, {available} available."
+    )
