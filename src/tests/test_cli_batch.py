@@ -652,12 +652,6 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(plan.max_bit_depth, 24)
         self.assertEqual(plan.max_sample_rate, 48000)
 
-    def test_playlist_dir_name_sanitizes_separators(self) -> None:
-        self.assertEqual(rb.playlist_dir_name("Dark forest"), "Dark forest")
-        self.assertEqual(rb.playlist_dir_name("a/b\\c"), "a_b_c")
-        with self.assertRaises(rb.CliError):
-            rb.playlist_dir_name("..")
-
     def test_format_invalid_exits(self) -> None:
         with self.assertRaises(SystemExit):
             rb.parse_args(["--xml", "in.xml", "--playlist", "P", "--format", "mp3"])

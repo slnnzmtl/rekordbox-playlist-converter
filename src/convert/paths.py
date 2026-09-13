@@ -23,6 +23,11 @@ def abs_path(path: Path) -> Path:
     return path
 
 
+def source_key(path: Path) -> str:
+    """NFC-normalized resolved path string identifying an existing source file."""
+    return unicodedata.normalize("NFC", str(path.expanduser().resolve()))
+
+
 def collision_key(name: str) -> str:
     """NFC + casefold key for filename / relative-dest collision checks."""
     return unicodedata.normalize("NFC", name).casefold()
@@ -94,16 +99,6 @@ def format_dir_name(output_format: str) -> str:
 def format_media_dir(wav_dir: Path, output_format: str) -> Path:
     """Return wav_dir/WAV or wav_dir/AIFF for audio output."""
     return wav_dir / format_dir_name(output_format)
-
-
-def playlist_dir_name(playlist_name: str) -> str:
-    """Filesystem-safe single directory component from the playlist name."""
-    name = unicodedata.normalize("NFC", playlist_name)
-    name = name.replace("/", "_").replace("\\", "_").replace("\0", "")
-    name = name.rstrip(" .")
-    if not name or name in {".", ".."}:
-        raise CliError(f"playlist name is not usable as a directory: {playlist_name!r}")
-    return name
 
 
 def resolve_existing_file(path: Path) -> Path | None:

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Internal: `xml_output` imports `Plan` / paths from `convert.models` /
+  `convert.paths` (no `convert_plan`); `source_key` lives with path helpers;
+  drop unused `playlist_dir_name`; `CONVERT_WORKERS_MAX` matches the default
+  cap of 4; shared cancel-shutdown for preview/plan probe pools (encode still
+  waits in-flight).
 - Internal: WAV/AIFF branching uses `PlannedTrack.output_format` (stamped in
   `build_plan`) instead of `dest_path.suffix == ".aiff"` in plan, encode, and
   import XML Kind / assignment keys.
@@ -46,7 +51,7 @@
 - GUI and CLI derive Import XML as `<wav-dir>/rekordbox-import.xml` (CLI `--output` remains an optional override). The GUI shows a read-only path field (click to copy); ignore legacy `import_xml` preferences.
 - GUI Convert opens a conversion preview (unique outputs, action, quality, size); **Back** writes nothing. CLI `--dry-run` prints the same plan. Success offers **Reveal audio folder** (selected format directory) and **Reveal import XML**.
 - GUI quality control is **Max. quality** (`16-bit` / `24-bit` / `44.1 kHz` / `48 kHz`). Output-folder validation runs off the UI thread and disables Convert when the folder is invalid.
-- Unique-track conversion runs up to **4 encodes in parallel** (capped at 5). Progress counts completed tracks; Cancel stops in-flight encodes (completed files kept; interrupted playlist is not written to Import XML).
+- Unique-track conversion runs up to **4 encodes in parallel**. Progress counts completed tracks; Cancel stops in-flight encodes (completed files kept; interrupted playlist is not written to Import XML).
 - Track failures no longer abort the rest of the run: convertible tracks finish, Import XML is written for successes, remaining playlists continue, then all errors are reported together. Cancel after a failure still surfaces those encode errors.
 - Filename collisions (same dest name from different sources) no longer abort: the first playlist entry is converted; later duplicates are skipped with a warning.
 - Conversion failure and cancel-with-errors dialogs use the same scrollable list view as skipped missing tracks (not a flat alert).

@@ -93,7 +93,6 @@ sanitize_path_component = convert_plan.sanitize_path_component
 preferred_relative_dest = convert_plan.preferred_relative_dest
 format_dir_name = convert_plan.format_dir_name
 format_media_dir = convert_plan.format_media_dir
-playlist_dir_name = convert_plan.playlist_dir_name
 collision_key = convert_plan.collision_key
 resolve_existing_file = convert_plan.resolve_existing_file
 same_file = convert_plan.same_file

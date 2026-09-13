@@ -6,7 +6,6 @@ import math
 import os
 import shutil
 import threading
-import unicodedata
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path, PurePosixPath
@@ -49,12 +48,12 @@ from convert.paths import (
     preferred_relative_dest,
     resolve_existing_file,
     same_file,
+    source_key,
     target_from_stream,
 )
 # Facade re-exports for rb_playlist_to_wav / callers (not used directly below).
 from convert.paths import (
     format_dir_name as format_dir_name,
-    playlist_dir_name as playlist_dir_name,
     sanitize_path_component as sanitize_path_component,
 )
 from convert.quality import (
@@ -82,13 +81,13 @@ AIFF_EXT = {".aiff", ".aif"}
 
 # Parallel unique-track converts (clamped when used).
 CONVERT_WORKERS_MIN = 1
-CONVERT_WORKERS_MAX = 5
+CONVERT_WORKERS_MAX = 4
 
 
 def default_convert_workers() -> int:
     """Worker count from cpu_count, at least 1, at most 4."""
     n = os.cpu_count() or 4
-    return max(CONVERT_WORKERS_MIN, min(n, 4))
+    return max(CONVERT_WORKERS_MIN, min(n, CONVERT_WORKERS_MAX))
 
 
 CONVERT_WORKERS = default_convert_workers()
@@ -126,16 +125,23 @@ def write_aiff_output(*args, **kwargs):
 
 
 def convert_worker_count(n_items: int) -> int:
-    """Clamp CONVERT_WORKERS to 1..5 and to the number of items."""
+    """Clamp CONVERT_WORKERS to 1..4 and to the number of items."""
     capped = max(CONVERT_WORKERS_MIN, min(int(CONVERT_WORKERS), CONVERT_WORKERS_MAX))
     if n_items <= 0:
         return CONVERT_WORKERS_MIN
     return max(CONVERT_WORKERS_MIN, min(capped, n_items))
 
 
-def source_key(path: Path) -> str:
-    """NFC-normalized resolved path string identifying an existing source file."""
-    return unicodedata.normalize("NFC", str(path.expanduser().resolve()))
+def _shutdown_cancelable_pool(
+    pool: ThreadPoolExecutor,
+    cancel_event: threading.Event | None,
+) -> None:
+    """Shut down a probe/preview pool; cancel pending work if cancelled.
+
+    Encode pools (convert_unique) wait in-flight and must not use this helper.
+    """
+    cancelled = cancel_event is not None and cancel_event.is_set()
+    pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
 
 
 def collect_batch_unique(plans: list[Plan]) -> list[PlannedTrack]:
@@ -329,8 +335,7 @@ def build_conversion_preview(
             if on_progress is not None:
                 on_progress(done, total, "preview", items[index].dest_name)
     finally:
-        cancelled = cancel_event is not None and cancel_event.is_set()
-        pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
+        _shutdown_cancelable_pool(pool, cancel_event)
     if cancel_event is not None and cancel_event.is_set():
         raise CancelledError("conversion cancelled during preview")
 
@@ -735,8 +740,7 @@ def build_plan(
                 if cancel_event is not None and cancel_event.is_set():
                     break
         finally:
-            cancelled = cancel_event is not None and cancel_event.is_set()
-            pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
+            _shutdown_cancelable_pool(pool, cancel_event)
         if cancel_event is not None and cancel_event.is_set():
             return None, []
 

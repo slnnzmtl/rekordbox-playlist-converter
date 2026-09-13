@@ -8,11 +8,11 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-import convert_plan
 import ffmpeg_tools
 from cli_error import CliError
+from convert.models import Plan, PlannedTrack
+from convert.paths import abs_path, source_key
 from convert.quality import coerce_output_format
-from convert_plan import Plan, PlannedTrack
 from rekordbox_xml import (
     collection_indexes,
     find_playlists_by_name,
@@ -165,7 +165,7 @@ def refresh_track(
 def assignment_key(item: PlannedTrack) -> tuple[str, str]:
     """(source_key, format) for success-set membership."""
     fmt = coerce_output_format(item.output_format)
-    return convert_plan.source_key(item.source_path), fmt
+    return source_key(item.source_path), fmt
 
 
 def playlist_keys(node: ET.Element) -> list[str]:
@@ -329,7 +329,7 @@ def write_import_xml(root: ET.Element, path: Path) -> None:
 
 
 def atomic_write_xml(root: ET.Element, path: Path) -> None:
-    path = convert_plan.abs_path(path)
+    path = abs_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     ET.indent(root, space="  ")
     fd, tmp = tempfile.mkstemp(prefix=".rb_wav_", suffix=".xml", dir=str(path.parent))
