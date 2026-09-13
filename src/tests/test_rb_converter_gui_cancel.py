@@ -13,9 +13,9 @@ if str(_SRC) not in sys.path:
 if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
-import rb_playlist_to_wav as rb
 from cli_error import CancelledError, CliError
 import converter_manifest
+from convert.models import ConvertStats
 
 from gui_tk import (
     app_patches,
@@ -163,7 +163,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
 
                 def execute_and_cancel(*_args, **_kwargs):
                     app._cancel_event.set()
-                    return rb.ConvertStats(
+                    return ConvertStats(
                         converted=1,
                         errors=[error_text],
                         succeeded=succeeded,
@@ -217,7 +217,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "prepare_batch": {"return_value": (mock_prepared_conversion(n_unique=2), [])},
                         "execute_prepared": {
                             "create": True,
-                            "return_value": rb.ConvertStats(
+                            "return_value": ConvertStats(
                                 converted=1,
                                 errors=[error_text],
                                 appended_by_plan=[1],
@@ -438,7 +438,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
 
                 def execute_then_cancel(*_a, **_k):
                     app._cancel_event.set()
-                    return rb.ConvertStats(converted=1, appended_by_plan=[1])
+                    return ConvertStats(converted=1, appended_by_plan=[1])
 
                 execute.side_effect = execute_then_cancel
                 mark_output_folder_valid(app)

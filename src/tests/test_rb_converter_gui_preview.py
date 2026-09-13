@@ -14,8 +14,9 @@ if str(_SRC) not in sys.path:
 if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
-import rb_playlist_to_wav as rb
 
+from convert.format_policy import planned_action
+from convert.models import ConversionPreview, ConversionPreviewItem, ConvertStats
 from gui_tk import (
     app_patches,
     confirm_conversion_preview,
@@ -36,7 +37,7 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
     ) -> None:
         """Given a prepared payload: When the user confirms: Then
         execute_prepared runs once with that payload (no second prepare);
-        inner rb.convert_unique / apply_xml / write_import_xml are not called
+        inner convert_unique / apply_xml / write_import_xml are not called
         from the GUI write worker."""
         if not tk_available():
             self.skipTest("_tkinter not available")
@@ -55,9 +56,9 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
             items = list(prepared.items)
             for item in items:
                 planned_action_calls.append(
-                    rb.planned_action(prepared.plans[0], item, kwargs.get("force", False))
+                    planned_action(prepared.plans[0], item, kwargs.get("force", False))
                 )
-            return rb.ConvertStats(converted=1, succeeded={("sk", "wav")})
+            return ConvertStats(converted=1, succeeded={("sk", "wav")})
 
         root = None
         try:
@@ -133,14 +134,14 @@ class ConversionPreviewDialogTests(unittest.TestCase):
         import tkinter.ttk as ttk
         from rb_converter_gui import ConverterApp
 
-        preview = rb.ConversionPreview(
+        preview = ConversionPreview(
             selected=3,
             resolved=3,
             unique_outputs=3,
             duplicates=0,
             missing=0,
             items=[
-                rb.ConversionPreviewItem(
+                ConversionPreviewItem(
                     relative_dest="WAV/A - One.wav",
                     action="reuse",
                     bit_depth=16,
@@ -149,7 +150,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     size_display="0.0 MB",
                     source_display="one.flac",
                 ),
-                rb.ConversionPreviewItem(
+                ConversionPreviewItem(
                     relative_dest="WAV/B - Two.wav",
                     action="copy",
                     bit_depth=24,
@@ -158,7 +159,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     size_display="≈ 0.3 MB",
                     source_display="two.wav",
                 ),
-                rb.ConversionPreviewItem(
+                ConversionPreviewItem(
                     relative_dest="WAV/C - Three.wav",
                     action="transcode",
                     bit_depth=24,
@@ -345,14 +346,14 @@ class ConversionPreviewDialogTests(unittest.TestCase):
         from types import SimpleNamespace
         from rb_converter_gui import ConverterApp
 
-        preview = rb.ConversionPreview(
+        preview = ConversionPreview(
             selected=1,
             resolved=1,
             unique_outputs=1,
             duplicates=0,
             missing=0,
             items=[
-                rb.ConversionPreviewItem(
+                ConversionPreviewItem(
                     relative_dest="WAV/A - One.wav",
                     action="transcode",
                     bit_depth=16,

@@ -17,11 +17,12 @@ for _p in (_SRC, _TESTS):
 
 import converter_manifest
 import ffmpeg_tools
-import rb_playlist_to_wav as rb
 import cdj_wav
 import convert.plan
 from convert.write import execute_prepared
 from convert_fixtures import XmlFixtureTests as XmlFixtureBase
+from convert.prepare import prepare_batch
+from rekordbox_xml import iter_playlists
 
 
 class ExecutePreparedTests(XmlFixtureBase):
@@ -44,7 +45,7 @@ class ExecutePreparedTests(XmlFixtureBase):
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
-            prepared, errors = rb.prepare_batch(
+            prepared, errors = prepare_batch(
                 self.xml_path,
                 [(None, "Untitled Intelligent List")],
                 self.wav_dir,
@@ -62,7 +63,7 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertTrue(item.dest_path.is_file())
         self.assertTrue(self.output.is_file())
         out = ET.parse(self.output).getroot()
-        names = [name for _folder, name, _node in rb.iter_playlists(out)]
+        names = [name for _folder, name, _node in iter_playlists(out)]
         self.assertEqual(names, ["Untitled Intelligent List [WAV]"])
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
 

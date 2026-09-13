@@ -13,7 +13,6 @@ for _p in (_SRC, _TESTS):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import rb_playlist_to_wav as rb
 import cdj_aiff
 from cli_error import CliError
 import convert.plan

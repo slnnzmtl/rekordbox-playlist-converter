@@ -18,6 +18,8 @@ import rb_playlist_to_wav as rb
 import cdj_wav
 import convert.plan
 from convert import encode
+from convert.plan import collect_batch_unique
+from convert.write import convert_unique
 import converter_manifest
 import ffmpeg_tools
 import xml_output
@@ -28,6 +30,8 @@ from convert_fixtures import (
     wav_probe,
     write_flac,
 )
+from rekordbox_xml import encode_location, find_playlists_by_name
+from xml_output import apply_xml, share_output_root, write_import_xml
 
 
 class XmlFixtureTests(XmlFixtureBase):
@@ -57,7 +61,7 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(rc, 0)
         out = ET.parse(self.output).getroot()
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 2)
-        pl = rb.find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
+        pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
         self.assertEqual(len(pl), 1)
         self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2"])
 
@@ -183,14 +187,14 @@ class XmlFixtureTests(XmlFixtureBase):
             assert plan_a is not None and plan_b is not None
             self.assertIsNot(plan_a.output_root, plan_b.output_root)
             plans = [plan_a, plan_b]
-            rb.share_output_root(plans)
+            share_output_root(plans)
             self.assertIs(plan_a.output_root, plan_b.output_root)
-            items = rb.collect_batch_unique(plans)
+            items = collect_batch_unique(plans)
             self.assertEqual(len(items), 3)
-            stats = rb.convert_unique(plan_a, force=False, progress=False, items=items)
+            stats = convert_unique(plan_a, force=False, progress=False, items=items)
             for plan in plans:
-                rb.apply_xml(plan, stats.succeeded)
-            rb.write_import_xml(plan_a.output_root, plan_a.output)
+                apply_xml(plan, stats.succeeded)
+            write_import_xml(plan_a.output_root, plan_a.output)
 
         self.assertEqual(len(encoded), 3)
         self.assertEqual(encoded.count("07 - Bestial.flac"), 1)
@@ -202,13 +206,13 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(root_node.get("Count"), "2")
         # Same Artist/Album/Name dest for Bestial in both playlists → one collection row.
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
-        morning_pl = rb.find_playlists_by_name(out, "Morning [WAV]")[0]
+        morning_pl = find_playlists_by_name(out, "Morning [WAV]")[0]
         self.assertEqual(len(morning_pl.findall("TRACK")), 1)
         bestial = [t for t in out.findall("COLLECTION/TRACK") if t.get("Name") == "Bestial"]
         self.assertEqual(len(bestial), 1)
         tid = bestial[0].get("TrackID")
         for pl_name in ("Untitled Intelligent List [WAV]", "Morning [WAV]"):
-            pl = rb.find_playlists_by_name(out, pl_name)[0]
+            pl = find_playlists_by_name(out, pl_name)[0]
             self.assertIn(tid, [t.get("Key") for t in pl.findall("TRACK")])
 
     def test_cli_multi_playlist_encodes_shared_source_once(self) -> None:
@@ -264,7 +268,7 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(len(bestial), 1)
         tid = bestial[0].get("TrackID")
         for pl_name in ("Untitled Intelligent List [WAV]", "Morning [WAV]"):
-            pl = rb.find_playlists_by_name(out, pl_name)[0]
+            pl = find_playlists_by_name(out, pl_name)[0]
             keys = [t.get("Key") for t in pl.findall("TRACK")]
             self.assertIn(tid, keys)
 
@@ -351,7 +355,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
         # Drop last track from source playlist; re-run must keep existing WAV playlist entries.
         src = ET.parse(self.xml_path).getroot()
-        node = rb.find_playlists_by_name(src, "Untitled Intelligent List")[0]
+        node = find_playlists_by_name(src, "Untitled Intelligent List")[0]
         for child in list(node):
             node.remove(child)
         ET.SubElement(node, "TRACK", {"Key": "219211420"})
@@ -378,7 +382,7 @@ class XmlFixtureTests(XmlFixtureBase):
             )
         out = ET.parse(self.output).getroot()
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
-        pl = rb.find_playlists_by_name(out, "Untitled Intelligent List [WAV]")[0]
+        pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")[0]
         self.assertEqual([t.get("Key") for t in pl.findall("TRACK")], ["1", "2", "3"])
 
         # Add a fourth source track; re-run appends one collection TRACK and one playlist entry.
@@ -394,12 +398,12 @@ class XmlFixtureTests(XmlFixtureBase):
                 "TrackID": "42",
                 "Name": "Added",
                 "Kind": "FLAC File",
-                "Location": rb.encode_location(d),
+                "Location": encode_location(d),
                 "BitRate": "0",
                 "SampleRate": "44100",
             },
         )
-        node = rb.find_playlists_by_name(src, "Untitled Intelligent List")[0]
+        node = find_playlists_by_name(src, "Untitled Intelligent List")[0]
         ET.SubElement(node, "TRACK", {"Key": "42"})
         grown = self.root / "grown.xml"
         ET.ElementTree(src).write(grown, encoding="UTF-8", xml_declaration=True)
@@ -424,7 +428,7 @@ class XmlFixtureTests(XmlFixtureBase):
         ids = [t.get("TrackID") for t in out.findall("COLLECTION/TRACK")]
         self.assertEqual(ids[:3], ["1", "2", "3"])
         self.assertEqual(ids[3], "4")
-        pl = rb.find_playlists_by_name(out, "Untitled Intelligent List [WAV]")[0]
+        pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")[0]
         self.assertEqual([t.get("Key") for t in pl.findall("TRACK")], ["1", "2", "3", "4"])
 
     def test_invalid_existing_output_not_clobbered(self) -> None:
@@ -618,8 +622,8 @@ class XmlFixtureTests(XmlFixtureBase):
 <DJ_PLAYLISTS Version="1.0.0">
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="2">
-    <TRACK TrackID="1" Name="mp3" Location="{rb.encode_location(mp3)}" Kind="MP3 File"/>
-    <TRACK TrackID="2" Name="odd" Location="{rb.encode_location(mystery)}" Kind="FLAC File"/>
+    <TRACK TrackID="1" Name="mp3" Location="{encode_location(mp3)}" Kind="MP3 File"/>
+    <TRACK TrackID="2" Name="odd" Location="{encode_location(mystery)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">

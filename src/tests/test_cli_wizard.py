@@ -19,6 +19,8 @@ from cli_error import CancelledError, CliError
 import convert.format_policy
 import convert.plan
 from convert_fixtures import write_flac
+from convert.paths import target_from_stream
+from rekordbox_xml import encode_location
 
 
 class WizardHelperTests(unittest.TestCase):
@@ -90,7 +92,7 @@ class TargetFromStreamTests(unittest.TestCase):
                     "bits_per_raw_sample": str(src_bits),
                     "sample_rate": str(src_rate),
                 }
-                bits, rate = rb.target_from_stream(
+                bits, rate = target_from_stream(
                     stream, max_bit_depth=max_bits, max_sample_rate=max_rate
                 )
                 self.assertEqual((bits, rate), (exp_bits, exp_rate))
@@ -104,7 +106,7 @@ class TargetFromStreamTests(unittest.TestCase):
             "bits_per_raw_sample": "16",
             "sample_rate": "44100",
         }
-        bits, rate = rb.target_from_stream(
+        bits, rate = target_from_stream(
             stream, max_bit_depth=32, max_sample_rate=96000
         )
         self.assertEqual((bits, rate), (16, 44100))
@@ -122,7 +124,7 @@ class PlanQualityFieldsTests(unittest.TestCase):
 <DJ_PLAYLISTS Version="1.0.0">
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
-    <TRACK TrackID="1" Name="Hi" Location="{rb.encode_location(src)}" Kind="FLAC File"/>
+    <TRACK TrackID="1" Name="Hi" Location="{encode_location(src)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -183,7 +185,7 @@ class PlanQualityFieldsTests(unittest.TestCase):
 <DJ_PLAYLISTS Version="1.0.0">
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
-    <TRACK TrackID="1" Name="Hi" Location="{rb.encode_location(src)}" Kind="FLAC File"/>
+    <TRACK TrackID="1" Name="Hi" Location="{encode_location(src)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -237,7 +239,7 @@ class PlanQualityFieldsTests(unittest.TestCase):
 <DJ_PLAYLISTS Version="1.0.0">
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
-    <TRACK TrackID="1" Name="Hi" Location="{rb.encode_location(src)}" Kind="FLAC File"/>
+    <TRACK TrackID="1" Name="Hi" Location="{encode_location(src)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">

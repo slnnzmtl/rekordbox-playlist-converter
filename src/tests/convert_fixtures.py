@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import rb_playlist_to_wav as rb
+from rekordbox_xml import encode_location
 
 
 class HangProc:
@@ -160,9 +160,9 @@ class XmlFixtureTests(unittest.TestCase):
             write_flac(p)
         self.xml_path = self.root / "collection.xml"
         xml = FIXTURE.format(
-            loc_a=rb.encode_location(self.a),
-            loc_b=rb.encode_location(self.b),
-            loc_c=rb.encode_location(self.c),
+            loc_a=encode_location(self.a),
+            loc_b=encode_location(self.b),
+            loc_c=encode_location(self.c),
         )
         self.xml_path.write_text(xml, encoding="utf-8")
         self.wav_dir = self.root / "WAV"

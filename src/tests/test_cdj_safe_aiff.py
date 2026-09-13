@@ -13,15 +13,19 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import rb_playlist_to_wav as rb
 from cli_error import CliError
-from convert.paths import format_dir_name, format_media_dir
+from convert.paths import format_dir_name, format_media_dir, preferred_relative_dest, source_key
 from convert.format_policy import classify_source
 import convert.plan
 from convert import encode
 import cdj_aiff
 import xml_output
 import ffmpeg_tools
+from convert.models import Plan, PlannedTrack
+from convert.prepare import prepare
+from convert.write import convert_unique
+from rekordbox_xml import encode_location
+from xml_output import apply_xml, clone_track, probe_dest_tech
 
 # IEEE 80-bit extended floats for common rates (big-endian).
 RATE_44100 = bytes.fromhex("400eac44000000000000")
@@ -180,15 +184,15 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el),
+            preferred_relative_dest(el),
             "WAV/ABSL - Bestial.wav",
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el, output_format="wav"),
+            preferred_relative_dest(el, output_format="wav"),
             "WAV/ABSL - Bestial.wav",
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el, output_format="aiff"),
+            preferred_relative_dest(el, output_format="aiff"),
             "AIFF/ABSL - Bestial.aiff",
         )
 
@@ -200,7 +204,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             {"Name": "  ", "Artist": "", "Album": "\t"},
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el, stem_fallback="07 - Bestial"),
+            preferred_relative_dest(el, stem_fallback="07 - Bestial"),
             "WAV/Unknown Artist - 07 - Bestial.wav",
         )
         el_dot = ET.Element(
@@ -208,7 +212,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             {"Name": "Track", "Artist": ".", "Album": ".."},
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el_dot),
+            preferred_relative_dest(el_dot),
             "WAV/Unknown Artist - Track.wav",
         )
 
@@ -224,7 +228,7 @@ class DestNameAndClassifyAiffTests(unittest.TestCase):
             },
         )
         self.assertEqual(
-            rb.preferred_relative_dest(el),
+            preferred_relative_dest(el),
             "WAV/X_Y_Z - A_B_C_.wav",
         )
 
@@ -309,7 +313,7 @@ class InPlaceAiffTests(unittest.TestCase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
     <TRACK TrackID="1" Name="Expected Title" Artist="A"
-           Location="{rb.encode_location(src)}" Kind="AIFF File"/>
+           Location="{encode_location(src)}" Kind="AIFF File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -323,7 +327,7 @@ class InPlaceAiffTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with mock.patch.object(ffmpeg_tools, "require_tools", return_value=[]):
-                _, errors = rb.prepare(
+                _, errors = prepare(
                     xml_path,
                     playlist,
                     wav_dir,
@@ -444,11 +448,11 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
-            plan_item = rb.PlannedTrack(
+            plan_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
                 passthrough=True,
@@ -457,7 +461,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 sample_rate=44100,
                 output_format="aiff",
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
                 library_dir=root,
@@ -470,7 +474,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 output_existed=False,
                 output_format="aiff",
             )
-            stats = rb.convert_unique(plan, force=False)
+            stats = convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 1)
 
     def test_convert_unique_extracts_cover_once_per_source(self) -> None:
@@ -480,11 +484,11 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             write_pcm_aiff(src)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             dest = root / "out.aiff"
-            plan_item = rb.PlannedTrack(
+            plan_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
                 passthrough=True,
@@ -493,7 +497,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 sample_rate=44100,
                 output_format="aiff",
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
                 library_dir=root,
@@ -509,7 +513,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             with mock.patch.object(
                 convert.plan, "extract_cover_jpeg", return_value=None
             ) as cover:
-                stats = rb.convert_unique(plan, force=False)
+                stats = convert_unique(plan, force=False)
             self.assertEqual(stats.copied, 1)
             self.assertEqual(cover.call_count, 1)
             cover.assert_called_with(src, cancel_event=None)
@@ -533,11 +537,11 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                     dest, el, None, bit_depth=16, sample_rate=44100
                 )
             )
-            plan_item = rb.PlannedTrack(
+            plan_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec="pcm_s16be",
                 passthrough=False,
@@ -546,7 +550,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 sample_rate=44100,
                 output_format="aiff",
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
                 library_dir=root,
@@ -565,7 +569,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 wrote.append(dest)
 
             with mock.patch.object(convert.plan, "write_aiff_output", side_effect=fake_write):
-                stats = rb.convert_unique(plan, force=False)
+                stats = convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 0)
             self.assertEqual(stats.converted, 1)
             self.assertEqual(wrote, [dest])
@@ -754,10 +758,10 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                     dest, el, None, bit_depth=24, sample_rate=48000
                 )
             )
-            size, bitrate, sample_rate = rb.probe_dest_tech(dest)
+            size, bitrate, sample_rate = probe_dest_tech(dest)
             self.assertEqual(sample_rate, "48000")
-            clone = rb.clone_track(
-                el, "1", dest, rb.encode_location(dest), output_format="aiff"
+            clone = clone_track(
+                el, "1", dest, encode_location(dest), output_format="aiff"
             )
             self.assertEqual(clone.get("Kind"), "AIFF File")
             self.assertEqual(clone.get("SampleRate"), "48000")
@@ -777,7 +781,7 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                 {
                     "TrackID": "9",
                     "Name": "Old",
-                    "Location": rb.encode_location(dest),
+                    "Location": encode_location(dest),
                 },
             )
             source_new = ET.Element(
@@ -786,31 +790,31 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                     "TrackID": "9",
                     "Name": "New Title",
                     "Artist": "X",
-                    "Location": rb.encode_location(Path("/orig/t.flac")),
+                    "Location": encode_location(Path("/orig/t.flac")),
                 },
             )
             output_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
             collection = ET.SubElement(output_root, "COLLECTION", {"Entries": "1"})
-            existing = rb.clone_track(
+            existing = clone_track(
                 source_old,
                 "42",
                 dest,
-                rb.encode_location(dest),
+                encode_location(dest),
                 output_format="aiff",
             )
             collection.append(existing)
-            item = rb.PlannedTrack(
+            item = PlannedTrack(
                 source_el=source_new,
                 source_path=Path("/orig/t.flac"),
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
                 passthrough=True,
                 noop=False,
                 output_format="aiff",
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
                 library_dir=root,
@@ -824,8 +828,8 @@ class ApplyXmlRefreshTests(unittest.TestCase):
                 output_format="aiff",
             )
             with mock.patch.object(xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")):
-                success = {(rb.source_key(item.source_path), "aiff")}
-                rb.apply_xml(plan, success)
+                success = {(source_key(item.source_path), "aiff")}
+                apply_xml(plan, success)
             tracks = output_root.findall("COLLECTION/TRACK")
             self.assertEqual(len(tracks), 1)
             self.assertEqual(tracks[0].get("TrackID"), "42")

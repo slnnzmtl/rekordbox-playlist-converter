@@ -18,6 +18,8 @@ from test_preview_bit_depth import _flac_with_bit_depth
 
 from gui_tk import app_patches, mark_output_folder_valid, run_inline_thread, startup_patches, tk_available
 from gui_xml_fixtures import TRACKLIST_XML, write_xml
+from rekordbox_xml import encode_location
+
 
 def _flush_debounced(app, attr: str, callback) -> None:
     """Cancel a pending search after() and apply immediately."""
@@ -289,7 +291,6 @@ class GuiTracklistTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        import rb_playlist_to_wav as rb
         from unittest.mock import patch
 
         root = None
@@ -304,7 +305,7 @@ class GuiTracklistTests(unittest.TestCase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
     <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
-           Location="{rb.encode_location(flac)}"
+           Location="{encode_location(flac)}"
            Kind="FLAC File" SampleRate="44100"/>
   </COLLECTION>
   <PLAYLISTS>
@@ -365,7 +366,6 @@ class GuiTracklistTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        import rb_playlist_to_wav as rb
         from unittest.mock import patch
 
         root = None
@@ -380,7 +380,7 @@ class GuiTracklistTests(unittest.TestCase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
     <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
-           Location="{rb.encode_location(flac)}"
+           Location="{encode_location(flac)}"
            Kind="FLAC File" SampleRate="44100"/>
   </COLLECTION>
   <PLAYLISTS>
@@ -631,7 +631,6 @@ class GuiTracklistTests(unittest.TestCase):
             self.skipTest("_tkinter not available")
 
         import tkinter as tk
-        import rb_playlist_to_wav as rb
         from unittest.mock import patch
 
         root = None
@@ -648,10 +647,10 @@ class GuiTracklistTests(unittest.TestCase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="2">
     <TRACK TrackID="1" Name="Deep" Artist="D"
-           Location="{rb.encode_location(deep)}"
+           Location="{encode_location(deep)}"
            Kind="FLAC File" SampleRate="44100"/>
     <TRACK TrackID="2" Name="Shallow" Artist="S"
-           Location="{rb.encode_location(shallow)}"
+           Location="{encode_location(shallow)}"
            Kind="FLAC File" SampleRate="44100"/>
   </COLLECTION>
   <PLAYLISTS>

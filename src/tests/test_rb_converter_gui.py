@@ -12,7 +12,7 @@ if str(_SRC) not in sys.path:
 if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
-import rb_playlist_to_wav as rb
+from convert.models import ConvertStats
 from rb_converter_gui import (
     progress_action_status_hint,
     total_successful_conversions,
@@ -24,15 +24,15 @@ class TotalSuccessfulConversionsTests(unittest.TestCase):
         self.assertEqual(
             total_successful_conversions(
                 [
-                    rb.ConvertStats(converted=1, copied=2),
-                    rb.ConvertStats(skipped=9, appended=10),
+                    ConvertStats(converted=1, copied=2),
+                    ConvertStats(skipped=9, appended=10),
                 ]
             ),
             3,
         )
         self.assertEqual(
             total_successful_conversions(
-                [rb.ConvertStats(converted=0, copied=0, skipped=5, appended=10)]
+                [ConvertStats(converted=0, copied=0, skipped=5, appended=10)]
             ),
             0,
         )

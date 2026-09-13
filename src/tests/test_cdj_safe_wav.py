@@ -13,13 +13,17 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import rb_playlist_to_wav as rb
 import cdj_wav
 from cli_error import CliError
 from convert.format_policy import classify_source
 import convert.plan
 from convert import encode
 import ffmpeg_tools
+from convert.models import Plan, PlannedTrack
+from convert.prepare import prepare
+from convert.write import convert_unique
+from rekordbox_xml import encode_location
+from xml_output import clone_track
 
 
 def write_pcm_wav(
@@ -262,11 +266,11 @@ class CdjSafeConvertTests(unittest.TestCase):
             self.assertEqual(out.sample_rate, 48000)
             self.assertEqual(out.bits_per_sample, 24)
             self.assertEqual(out.chunk_ids, ("fmt ", "data"))
-            clone = rb.clone_track(
+            clone = clone_track(
                 ET.Element("TRACK", {"Name": "X"}),
                 "1",
                 dest,
-                rb.encode_location(dest),
+                encode_location(dest),
             )
             self.assertEqual(clone.get("Kind"), "WAV File")
             self.assertEqual(clone.get("SampleRate"), "48000")
@@ -372,15 +376,15 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             unsafe_dest = media_dir / "unsafe.wav"
             write_pcm_wav(unsafe_dest, sample_rate=48000)
 
-            def make_item(dest: Path) -> rb.PlannedTrack:
+            def make_item(dest: Path) -> PlannedTrack:
                 el = ET.Element(
-                    "TRACK", {"TrackID": "1", "Location": rb.encode_location(src)}
+                    "TRACK", {"TrackID": "1", "Location": encode_location(src)}
                 )
-                return rb.PlannedTrack(
+                return PlannedTrack(
                     source_el=el,
                     source_path=src,
                     dest_path=dest,
-                    dest_location=rb.encode_location(dest),
+                    dest_location=encode_location(dest),
                     dest_name=dest.name,
                     codec="pcm_s16le",
                     passthrough=False,
@@ -391,7 +395,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
 
             safe_item = make_item(safe_dest)
             unsafe_item = make_item(unsafe_dest)
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [WAV]",
                 library_dir=root / "WAV",
@@ -412,14 +416,14 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 write_pcm_wav(dest)
 
             with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
-                stats = rb.convert_unique(plan, force=False)
+                stats = convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 1)
             self.assertEqual(stats.converted, 1)
             self.assertEqual(converted, [unsafe_dest])
 
             converted.clear()
             with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
-                stats = rb.convert_unique(plan, force=True)
+                stats = convert_unique(plan, force=True)
             self.assertEqual(stats.converted, 2)
             self.assertCountEqual(converted, [safe_dest, unsafe_dest])
 
@@ -434,13 +438,13 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             dest = media_dir / "a.wav"
             write_pcm_wav(dest)  # existing 16/44100
             el = ET.Element(
-                "TRACK", {"TrackID": "1", "Location": rb.encode_location(src)}
+                "TRACK", {"TrackID": "1", "Location": encode_location(src)}
             )
-            item = rb.PlannedTrack(
+            item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec="pcm_s24le",
                 passthrough=False,
@@ -448,7 +452,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 bit_depth=24,
                 sample_rate=48000,
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [WAV]",
                 library_dir=root / "WAV",
@@ -471,7 +475,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 write_pcm_wav(dest_path, bits=24, sample_rate=48000)
 
             with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
-                stats = rb.convert_unique(plan, force=False)
+                stats = convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 0)
             self.assertEqual(stats.converted, 1)
             self.assertEqual(converted, [dest])
@@ -489,13 +493,13 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             write_pcm_wav(dest, bits=16, sample_rate=44100)
             prior = dest.read_bytes()
             el = ET.Element(
-                "TRACK", {"TrackID": "1", "Location": rb.encode_location(src)}
+                "TRACK", {"TrackID": "1", "Location": encode_location(src)}
             )
-            item = rb.PlannedTrack(
+            item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec="pcm_s16le",
                 passthrough=False,
@@ -503,7 +507,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 bit_depth=16,
                 sample_rate=44100,
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [WAV]",
                 library_dir=root / "WAV",
@@ -522,7 +526,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 raise CliError(f"encode failed for {source}")
 
             with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=boom):
-                stats = rb.convert_unique(plan, force=True)
+                stats = convert_unique(plan, force=True)
             self.assertEqual(len(stats.errors), 1)
             self.assertTrue(dest.is_file())
             self.assertEqual(dest.read_bytes(), prior)
@@ -566,7 +570,7 @@ class NoopUnsafeInPlaceTests(unittest.TestCase):
 <DJ_PLAYLISTS Version="1.0.0">
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
-    <TRACK TrackID="1" Name="t" Location="{rb.encode_location(src)}" Kind="WAV File"/>
+    <TRACK TrackID="1" Name="t" Location="{encode_location(src)}" Kind="WAV File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -580,7 +584,7 @@ class NoopUnsafeInPlaceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             with mock.patch.object(ffmpeg_tools, "require_tools", return_value=[]):
-                _, errors = rb.prepare(
+                _, errors = prepare(
                     xml_path, playlist, wav_dir, root / "import.xml"
                 )
             self.assertTrue(

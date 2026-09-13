@@ -14,28 +14,33 @@ for _p in (_SRC, _TESTS):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import rb_playlist_to_wav as rb
 import cdj_aiff
 import convert.format_policy
 import convert.plan
 from cli_error import CancelledError
-from convert.preview import build_conversion_preview
+from convert.preview import build_conversion_preview, insufficient_output_space_message, preview_write_bytes
 import converter_manifest
 import ffmpeg_tools
 from convert_fixtures import write_flac, write_pcm_wav
 from test_cdj_safe_aiff import write_pcm_aiff
+from convert.format_policy import planned_action
+from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PlannedTrack
+from convert.plan import collect_batch_unique
+from convert.prepare import prepare
+from rekordbox_xml import encode_location
+from xml_output import share_output_root
 
 
 class ConversionPreviewTests(unittest.TestCase):
     def _plan_with(
         self,
-        item: rb.PlannedTrack,
+        item: PlannedTrack,
         *,
         output_format: str = "wav",
         cover_cache: dict | None = None,
-    ) -> rb.Plan:
+    ) -> Plan:
         item.output_format = output_format
-        return rb.Plan(
+        return Plan(
             playlist_name="P",
             wav_playlist_name="P [WAV]" if output_format == "wav" else "P [AIFF]",
             library_dir=item.dest_path.parent.parent
@@ -66,11 +71,11 @@ class ConversionPreviewTests(unittest.TestCase):
             # noop → reuse even under force
             noop_dest = root / "WAV" / "noop.wav"
             noop_dest.parent.mkdir(parents=True)
-            noop = rb.PlannedTrack(
+            noop = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=noop_dest,
-                dest_location=rb.encode_location(noop_dest),
+                dest_location=encode_location(noop_dest),
                 dest_name=noop_dest.name,
                 codec=None,
                 passthrough=True,
@@ -79,17 +84,17 @@ class ConversionPreviewTests(unittest.TestCase):
                 sample_rate=44100,
             )
             plan = self._plan_with(noop)
-            self.assertEqual(rb.planned_action(plan, noop, force=False), "reuse")
-            self.assertEqual(rb.planned_action(plan, noop, force=True), "reuse")
+            self.assertEqual(planned_action(plan, noop, force=False), "reuse")
+            self.assertEqual(planned_action(plan, noop, force=True), "reuse")
 
             # canonical WAV dest + not force → reuse; force → rebuild
             wav_dest = root / "WAV" / "safe.wav"
             write_pcm_wav(wav_dest, bits=16, sample_rate=44100)
-            wav_item = rb.PlannedTrack(
+            wav_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=wav_dest,
-                dest_location=rb.encode_location(wav_dest),
+                dest_location=encode_location(wav_dest),
                 dest_name=wav_dest.name,
                 codec="pcm_s16le",
                 passthrough=False,
@@ -98,9 +103,9 @@ class ConversionPreviewTests(unittest.TestCase):
                 sample_rate=44100,
             )
             plan = self._plan_with(wav_item)
-            self.assertEqual(rb.planned_action(plan, wav_item, force=False), "reuse")
+            self.assertEqual(planned_action(plan, wav_item, force=False), "reuse")
             self.assertEqual(
-                rb.planned_action(plan, wav_item, force=True), "transcode"
+                planned_action(plan, wav_item, force=True), "transcode"
             )
 
             # canonical AIFF dest + not force → reuse
@@ -110,11 +115,11 @@ class ConversionPreviewTests(unittest.TestCase):
             aiff_dest.parent.mkdir(parents=True)
             __import__("shutil").copy2(aiff_src, aiff_dest)
             cdj_aiff.write_aiff_id3(aiff_dest, el, None)
-            aiff_item = rb.PlannedTrack(
+            aiff_item = PlannedTrack(
                 source_el=el,
                 source_path=aiff_src,
                 dest_path=aiff_dest,
-                dest_location=rb.encode_location(aiff_dest),
+                dest_location=encode_location(aiff_dest),
                 dest_name=aiff_dest.name,
                 codec=None,
                 passthrough=True,
@@ -124,16 +129,16 @@ class ConversionPreviewTests(unittest.TestCase):
             )
             plan = self._plan_with(aiff_item, output_format="aiff")
             self.assertEqual(
-                rb.planned_action(plan, aiff_item, force=False), "reuse"
+                planned_action(plan, aiff_item, force=False), "reuse"
             )
 
             # passthrough → copy (no existing dest)
             copy_dest = root / "WAV" / "copy.wav"
-            copy_item = rb.PlannedTrack(
+            copy_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=copy_dest,
-                dest_location=rb.encode_location(copy_dest),
+                dest_location=encode_location(copy_dest),
                 dest_name=copy_dest.name,
                 codec=None,
                 passthrough=True,
@@ -142,15 +147,15 @@ class ConversionPreviewTests(unittest.TestCase):
                 sample_rate=44100,
             )
             plan = self._plan_with(copy_item)
-            self.assertEqual(rb.planned_action(plan, copy_item, force=False), "copy")
+            self.assertEqual(planned_action(plan, copy_item, force=False), "copy")
 
             # else → transcode
             tx_dest = root / "WAV" / "tx.wav"
-            tx_item = rb.PlannedTrack(
+            tx_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=tx_dest,
-                dest_location=rb.encode_location(tx_dest),
+                dest_location=encode_location(tx_dest),
                 dest_name=tx_dest.name,
                 codec="pcm_s24le",
                 passthrough=False,
@@ -160,7 +165,7 @@ class ConversionPreviewTests(unittest.TestCase):
             )
             plan = self._plan_with(tx_item)
             self.assertEqual(
-                rb.planned_action(plan, tx_item, force=False), "transcode"
+                planned_action(plan, tx_item, force=False), "transcode"
             )
 
     def test_planned_action_aiff_missing_dest_skips_cover_extract(self) -> None:
@@ -173,11 +178,11 @@ class ConversionPreviewTests(unittest.TestCase):
             src.write_bytes(b"fLaC")
             dest = root / "AIFF" / "out.aiff"
             dest.parent.mkdir(parents=True)
-            item = rb.PlannedTrack(
+            item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
                 passthrough=True,
@@ -189,15 +194,15 @@ class ConversionPreviewTests(unittest.TestCase):
             with patch.object(
                 cdj_aiff, "extract_cover_jpeg", return_value=None
             ) as extract:
-                action = rb.planned_action(plan, item, force=False)
+                action = planned_action(plan, item, force=False)
             self.assertEqual(action, "copy")
             extract.assert_not_called()
 
-            tx_item = rb.PlannedTrack(
+            tx_item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec="pcm_s24le",
                 passthrough=False,
@@ -209,7 +214,7 @@ class ConversionPreviewTests(unittest.TestCase):
             with patch.object(
                 cdj_aiff, "extract_cover_jpeg", return_value=None
             ) as extract:
-                action = rb.planned_action(plan, tx_item, force=False)
+                action = planned_action(plan, tx_item, force=False)
             self.assertEqual(action, "transcode")
             extract.assert_not_called()
 
@@ -222,18 +227,18 @@ class ConversionPreviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
-            items: list[rb.PlannedTrack] = []
+            items: list[PlannedTrack] = []
             for i in range(3):
                 src = root / f"src{i}.flac"
                 src.write_bytes(b"fLaC")
                 dest = root / "AIFF" / f"out{i}.aiff"
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 items.append(
-                    rb.PlannedTrack(
+                    PlannedTrack(
                         source_el=el,
                         source_path=src,
                         dest_path=dest,
-                        dest_location=rb.encode_location(dest),
+                        dest_location=encode_location(dest),
                         dest_name=dest.name,
                         codec="pcm_s24le",
                         passthrough=False,
@@ -242,7 +247,7 @@ class ConversionPreviewTests(unittest.TestCase):
                         sample_rate=48000,
                     )
                 )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [AIFF]",
                 library_dir=root,
@@ -281,18 +286,18 @@ class ConversionPreviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
-            items: list[rb.PlannedTrack] = []
+            items: list[PlannedTrack] = []
             for i in range(3):
                 src = root / f"src{i}.flac"
                 src.write_bytes(b"fLaC")
                 dest = root / "WAV" / f"out{i}.wav"
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 items.append(
-                    rb.PlannedTrack(
+                    PlannedTrack(
                         source_el=el,
                         source_path=src,
                         dest_path=dest,
-                        dest_location=rb.encode_location(dest),
+                        dest_location=encode_location(dest),
                         dest_name=dest.name,
                         codec="pcm_s24le",
                         passthrough=False,
@@ -328,7 +333,7 @@ class ConversionPreviewTests(unittest.TestCase):
             with patch.object(
                 convert.format_policy, "planned_action", side_effect=action_with_overlap
             ), patch.object(convert.plan, "default_convert_workers", return_value=2):
-                preview = rb.build_conversion_preview([plan], items, force=False)
+                preview = build_conversion_preview([plan], items, force=False)
             self.assertTrue(
                 overlapped.is_set(),
                 "expected at least two planned_action calls to overlap "
@@ -346,18 +351,18 @@ class ConversionPreviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
-            items: list[rb.PlannedTrack] = []
+            items: list[PlannedTrack] = []
             for i in range(2):
                 src = root / f"src{i}.flac"
                 src.write_bytes(b"fLaC")
                 dest = root / "WAV" / f"out{i}.wav"
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 items.append(
-                    rb.PlannedTrack(
+                    PlannedTrack(
                         source_el=el,
                         source_path=src,
                         dest_path=dest,
-                        dest_location=rb.encode_location(dest),
+                        dest_location=encode_location(dest),
                         dest_name=dest.name,
                         codec="pcm_s24le",
                         passthrough=False,
@@ -375,7 +380,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 progress_calls.append((current, total, action, name))
 
             with patch.object(convert.plan, "default_convert_workers", return_value=1):
-                preview = rb.build_conversion_preview(
+                preview = build_conversion_preview(
                     [plan], items, force=False, on_progress=on_progress
                 )
             self.assertEqual(len(preview.items), 2)
@@ -407,11 +412,11 @@ class ConversionPreviewTests(unittest.TestCase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="3">
     <TRACK TrackID="1" Name="Song" Artist="Same"
-           Location="{rb.encode_location(a)}" Kind="FLAC File"/>
+           Location="{encode_location(a)}" Kind="FLAC File"/>
     <TRACK TrackID="2" Name="Song" Artist="Same"
-           Location="{rb.encode_location(b)}" Kind="FLAC File"/>
+           Location="{encode_location(b)}" Kind="FLAC File"/>
     <TRACK TrackID="3" Name="Gone" Artist="X"
-           Location="{rb.encode_location(missing)}" Kind="FLAC File"/>
+           Location="{encode_location(missing)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="2">
@@ -448,7 +453,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 ffmpeg_tools, "run_ffprobe", side_effect=probe
             ):
                 manifest = converter_manifest.empty_manifest()
-                plan1, err1 = rb.prepare(
+                plan1, err1 = prepare(
                     xml_path,
                     "P1",
                     wav_dir,
@@ -457,7 +462,7 @@ class ConversionPreviewTests(unittest.TestCase):
                     max_sample_rate=48000,
                     manifest=manifest,
                 )
-                plan2, err2 = rb.prepare(
+                plan2, err2 = prepare(
                     xml_path,
                     "P2",
                     wav_dir,
@@ -470,9 +475,9 @@ class ConversionPreviewTests(unittest.TestCase):
             self.assertEqual(err2, [])
             assert plan1 is not None and plan2 is not None
             plans = [plan1, plan2]
-            rb.share_output_root(plans)
-            items = rb.collect_batch_unique(plans)
-            preview = rb.build_conversion_preview(plans, items, force=False)
+            share_output_root(plans)
+            items = collect_batch_unique(plans)
+            preview = build_conversion_preview(plans, items, force=False)
 
             # P1: 2 resolved + 1 missing; P2: 1 resolved (shared source)
             self.assertEqual(preview.resolved, 3)
@@ -496,14 +501,14 @@ class ConversionPreviewTests(unittest.TestCase):
     ) -> None:
         """Given preview rows: When summing write bytes: Then only copy/transcode
         with known sizes count."""
-        preview = rb.ConversionPreview(
+        preview = ConversionPreview(
             selected=4,
             resolved=4,
             unique_outputs=4,
             duplicates=0,
             missing=0,
             items=[
-                rb.ConversionPreviewItem(
+                ConversionPreviewItem(
                     relative_dest="a.wav",
                     action="reuse",
                     bit_depth=16,
@@ -511,7 +516,7 @@ class ConversionPreviewTests(unittest.TestCase):
                     size_bytes=9_000_000,
                     size_display="8.6 MB",
                 ),
-                rb.ConversionPreviewItem(
+                ConversionPreviewItem(
                     relative_dest="b.wav",
                     action="copy",
                     bit_depth=16,
@@ -519,7 +524,7 @@ class ConversionPreviewTests(unittest.TestCase):
                     size_bytes=1000,
                     size_display="≈ 0.0 MB",
                 ),
-                rb.ConversionPreviewItem(
+                ConversionPreviewItem(
                     relative_dest="c.wav",
                     action="transcode",
                     bit_depth=24,
@@ -527,7 +532,7 @@ class ConversionPreviewTests(unittest.TestCase):
                     size_bytes=2500,
                     size_display="≈ 0.0 MB",
                 ),
-                rb.ConversionPreviewItem(
+                ConversionPreviewItem(
                     relative_dest="d.wav",
                     action="transcode",
                     bit_depth=24,
@@ -537,7 +542,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 ),
             ],
         )
-        self.assertEqual(rb.preview_write_bytes(preview), 3500)
+        self.assertEqual(preview_write_bytes(preview), 3500)
 
     def test_insufficient_output_space_message_when_free_below_required(
         self,
@@ -547,7 +552,7 @@ class ConversionPreviewTests(unittest.TestCase):
         from types import SimpleNamespace
 
         path = Path("/tmp")
-        msg = rb.insufficient_output_space_message(
+        msg = insufficient_output_space_message(
             path,
             5_000_000,
             disk_usage=lambda _p: SimpleNamespace(free=1_000_000),
@@ -560,17 +565,17 @@ class ConversionPreviewTests(unittest.TestCase):
         self.assertIn("MB", msg)
 
         self.assertIsNone(
-            rb.insufficient_output_space_message(
+            insufficient_output_space_message(
                 path,
                 5_000_000,
                 disk_usage=lambda _p: SimpleNamespace(free=10_000_000),
             )
         )
         self.assertIsNone(
-            rb.insufficient_output_space_message(path, 0, disk_usage=lambda _p: None)
+            insufficient_output_space_message(path, 0, disk_usage=lambda _p: None)
         )
         self.assertIsNone(
-            rb.insufficient_output_space_message(
+            insufficient_output_space_message(
                 path,
                 5_000_000,
                 disk_usage=lambda _p: (_ for _ in ()).throw(OSError("boom")),

@@ -15,13 +15,15 @@ for _p in (_SRC, _TESTS):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import rb_playlist_to_wav as rb
 from cli_error import CancelledError, CliError
 import cdj_wav
 import convert.paths
 import convert.plan
+from convert.paths import collision_key
+from convert.prepare import prepare
 import converter_manifest
 import ffmpeg_tools
+import rb_playlist_to_wav as rb
 from convert_fixtures import (
     FIXTURE,
     XmlFixtureTests as XmlFixtureBase,
@@ -30,6 +32,7 @@ from convert_fixtures import (
     write_flac,
     write_pcm_wav,
 )
+from rekordbox_xml import encode_location, find_playlists_by_name, load_dj_playlists
 
 
 class XmlFixtureTests(XmlFixtureBase):
@@ -50,11 +53,11 @@ class XmlFixtureTests(XmlFixtureBase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="3">
     <TRACK TrackID="1" Name="Song" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(srcs[0])}" Kind="FLAC File"/>
+           Location="{encode_location(srcs[0])}" Kind="FLAC File"/>
     <TRACK TrackID="2" Name="Song" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(srcs[1])}" Kind="FLAC File"/>
+           Location="{encode_location(srcs[1])}" Kind="FLAC File"/>
     <TRACK TrackID="3" Name="Song" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(srcs[2])}" Kind="FLAC File"/>
+           Location="{encode_location(srcs[2])}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -70,7 +73,7 @@ class XmlFixtureTests(XmlFixtureBase):
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
-            plan, errors = rb.prepare(path, "Triple", self.wav_dir, self.output)
+            plan, errors = prepare(path, "Triple", self.wav_dir, self.output)
         self.assertEqual(errors, [])
         assert plan is not None
         self.assertEqual(len(plan.unique), 3)
@@ -102,9 +105,9 @@ class XmlFixtureTests(XmlFixtureBase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="2">
     <TRACK TrackID="1" Name="Song" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(first)}" Kind="FLAC File"/>
+           Location="{encode_location(first)}" Kind="FLAC File"/>
     <TRACK TrackID="2" Name="Song" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(second)}" Kind="FLAC File"/>
+           Location="{encode_location(second)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -150,7 +153,7 @@ class XmlFixtureTests(XmlFixtureBase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
     <TRACK TrackID="2" Name="Song" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(second)}" Kind="FLAC File"/>
+           Location="{encode_location(second)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -166,7 +169,7 @@ class XmlFixtureTests(XmlFixtureBase):
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=True
         ):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 path, "OnlySecond", self.wav_dir, self.output
             )
         self.assertEqual(errors, [])
@@ -213,7 +216,7 @@ class XmlFixtureTests(XmlFixtureBase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="1">
     <TRACK TrackID="1" Name="Song" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(src)}" Kind="FLAC File"/>
+           Location="{encode_location(src)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -279,13 +282,13 @@ class XmlFixtureTests(XmlFixtureBase):
   <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
   <COLLECTION Entries="4">
     <TRACK TrackID="1" Name="Intro" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(intro)}" Kind="FLAC File"/>
+           Location="{encode_location(intro)}" Kind="FLAC File"/>
     <TRACK TrackID="2" Name="intro" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(intro2)}" Kind="FLAC File"/>
+           Location="{encode_location(intro2)}" Kind="FLAC File"/>
     <TRACK TrackID="3" Name="{cafe_name_nfc}" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(cafe_nfc)}" Kind="FLAC File"/>
+           Location="{encode_location(cafe_nfc)}" Kind="FLAC File"/>
     <TRACK TrackID="4" Name="{cafe_name_nfd}" Artist="Same" Album="Hits"
-           Location="{rb.encode_location(cafe_nfd)}" Kind="FLAC File"/>
+           Location="{encode_location(cafe_nfd)}" Kind="FLAC File"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="1">
@@ -301,7 +304,7 @@ class XmlFixtureTests(XmlFixtureBase):
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
-            plan, errors = rb.prepare(path, "Clash", self.wav_dir, self.output)
+            plan, errors = prepare(path, "Clash", self.wav_dir, self.output)
         self.assertEqual(errors, [])
         assert plan is not None
         self.assertEqual(len(plan.unique), 4)
@@ -312,10 +315,10 @@ class XmlFixtureTests(XmlFixtureBase):
         )
         self.assertEqual(len(intro_dests), 2)
         self.assertEqual(
-            {rb.collision_key(d) for d in intro_dests},
+            {collision_key(d) for d in intro_dests},
             {
-                rb.collision_key("WAV/Same - Intro.wav"),
-                rb.collision_key("WAV/Same - Intro (2).wav"),
+                collision_key("WAV/Same - Intro.wav"),
+                collision_key("WAV/Same - Intro (2).wav"),
             },
         )
         first_intro = next(u for u in plan.unique if u.source_path == intro)
@@ -332,7 +335,7 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertTrue(any(" (2).wav" in d for d in cafe_dests))
         self.assertTrue(
             any(
-                rb.collision_key(d) == rb.collision_key("WAV/Same - café.wav")
+                collision_key(d) == collision_key("WAV/Same - café.wav")
                 for d in cafe_dests
             )
         )
@@ -365,7 +368,7 @@ class XmlFixtureTests(XmlFixtureBase):
         sticky = "WAV/ABSL - Bestial.wav"
         sticky_path = self.wav_dir / Path(sticky)
         self.assertTrue(sticky_path.is_file())
-        root = rb.load_dj_playlists(self.xml_path)
+        root = load_dj_playlists(self.xml_path)
         track = root.find("COLLECTION/TRACK")
         assert track is not None
         track.set("Artist", "New Artist")
@@ -404,7 +407,7 @@ class XmlFixtureTests(XmlFixtureBase):
             sticky,
         )
         out = ET.parse(self.output).getroot()
-        sticky_loc = rb.encode_location(sticky_path)
+        sticky_loc = encode_location(sticky_path)
         refreshed = next(
             t for t in out.findall("COLLECTION/TRACK") if t.get("Location") == sticky_loc
         )
@@ -695,7 +698,7 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(extra.get("Foo"), "bar")
         self.assertIsNotNone(first.find("TEMPO"))
         self.assertIsNotNone(first.find("POSITION_MARK"))
-        pl = rb.find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
+        pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
         self.assertEqual(len(pl), 1)
         self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2", "3"])
 

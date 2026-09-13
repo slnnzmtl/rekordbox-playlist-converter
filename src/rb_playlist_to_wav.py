@@ -479,83 +479,28 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-# Thin re-exports for tests that still patch rb.* seams.
-from cli_error import CancelledError  # noqa: E402
-from convert.format_policy import SUPPORTED_LOSSLESS_EXT, planned_action  # noqa: E402
-from convert.models import ConversionPreview, ConversionPreviewItem, PlannedTrack  # noqa: E402
-from convert.paths import (  # noqa: E402
-    preferred_relative_dest,
-    source_key,
-    target_from_stream,
-)
-from convert.plan import (  # noqa: E402
-    collect_batch_unique,
-    share_cover_caches,
-    write_aiff_output,
-)
-from convert.preview import (  # noqa: E402
-    build_conversion_preview,
-    insufficient_output_space_message,
-    preview_write_bytes,
-)
-from convert.write import convert_unique  # noqa: E402
-from convert.paths import collision_key  # noqa: E402
-from xml_output import (  # noqa: E402
-    apply_xml,
-    clone_track,
-    probe_dest_tech,
-    share_output_root,
-    write_import_xml,
-)
-from rekordbox_xml import (  # noqa: E402
-    decode_location,
-    duplicate_playlist_name_error,
-    encode_location,
-    find_playlists_by_name,
-    iter_playlists,
-    load_dj_playlists,
-)
-
 __all__ = [
-    "CancelledError",
     "CliError",
-    "ConversionPreview",
-    "ConversionPreviewItem",
     "ConvertStats",
     "DEFAULT_OUTPUT",
     "DEFAULT_WAV_DIR",
     "Plan",
-    "PlannedTrack",
     "PreparedConversion",
-    "SUPPORTED_LOSSLESS_EXT",
-    "apply_xml",
     "build_conversion_preview",
-    "clone_track",
-    "collision_key",
-    "collect_batch_unique",
-    "convert_unique",
-    "decode_location",
-    "duplicate_playlist_name_error",
-    "encode_location",
     "execute_prepared",
-    "find_playlists_by_name",
     "insufficient_output_space_message",
     "iter_playlists",
     "load_dj_playlists",
     "main",
     "parse_args",
-    "planned_action",
     "prepare",
     "prepare_batch",
-    "preferred_relative_dest",
     "preview_write_bytes",
-    "probe_dest_tech",
+    "prompt_paths",
     "prompt_wizard",
     "run_convert_batch",
-    "share_cover_caches",
-    "share_output_root",
-    "source_key",
-    "target_from_stream",
-    "write_aiff_output",
-    "write_import_xml",
 ]
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -84,7 +84,7 @@ def app_patches(
     """Stack patches on ``GUI_MODULE`` targets.
 
     Keys are dotted suffixes after ``GUI_MODULE`` (e.g. ``"save_preferences"``,
-    ``"threading.Thread"``, ``"rb.prepare"``). Values are patch kwargs dicts,
+    ``"threading.Thread"``, ``"prepare_batch"``). Values are patch kwargs dicts,
     plain return values, or ``None`` for a default :class:`Mock`.
 
     Use :func:`startup_patches` for the usual startup stack::
@@ -141,13 +141,15 @@ def pump_ui(root, times: int = PUMP_UI_IDLE_HOPS) -> None:
         root.update()
 
 
-def run_inline_thread(target=None, **_kwargs):
+def run_inline_thread(target=None, args=(), kwargs=None, **_kwargs):
     """threading.Thread stand-in that runs *target* synchronously on start()."""
+    thread_args = tuple(args) if args is not None else ()
+    thread_kwargs = dict(kwargs) if kwargs is not None else {}
 
     class _T:
         def start(self) -> None:
             if target is not None:
-                target()
+                target(*thread_args, **thread_kwargs)
 
         def is_alive(self) -> bool:
             return False

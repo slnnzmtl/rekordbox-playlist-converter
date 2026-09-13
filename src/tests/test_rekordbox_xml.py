@@ -12,9 +12,9 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-import rb_playlist_to_wav as rb
 import rekordbox_xml as rx
 from cli_error import CliError
+from convert.format_policy import SUPPORTED_LOSSLESS_EXT
 
 
 class LoadDjPlaylistsTests(unittest.TestCase):
@@ -182,7 +182,7 @@ class PlaylistXmlHelperTests(unittest.TestCase):
                 node,
                 by_id,
                 by_location,
-                supported_ext=rb.SUPPORTED_LOSSLESS_EXT,
+                supported_ext=SUPPORTED_LOSSLESS_EXT,
             ),
             2,
         )

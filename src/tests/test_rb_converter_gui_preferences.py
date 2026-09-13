@@ -17,6 +17,7 @@ from gui_tk import (
     app_patches,
     mark_output_folder_valid,
     merge_patches,
+    run_inline_thread,
     seed_track_selection,
     startup_patches,
     tk_available,
@@ -305,22 +306,13 @@ class GuiPreferencesPersistTests(unittest.TestCase):
                     {
                         "save_preferences": None,
                         "prepare_batch": {"return_value": (None, ["stop"])},
-                        "threading.Thread": None,
+                        "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
             ) as mocks, patch.object(
                 ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
             ):
                 prepare = mocks["prepare_batch"]
-                thread_cls = mocks["threading.Thread"]
-
-                def capture_start():
-                    target = thread_cls.call_args.kwargs.get("target")
-                    if target is None:
-                        target = thread_cls.call_args[0][0]
-                    target()
-
-                thread_cls.return_value.start = capture_start
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)

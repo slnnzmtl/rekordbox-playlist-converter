@@ -2,103 +2,30 @@
 
 ## Unreleased
 
-- GUI preferences save failures show “Couldn’t save preferences” on the status line; conversion still continues.
-- Preferences persist `library_dir` (legacy `wav_dir` is read for compatibility but no longer written). CLI `--wav-dir` is unchanged.
-- Prepare validation for output format, bit depth, and sample rate fails loudly with a clear error instead of silently coercing invalid values.
-- Internal: public `convert` package exports `prepare`, `prepare_batch`, and `execute_prepared`; `rb_playlist_to_wav.py` is CLI-focused with thin test seams.
-- Internal: `PlannedTrack.passthrough`, `Plan.media_dir` / `Plan.library_dir`, GUI `library_dir_var`, and `_confirm_prepared` replace leaky `copy_wav` / `playlist_dir` / `wav_dir_var` / `_write_prepared` names.
-- Internal: `gui_prefs/` splits preference storage, default paths, Documents child probe, and XML discovery; `run_startup_probe` replaces `_probe_documents_after_idle`; typed `PlaylistEntry` / `TrackLeafRef` and `UpdateCheckKind`.
-- Internal: `CancelledError` is no longer a `CliError` (cancel is not a fatal
-  CLI failure). Stderr progress lives in `convert.progress`. Cover extract uses
-  `COVER_MAX_SIDE` and does not swallow cancel as a missing cover. CDJ/encode
-  helpers used across modules are public (`parse_aiff_audio`, `copy_wav_atomic`,
-  `rewrite_wav_pcm`, …). Convert workers are an explicit parameter; the default
-  comes from `default_convert_workers()` at use time (no frozen
-  `CONVERT_WORKERS` global).
-- Internal: shared write port `convert.write.execute_prepared` (save
-  manifest → convert_unique → apply_xml → write_import_xml). GUI and CLI hosts
-  call it instead of duplicating that sequence; `convert_unique` lives in
-  `convert/write.py`.
-- Internal: `convert_plan.py` split into `convert/{plan,preview,prepare,format_policy}.py`;
-  `xml_output` imports `Plan` / paths from `convert.models` / `convert.paths`;
-  `source_key` lives with path helpers; drop unused `playlist_dir_name`;
-  `CONVERT_WORKERS_MAX` matches the default cap of 4; shared cancel-shutdown for
-  preview/plan probe pools (encode still waits in-flight).
-- Internal: WAV/AIFF branching uses `PlannedTrack.output_format` (stamped in
-  `build_plan`) instead of `dest_path.suffix == ".aiff"` in plan, encode, and
-  import XML Kind / assignment keys.
-- Internal: drop private CDJ re-exports from `rb_playlist_to_wav` (tests import
-  `cdj_aiff` / `cdj_wav`); shared `prepare_batch` + `PreparedConversion` in
-  `convert/models.py`; `bits_from_raw_sample` for ffprobe bit parse; one
-  `duplicate_playlist_name_error` helper in `rekordbox_xml`.
-- Internal: shared `gui_tk.run_inline_thread` for GUI unit tests (replaces ~16
-  copied `threading.Thread` stubs).
-- Internal: shared path helpers in `convert/paths.py` (`abs_path`, `collision_key`,
-  `same_file`); converter manifest occupancy uses `same_file`; ALAC codec guard
-  hoisted once in `classify_source`. Shared `XmlFixtureTests` base in
-  `convert_fixtures.py` (four CLI/convert test modules subclass it).
-- Internal: shared `convert/quality.py` allowlists for output format / bit depth /
-  sample rate (parse for prefs omit, coerce for GUI/convert/CDJ defaults);
-  format directory names shared with the converter manifest.
-- Internal: GUI update-check methods live on `ShellMixin` (menu owner); convert
-  flow mixin stays prepare/preview/write only. `prepare_batch` has no injectable
-  `*_fn` seams.
-- Internal refactor (pass 2): `ConverterApp` lives in `gui/app.py` with
-  `gui/shell.py` / `gui/playlists.py` / `gui/convert_flow.py` mixins; patched
-  names are looked up on `gui.runtime` (`gui_tk.GUI_MODULE`). Helpers/constants
-  live in `gui/helpers.py` and `gui/constants.py`. `rb_converter_gui.py` remains
-  the TCC / PyInstaller entry (~60 lines) and re-exports public names for tests.
-- Internal refactor (pass 1): oversized convert/CLI/GUI tests split into flat
-  `test_*.py` modules; shared fixtures in `convert_fixtures.py` and GUI patch stacks
-  in `gui_tk.app_patches` (`GUI_MODULE` constant). Leaf GUI builders live in
-  `gui/browser.py` and `gui/tracklist.py`; preview bit-depth batch constants in
-  `preview_bit_depth.py`. `rb_converter_gui.py` remains the TCC / PyInstaller entry.
-- Internal refactor: GUI layout helpers live in `gui/layout.py` and dialog builders in
-  `gui/dialogs.py`; encode/copy bodies live in `convert/encode.py`.
-  Status and dialog labels wrap with window size.
-- GUI Cancel after encode writes Import XML from tracks already in the success
-  set, then finishes Cancelled (re-run Convert to finish the rest).
-- Format-flat layout: converted files live under `WAV|AIFF/<artist> - <track>` (no Album or quality directories). Import XML remains `<output>/rekordbox-import.xml`.
-- Sticky hidden `.rekordbox-converter-manifest.json` remembers per-source, per-format destinations so reruns stay stable when metadata changes; `(2)` / `(3)` suffixes apply only when different sources collide. Deleted generated audio is recreated at its existing assignment.
-- Deleting the manifest leaves audio unmanaged and the output folder is refused — choose a new empty folder.
-- Batch convert encodes each unique source once even if it appears in several playlists; Import XML is written once from the success set.
-- GUI and CLI derive Import XML as `<wav-dir>/rekordbox-import.xml` (CLI `--output` remains an optional override). The GUI shows a read-only path field (click to copy); ignore legacy `import_xml` preferences.
-- GUI Convert opens a conversion preview (unique outputs, action, quality, size); **Back** writes nothing. CLI `--dry-run` prints the same plan. Success offers **Reveal audio folder** (selected format directory) and **Reveal import XML**.
-- GUI quality control is **Max. quality** (`16-bit` / `24-bit` / `44.1 kHz` / `48 kHz`). Output-folder validation runs off the UI thread and disables Convert when the folder is invalid.
-- Unique-track conversion runs up to **4 encodes in parallel**. Progress counts completed tracks; Cancel stops in-flight encodes (completed files kept; interrupted playlist is not written to Import XML).
-- Track failures no longer abort the rest of the run: convertible tracks finish, Import XML is written for successes, remaining playlists continue, then all errors are reported together. Cancel after a failure still surfaces those encode errors.
-- Filename collisions (same dest name from different sources) no longer abort: the first playlist entry is converted; later duplicates are skipped with a warning.
-- Conversion failure and cancel-with-errors dialogs use the same scrollable list view as skipped missing tracks (not a flat alert).
-- Prepare (ffprobe) runs in parallel with the same worker cap; File → Search for Rekordbox XML runs off the UI thread with a timeout; tracklist search is debounced and collection indexes are cached for the loaded XML.
-- ffmpeg encodes use `-nostats -loglevel error` and drain pipes on cancel/timeout so long parallel encodes cannot wedge on a full stderr pipe.
-- WAV encode/copy writes via temp + `os.replace` (cancel mid-copy leaves no partial dest); ffmpeg timeout scales with worker count; progress callbacks run outside the convert stats lock.
-- WAV/AIFF CDJ rewrite streams chunk headers instead of loading whole files; preview bit-depth cache is capped (LRU) and negative-caches missing reads; convert worker count defaults from CPU count (1–4, max 5).
-- Multi-playlist convert parses the source XML once; sampling-format prefs persist on change; Check for Updates ignores overlapping requests.
-- Non-{44100,48000} source rates snap to 44100 when allowed by the ceiling (documented); Info.plist includes `CFBundleVersion`.
-- Skip the post-ffmpeg WAV rewrite when output is already CDJ-safe (e.g. 16-bit PCM); skip the redundant AIFF re-normalize after a successful ffmpeg stage.
-- While tracklist bit depth headers are read, `Scanning bit depth…` appears beside the idle unique-tracks status line.
-- Tracklist lists only convertible lossless formats (by file extension); missing collection rows stay visible. Column headers are left-aligned and clickable to sort by Track, Format, Bit depth, or Sample rate within each playlist group. Playlist / tracklist panes default to a 30% / 70% split.
-- App display name is **Simple Rekordbox Converter** (window title, macOS .app bundle, docs).
-- Tracklist bit depth is remembered for the session so reselecting a playlist does not re-read file headers; Refresh or a new XML path clears the cache.
-- Default output folder is `rekordbox-converter` (`~/Documents/rekordbox-converter` when Documents access is allowed).
-- Success and other app dialogs open centered over the main window.
-- Playlist search and track search sit over each pane (follow the splitter). Track search filters the currently listed preview by artist/title/filename; Convert still uses the selected visible tracks.
-- Convert uses the tracklist preview selection: listed tracks start selected; hold ⌃ to refine a subset across playlists. Import XML and audio output include only those tracks.
-- Convert sits beside the progress bar; Cancel replaces it while a run is in progress. Cancel stops in-flight encodes (up to 4; completed files kept; interrupted playlist is not written to Import XML). “Cancelled.” clears after 3 seconds and resets the progress bar.
-- GUI shows a tracklist table beside the playlist tree (Track, Format, Bit depth, Sample rate). Format and rate come from the Rekordbox XML; bit depth is read from FLAC, ALAC-in-M4A, WAV, or AIFF headers when the file is present, otherwise —. The unique-track selection summary appears on the bottom status line when idle.
-- Main window opens centered on the display under the pointer instead of straddling dual-monitor layouts.
-- Missing skipped tracks open in a scrollable list dialog instead of a flat warning alert.
-- App version is shown in the window title; the in-window title label is removed.
-- Convert aligns with the Browse column; the redundant How to use button is removed (Help menu unchanged).
-- GUI playlist picker is a Rekordbox-style folder tree (expand/collapse); selecting a folder converts all playlists under it. Search still filters the tree.
-- Selectable output quality: `--format wav|aiff`, `--bit-depth 16|24`, `--sample-rate 44100|48000` (GUI Sampling format dropdowns + prefs). Defaults are WAV / **24** / **48000**.
-- Quality is a **ceiling**: never upconvert 16-bit to 24-bit or 44.1 kHz to 48 kHz; preserve source when it fits; reduce only when over the cap.
-- WAV stays stripped `WAVE_FORMAT_PCM` with `fmt `+`data` only (including 24-bit); AIFF stays `FORM`/`AIFF` with ID3v2.3 from the XML and optional cover.
-- Skip dest only when it matches the **effective** quality and canonical container (AIFF also ID3/art), so raising 16/44.1 → 24/48 rebuilds previously reduced files when the source is higher quality.
-- Opt-in **AIFF** output (`--format aiff`, wizard prompt, GUI radios) with ID3v2.3 text/cover; import XML Kind/suffix follow format.
-- Import XML collection tracks are **refreshed** on rerun (same Location) while preserving TrackID / playlist keys.
-- GUI/docs say “audio files” where the format is selectable; `--wav-dir` and the app bundle name are unchanged.
-- Internal refactor: split conversion into `cdj_wav`, `cdj_aiff`, `rekordbox_xml`, and `cli_error` modules behind the existing `rb_playlist_to_wav` facade (no user-facing change).
+- App display name is **Simple Rekordbox Converter**. Selectable WAV/AIFF output with
+  quality ceiling (defaults WAV / **24** / **48000**); never upconvert. Format-flat
+  layout under `WAV|AIFF/<artist> - <track>`; sticky manifest keeps per-source
+  destinations stable; deleting the manifest refuses the folder. Default output
+  folder is `rekordbox-converter` (Documents when allowed). Import XML collection
+  tracks refresh on rerun (same Location) while preserving TrackID / playlist keys.
+- Batch convert encodes each unique source once; Import XML is
+  `<wav-dir>/rekordbox-import.xml` (CLI `--output` override). GUI preview before
+  write; CLI `--dry-run`. Success offers Reveal audio / import XML. Track failures
+  and filename collisions skip with warnings; cancel after encode still writes
+  Import XML for successes.
+- Unique-track and prepare (ffprobe) run up to **4** workers in parallel. Cancel
+  stops in-flight encodes. GUI tracklist (Track / Format / Bit depth / Sample rate)
+  drives selection; folder tree + dual search; off-thread output-folder validation;
+  scrollable error/missing dialogs; centered window and dialogs.
+- Preferences: `library_dir` (legacy `wav_dir` read-only); save failures show on the
+  status line without aborting convert. Prepare rejects invalid format / bit depth /
+  sample rate instead of silently coercing.
+- Internal: `convert/` package (`plan` / `preview` / `prepare` / `write` /
+  `format_policy` / `quality` / `paths` / `encode`) with shared
+  `prepare_batch` + `execute_prepared`; `rb_playlist_to_wav` is CLI-only; tests
+  import owning modules. GUI in `gui/` mixins behind `gui.runtime`; prepare thread
+  uses `_PrepareHandoff` (no ephemeral `_convert_*` on the app). Workers /
+  CDJ helpers / cancel pools cleaned up; `gui_prefs/` and typed playlist refs.
 
 ## 1.2.0
 

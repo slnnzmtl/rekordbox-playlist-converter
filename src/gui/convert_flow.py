@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import tkinter as tk
+from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
+from typing import Mapping
 
 from convert.models import PreparedConversion
 from convert.quality import (
@@ -17,6 +20,20 @@ from gui import runtime
 from gui.helpers import (
     total_successful_conversions,
 )
+
+
+@dataclass(frozen=True)
+class _PrepareHandoff:
+    """Snapshot args for the prepare thread; not parked on ConverterApp."""
+
+    selected: tuple[tuple[str, str], ...]
+    keys_by_playlist: Mapping[tuple[str, str], tuple[str, ...]]
+    wav_dir: Path
+    output: Path
+    output_format: str
+    max_bit_depth: int
+    max_sample_rate: int
+    xml_path: Path
 
 
 class ConvertFlowMixin:
@@ -72,33 +89,31 @@ class ConvertFlowMixin:
         self._cancel_event.clear()
         self.status_var.set("Preparing…")
 
-        self._convert_selected = selected
-        self._convert_keys_by_playlist = keys_by_playlist
-        self._convert_wav_dir = wav_dir
-        self._convert_output = output
-        self._convert_output_format = output_format
-        self._convert_max_bit_depth = max_bit_depth
-        self._convert_max_sample_rate = max_sample_rate
-        self._convert_xml_path = xml_path
-        runtime.threading.Thread(target=self._prepare_worker, daemon=True).start()
+        handoff = _PrepareHandoff(
+            selected=tuple(selected),
+            keys_by_playlist=MappingProxyType(
+                {key: tuple(keys) for key, keys in keys_by_playlist.items()}
+            ),
+            wav_dir=wav_dir,
+            output=output,
+            output_format=output_format,
+            max_bit_depth=max_bit_depth,
+            max_sample_rate=max_sample_rate,
+            xml_path=xml_path,
+        )
+        runtime.threading.Thread(
+            target=self._prepare_worker, args=(handoff,), daemon=True
+        ).start()
 
-    def _prepare_worker(self) -> None:
-        selected = self._convert_selected
-        keys_by_playlist = self._convert_keys_by_playlist
-        wav_dir = self._convert_wav_dir
-        output = self._convert_output
-        output_format = self._convert_output_format
-        max_bit_depth = self._convert_max_bit_depth
-        max_sample_rate = self._convert_max_sample_rate
-        xml_path = self._convert_xml_path
+    def _prepare_worker(self, handoff: _PrepareHandoff) -> None:
         try:
             # Reuse UI-loaded tree when it matches this convert's XML; else parse once.
             loaded_xml = Path(self.xml_var.get().strip()).expanduser()
-            if self._source_root is not None and loaded_xml == xml_path:
+            if self._source_root is not None and loaded_xml == handoff.xml_path:
                 source_root = self._source_root
-            elif xml_path.is_file():
+            elif handoff.xml_path.is_file():
                 try:
-                    source_root = runtime.load_dj_playlists(xml_path)
+                    source_root = runtime.load_dj_playlists(handoff.xml_path)
                 except runtime.CliError as exc:
                     self._ui(lambda e=[str(exc)]: self._finish_error(e))
                     return
@@ -122,15 +137,15 @@ class ConvertFlowMixin:
                 self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
 
             prepared, errors = runtime.prepare_batch(
-                xml_path,
-                selected,
-                wav_dir,
-                output,
-                output_format=output_format,
-                max_bit_depth=max_bit_depth,
-                max_sample_rate=max_sample_rate,
+                handoff.xml_path,
+                list(handoff.selected),
+                handoff.wav_dir,
+                handoff.output,
+                output_format=handoff.output_format,
+                max_bit_depth=handoff.max_bit_depth,
+                max_sample_rate=handoff.max_sample_rate,
                 force=False,
-                track_keys_by_playlist=keys_by_playlist,
+                track_keys_by_playlist=dict(handoff.keys_by_playlist),
                 on_progress=progress_tick,
                 cancel_event=self._cancel_event,
                 source_root=source_root,

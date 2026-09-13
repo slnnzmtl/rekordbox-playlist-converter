@@ -14,7 +14,6 @@ for _p in (_SRC, _TESTS):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
-import rb_playlist_to_wav as rb
 import cdj_wav
 from cli_error import CancelledError, CliError
 import convert.models
@@ -22,7 +21,12 @@ import convert.format_policy
 import convert.plan
 import convert.write
 from convert import encode
+from convert.models import Plan, PlannedTrack
+from convert.paths import source_key
+from convert.prepare import prepare
+from convert.write import convert_unique
 import ffmpeg_tools
+import rb_playlist_to_wav as rb
 import xml_output
 from convert_fixtures import (
     FIXTURE,
@@ -32,6 +36,8 @@ from convert_fixtures import (
     wav_probe,
     write_flac,
 )
+from rekordbox_xml import encode_location, find_playlists_by_name
+from xml_output import apply_xml
 
 
 class XmlFixtureTests(XmlFixtureBase):
@@ -63,14 +69,14 @@ class XmlFixtureTests(XmlFixtureBase):
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output, workers=1
             )
             self.assertEqual(errors, [])
             assert plan is not None
 
             def run() -> convert.models.ConvertStats:
-                return rb.convert_unique(
+                return convert_unique(
                     plan, force=False, progress=False, cancel_event=cancel, workers=1
                 )
 
@@ -116,14 +122,14 @@ class XmlFixtureTests(XmlFixtureBase):
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output, workers=1
             )
             self.assertEqual(errors, [])
             assert plan is not None
 
             def run() -> convert.models.ConvertStats:
-                return rb.convert_unique(
+                return convert_unique(
                     plan, force=False, progress=False, cancel_event=cancel, workers=1
                 )
 
@@ -158,13 +164,13 @@ class XmlFixtureTests(XmlFixtureBase):
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
             )
             self.assertEqual(errors, [])
             assert plan is not None
             total = len(plan.unique)
-            stats = rb.convert_unique(
+            stats = convert_unique(
                 plan, force=False, progress=False, on_progress=on_progress
             )
 
@@ -188,13 +194,13 @@ class XmlFixtureTests(XmlFixtureBase):
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
         ):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
             )
             self.assertEqual(errors, [])
             assert plan is not None
             self.assertEqual(len(plan.unique), 3)
-            stats = rb.convert_unique(plan, force=False, progress=False)
+            stats = convert_unique(plan, force=False, progress=False)
 
         self.assertEqual(stats.converted, 2)
         self.assertTrue(plan.unique[0].dest_path.exists())
@@ -211,7 +217,7 @@ class XmlFixtureTests(XmlFixtureBase):
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path, "Untitled Intelligent List", self.wav_dir, self.output
             )
         self.assertEqual(errors, [])
@@ -222,11 +228,11 @@ class XmlFixtureTests(XmlFixtureBase):
         ok.dest_path.write_bytes(b"RIFF")
         failed.dest_path.parent.mkdir(parents=True, exist_ok=True)
         failed.dest_path.write_bytes(b"RIFF")  # leftover on disk
-        success = {(rb.source_key(ok.source_path), "wav")}
+        success = {(source_key(ok.source_path), "wav")}
         with patch.object(
             xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
         ):
-            rb.apply_xml(plan, success)
+            apply_xml(plan, success)
         locations = [
             t.get("Location") for t in plan.output_root.findall("COLLECTION/TRACK")
         ]
@@ -277,8 +283,8 @@ class XmlFixtureTests(XmlFixtureBase):
         tracks = out.findall("COLLECTION/TRACK")
         self.assertEqual(len(tracks), 2)
         locations = [t.get("Location", "") for t in tracks]
-        self.assertNotIn(rb.encode_location(failed_dest[0]), locations)
-        pl = rb.find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
+        self.assertNotIn(encode_location(failed_dest[0]), locations)
+        pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
         self.assertEqual(len(pl), 1)
         self.assertEqual(len(pl[0].findall("TRACK")), 2)
 
@@ -368,13 +374,13 @@ class XmlFixtureTests(XmlFixtureBase):
             dest.parent.mkdir(parents=True)
             src.write_bytes(b"RIFF" + b"\x00" * 40)
             el = ET.Element(
-                "TRACK", {"TrackID": "1", "Location": rb.encode_location(src)}
+                "TRACK", {"TrackID": "1", "Location": encode_location(src)}
             )
-            item = rb.PlannedTrack(
+            item = PlannedTrack(
                 source_el=el,
                 source_path=src,
                 dest_path=dest,
-                dest_location=rb.encode_location(dest),
+                dest_location=encode_location(dest),
                 dest_name=dest.name,
                 codec=None,
                 passthrough=True,
@@ -382,7 +388,7 @@ class XmlFixtureTests(XmlFixtureBase):
                 bit_depth=16,
                 sample_rate=44100,
             )
-            plan = rb.Plan(
+            plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [WAV]",
                 library_dir=root / "WAV",
@@ -418,7 +424,7 @@ class XmlFixtureTests(XmlFixtureBase):
             ), patch.object(convert.plan, "default_convert_workers", return_value=1), patch.object(
                 convert.format_policy, "is_cdj_safe_wav", return_value=False
             ):
-                rb.convert_unique(
+                convert_unique(
                     plan, force=False, progress=False, cancel_event=cancel
                 )
 
@@ -476,7 +482,7 @@ class XmlFixtureTests(XmlFixtureBase):
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe_and_cancel
         ), patch.object(convert.plan, "default_convert_workers", return_value=1):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path,
                 "Untitled Intelligent List",
                 self.wav_dir,
@@ -517,7 +523,7 @@ class XmlFixtureTests(XmlFixtureBase):
             ffmpeg_tools, "run_ffprobe", side_effect=probe_side_effect
         ), patch.object(convert.plan, "default_convert_workers", return_value=2):
             t0 = time.monotonic()
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path,
                 "Untitled Intelligent List",
                 self.wav_dir,
@@ -562,7 +568,7 @@ class XmlFixtureTests(XmlFixtureBase):
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe_with_overlap
         ), patch.object(convert.plan, "default_convert_workers", return_value=2):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path,
                 "Untitled Intelligent List",
                 self.wav_dir,
@@ -604,7 +610,7 @@ class XmlFixtureTests(XmlFixtureBase):
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=probe_by_source
         ), patch.object(convert.plan, "default_convert_workers", return_value=3):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path,
                 "Untitled Intelligent List",
                 self.wav_dir,
@@ -636,7 +642,7 @@ class XmlFixtureTests(XmlFixtureBase):
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ):
-            plan, errors = rb.prepare(
+            plan, errors = prepare(
                 self.xml_path,
                 "Untitled Intelligent List",
                 self.wav_dir,
