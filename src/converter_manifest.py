@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -26,6 +27,7 @@ RECIPE_KEYS = frozenset(
     {"format", "bit_depth", "sample_rate", "channels", "revision"}
 )
 ALLOWED_STATES = frozenset({"complete", "incomplete", "unverified"})
+_SHA256_HASH = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
 
 
 class ManifestError(CliError):
@@ -148,17 +150,34 @@ def _unknown_field_errors(
     return [f"manifest unknown {where} field: {key!r}" for key in extra]
 
 
+def _validate_optional_hash(value: object, where: str) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str) or _SHA256_HASH.fullmatch(value) is None:
+        return (
+            f"manifest {where} hash must be sha256: followed by "
+            "exactly 64 hexadecimal characters"
+        )
+    return None
+
+
 def _validate_optional_freshness(record: dict[str, Any]) -> list[str]:
     errors = _unknown_field_errors(record, RECORD_KEYS, "assignment")
     source = record.get("source")
     if isinstance(source, dict):
         errors.extend(_unknown_field_errors(source, SOURCE_OUTPUT_KEYS, "source"))
+        hash_err = _validate_optional_hash(source.get("hash"), "source")
+        if hash_err:
+            errors.append(hash_err)
     metadata = record.get("metadata")
     if isinstance(metadata, dict):
         errors.extend(_unknown_field_errors(metadata, METADATA_KEYS, "metadata"))
     output = record.get("output")
     if isinstance(output, dict):
         errors.extend(_unknown_field_errors(output, SOURCE_OUTPUT_KEYS, "output"))
+        hash_err = _validate_optional_hash(output.get("hash"), "output")
+        if hash_err:
+            errors.append(hash_err)
     recipe = record.get("recipe")
     if isinstance(recipe, dict):
         errors.extend(_unknown_field_errors(recipe, RECIPE_KEYS, "recipe"))
