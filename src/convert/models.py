@@ -36,6 +36,9 @@ class ConversionPreviewItem:
     size_bytes: int | None = None
     size_display: str = "—"
     source_display: str = ""
+    reason: str = ""
+    write_kind: str = "none"
+    reason_code: str = ""
 
 
 @dataclass
@@ -73,6 +76,10 @@ class ConvertStats:
     converted: int = 0
     copied: int = 0
     skipped: int = 0
+    pcm_rebuilt: int = 0
+    metadata_refreshed: int = 0
+    reused: int = 0
+    recreated: int = 0
     appended: int = 0
     errors: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
@@ -80,6 +87,38 @@ class ConvertStats:
     succeeded: set[tuple[str, str]] = field(default_factory=set)
     # Entries appended per plan by apply_xml during execute_prepared.
     appended_by_plan: list[int] = field(default_factory=list)
+
+
+def format_conversion_counts(
+    stats: ConvertStats,
+    *,
+    missing: int = 0,
+) -> list[str]:
+    """User-facing count fragments shared by CLI summary and GUI finish."""
+    parts: list[str] = []
+    if stats.converted:
+        parts.append(f"{stats.converted} converted")
+    if stats.copied:
+        parts.append(f"{stats.copied} copied")
+    if stats.pcm_rebuilt:
+        parts.append(f"{stats.pcm_rebuilt} PCM-rebuilt")
+    if stats.metadata_refreshed:
+        parts.append(f"{stats.metadata_refreshed} metadata-refreshed")
+    if stats.reused:
+        parts.append(f"{stats.reused} reused")
+    if stats.recreated:
+        parts.append(f"{stats.recreated} recreated")
+    if stats.skipped and not (stats.reused or stats.metadata_refreshed):
+        parts.append(f"{stats.skipped} skipped")
+    if stats.conflicts:
+        n = len(stats.conflicts)
+        parts.append(f"{n} conflict{'s' if n != 1 else ''}")
+    if missing:
+        parts.append(f"{missing} missing skipped")
+    if stats.errors:
+        n = len(stats.errors)
+        parts.append(f"{n} failed")
+    return parts
 
 
 @dataclass

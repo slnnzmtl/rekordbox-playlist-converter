@@ -119,4 +119,4 @@ def planned_action(
     del cover_lock, cancel_event
     from convert.rerun import classify_item
 
-    return classify_item(plan, item, force)
+    return classify_item(plan, item, force).action
