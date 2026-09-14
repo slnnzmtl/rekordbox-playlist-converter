@@ -1,13 +1,21 @@
 # Rekordbox XML import checklist (manual)
 
-Blank checklist for verifying that Convert’s Import XML loads correctly in
-Rekordbox. Fill in after testing on a real machine — do not invent version
-numbers.
+Blank evidence for app v2.0.0. Fill in after testing on a real machine — do
+not invent version numbers, pass/fail, or untested hardware claims. Empty
+cells mean **untested**, not supported.
 
-Target: latest **Rekordbox 6.x** and current **Rekordbox 7.x** on each OS
-below.
+Use the same source collection as the automated fidelity fixture where
+practical: ratings, BPM, key, comments, colour, memory cue, hot cue, loop,
+constant and variable-tempo grids, a nested source folder, a track shared
+across playlists, and a repeated Key in one source playlist (Import XML
+still stores that track once per playlist).
 
-Converter build / commit tested: _______________
+Target: **Rekordbox 6.x** and **Rekordbox 7.x** on each OS below.
+
+Converter commit / build: _______________
+Output format + quality ceiling (WAV|AIFF, bit depth, rate): _______________
+
+Mark each cell: **pass** / **fail** / **limitation** plus a short note.
 
 ---
 
@@ -22,7 +30,13 @@ Converter build / commit tested: _______________
 | Refresh / open **rekordbox xml** tree | | |
 | `[WAV]` / `[AIFF]` playlist visible under Playlists | | |
 | Import Playlist / drag into main Playlists | | |
-| Cues / beatgrid present after import | | |
+| Rating, BPM, key, comments, colour | | |
+| Memory cue, hot cue, loop | | |
+| Constant grid (one TEMPO) | | |
+| Variable-tempo grid (multiple TEMPO) | | |
+| Playlist order | | |
+| Repeated source Key (one playlist Key after dedup) | | |
+| Track shared across playlists (one collection row) | | |
 | Track Location plays from converter output path | | |
 | Notes | | |
 
@@ -39,7 +53,13 @@ Converter build / commit tested: _______________
 | Refresh / open **rekordbox xml** tree | | |
 | `[WAV]` / `[AIFF]` playlist visible under Playlists | | |
 | Import Playlist / drag into main Playlists | | |
-| Cues / beatgrid present after import | | |
+| Rating, BPM, key, comments, colour | | |
+| Memory cue, hot cue, loop | | |
+| Constant grid (one TEMPO) | | |
+| Variable-tempo grid (multiple TEMPO) | | |
+| Playlist order | | |
+| Repeated source Key (one playlist Key after dedup) | | |
+| Track shared across playlists (one collection row) | | |
 | Track Location plays from converter output path | | |
 | Notes | | |
 
@@ -53,3 +73,6 @@ Converter build / commit tested: _______________
 | Windows | | |
 
 Tester: _______________  Date: _______________
+
+A preparation-loss or wrong-playback failure on a tested version **blocks**
+publishing v2.0.0.
