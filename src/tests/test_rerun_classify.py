@@ -139,6 +139,24 @@ class ClassifyAssignmentTests(unittest.TestCase):
             "external_modification_conflict",
         )
 
+    def test_incomplete_dest_mismatch_is_rebuild_not_conflict(self) -> None:
+        """Given an incomplete record whose dest stats differ: When classify:
+        Then rebuild instead of treating the dest as an external edit."""
+        item = _item()
+        record = _complete_record(item)
+        record["state"] = "incomplete"
+        self.assertEqual(
+            classify_assignment(
+                item=item,
+                record=record,
+                force=False,
+                dest_exists=True,
+                dest_stat={"size": 99, "mtime_ns": 9},
+                source_stat={"size": 10, "mtime_ns": 1},
+            ),
+            "transcode",
+        )
+
     def test_unverified_dest_is_not_reuse(self) -> None:
         """Given dest-only unverified assignment: When classify: Then transcode
         rather than reuse a CDJ-looking dest."""
