@@ -19,6 +19,13 @@ MANIFEST_VERSION = 2
 MANIFEST_LAYOUT = "format-flat"
 SUPPORTED_FORMATS = OUTPUT_FORMATS
 _FORMAT_DIRS = FORMAT_DIR_NAMES
+RECORD_KEYS = frozenset({"dest", "state", "source", "metadata", "output", "recipe"})
+SOURCE_OUTPUT_KEYS = frozenset({"size", "mtime_ns", "hash"})
+METADATA_KEYS = frozenset({"signature"})
+RECIPE_KEYS = frozenset(
+    {"format", "bit_depth", "sample_rate", "channels", "revision"}
+)
+ALLOWED_STATES = frozenset({"complete", "incomplete", "unverified"})
 
 
 class ManifestError(CliError):
@@ -134,6 +141,30 @@ def _validate_dest_relative(dest: object, *, fmt: str, wav_dir: Path) -> str | N
     return None
 
 
+def _unknown_field_errors(
+    obj: dict[str, Any], allowed: frozenset[str], where: str
+) -> list[str]:
+    extra = sorted(set(obj) - allowed)
+    return [f"manifest unknown {where} field: {key!r}" for key in extra]
+
+
+def _validate_optional_freshness(record: dict[str, Any]) -> list[str]:
+    errors = _unknown_field_errors(record, RECORD_KEYS, "assignment")
+    source = record.get("source")
+    if isinstance(source, dict):
+        errors.extend(_unknown_field_errors(source, SOURCE_OUTPUT_KEYS, "source"))
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict):
+        errors.extend(_unknown_field_errors(metadata, METADATA_KEYS, "metadata"))
+    output = record.get("output")
+    if isinstance(output, dict):
+        errors.extend(_unknown_field_errors(output, SOURCE_OUTPUT_KEYS, "output"))
+    recipe = record.get("recipe")
+    if isinstance(recipe, dict):
+        errors.extend(_unknown_field_errors(recipe, RECIPE_KEYS, "recipe"))
+    return errors
+
+
 def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
     """Return validation errors for parsed manifest JSON (empty if ok)."""
     errors: list[str] = []
@@ -181,6 +212,7 @@ def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
             if dest_err:
                 errors.append(dest_err)
                 continue
+            errors.extend(_validate_optional_freshness(record))
             assert isinstance(dest, str)
             ck = collision_key(dest)
             prior = ownership.get(ck)
