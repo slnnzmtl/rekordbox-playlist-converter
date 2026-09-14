@@ -37,6 +37,7 @@ from convert.models import (
     Plan,
     PlannedTrack,
     PreparedConversion,
+    apply_item_result_aggregates,
 )
 from convert.progress import Progress
 from convert.paths import source_key
@@ -565,6 +566,7 @@ def convert_unique(
                 fut.result()
     finally:
         bar.close()
+    apply_item_result_aggregates(stats)
     return stats
 
 

@@ -19,7 +19,11 @@ from convert import (
     prepare,
     prepare_batch,
 )
-from convert.models import format_conversion_counts
+from convert.models import (
+    conversion_exit_code,
+    format_conversion_counts,
+    stats_for_playlist,
+)
 from convert.plan import DEFAULT_OUTPUT, DEFAULT_WAV_DIR
 from convert.preview import (
     build_conversion_preview,
@@ -315,17 +319,9 @@ def run_convert_batch(
             appended = (
                 stats.appended_by_plan[i] if i < len(stats.appended_by_plan) else 0
             )
-            plan_stats = ConvertStats(
-                converted=stats.converted if i == 0 else 0,
-                copied=stats.copied if i == 0 else 0,
-                skipped=stats.skipped if i == 0 else 0,
-                pcm_rebuilt=stats.pcm_rebuilt if i == 0 else 0,
-                metadata_refreshed=stats.metadata_refreshed if i == 0 else 0,
-                reused=stats.reused if i == 0 else 0,
-                recreated=stats.recreated if i == 0 else 0,
-                conflicts=list(stats.conflicts) if i == 0 else [],
-                errors=list(stats.errors) if i == len(plans) - 1 else [],
-                succeeded=set(stats.succeeded),
+            plan_stats = stats_for_playlist(
+                stats,
+                plan.wav_playlist_name,
                 appended=appended,
             )
             print_summary(plan, plan_stats, dry_run=False)
@@ -335,10 +331,7 @@ def run_convert_batch(
     except CliError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    if stats.errors:
-        print_errors(stats.errors)
-        return 1
-    return 0
+    return conversion_exit_code(stats)
 
 
 def print_errors(errors: list[str]) -> None:

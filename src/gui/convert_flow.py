@@ -13,6 +13,7 @@ from convert.models import (
     PreparedConversion,
     conversion_report_title,
     format_conversion_counts,
+    stats_for_playlist,
 )
 from convert.quality import (
     coerce_bit_depth,
@@ -319,45 +320,44 @@ class ConvertFlowMixin:
                 return
 
             for i, plan in enumerate(plans):
-                parts: list[str] = []
-                if i == 0:
-                    parts.extend(format_conversion_counts(batch_stats))
-                missing_n = len(plan.warnings)
-                if missing_n:
-                    parts.append(
-                        f"{missing_n} missing skipped"
-                    )
                 appended = (
                     batch_stats.appended_by_plan[i]
                     if i < len(batch_stats.appended_by_plan)
                     else 0
                 )
+                plan_stats = stats_for_playlist(
+                    batch_stats,
+                    plan.wav_playlist_name,
+                    appended=appended,
+                )
+                parts = format_conversion_counts(
+                    plan_stats, missing=len(plan.warnings)
+                )
                 if appended:
                     parts.append(f"+{appended} playlist entries")
                 detail = ", ".join(parts) if parts else "done"
                 summaries.append(f"{plan.wav_playlist_name}: {detail}")
-            if batch_stats.state_changed:
-                summaries.append("State changed (refresh preview):")
-                summaries.extend(batch_stats.state_changed)
-            if batch_stats.errors:
-                summaries.append("Failed:")
-                summaries.extend(batch_stats.errors)
-            if batch_stats.conflicts:
-                summaries.append("Conflicts:")
-                summaries.extend(batch_stats.conflicts)
+                if plan_stats.state_changed:
+                    summaries.append("State changed (refresh preview):")
+                    summaries.extend(plan_stats.state_changed)
+                if plan_stats.errors:
+                    summaries.append("Failed:")
+                    summaries.extend(plan_stats.errors)
+                if plan_stats.conflicts:
+                    summaries.append("Conflicts:")
+                    summaries.extend(plan_stats.conflicts)
             if skipped:
                 summaries.append("Missing skipped:")
                 summaries.extend(skipped)
 
-            if self._cancel_event.is_set():
-                _finish_cancel_with_errors(batch_stats.errors or None)
-                return
             if total == 0:
                 self._ui(lambda: self._set_progress(0, 0))
             else:
                 self._ui(lambda t=total: self._set_progress(t, t))
             out = str(output)
-            title = conversion_report_title(batch_stats)
+            title = conversion_report_title(
+                batch_stats, cancelled=self._cancel_event.is_set()
+            )
             self._ui(
                 lambda s=summaries, o=out, folder=output.parent, t=title: self._finish_report(
                     s, o, folder, title=t
@@ -451,7 +451,22 @@ class ConvertFlowMixin:
             self.status_var.set("Failed.")
             self._show_done_dialog(body, output_folder, title=title)
             return
-        if output:
+        if title == "Cancelled":
+            self.status_var.set("Cancelled.")
+            self._cancel_cancelled_clear()
+            self._cancelled_clear_id = self.root.after(
+                constants.CANCELLED_STATUS_CLEAR_MS, self._clear_cancelled_status
+            )
+            self._show_done_dialog(body, output_folder, title=title)
+            return
+        if title == "Partial":
+            if output:
+                self.status_var.set(
+                    f"Partial. Point Rekordbox Imported Library at:\n{output}"
+                )
+            else:
+                self.status_var.set("Partial.")
+        elif output:
             self.status_var.set(
                 f"Done. Point Rekordbox Imported Library at:\n{output}"
             )

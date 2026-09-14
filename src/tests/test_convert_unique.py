@@ -86,7 +86,7 @@ class XmlFixtureTests(XmlFixtureBase):
                 cancel.set()
                 stats = fut.result(timeout=10)
 
-        self.assertEqual(stats.converted, 1)
+        self.assertEqual(stats.recreated, 1)
         self.assertTrue(plan.unique[0].dest_path.exists())
         self.assertFalse(plan.unique[-1].dest_path.exists())
 
@@ -174,7 +174,7 @@ class XmlFixtureTests(XmlFixtureBase):
                 plan, force=False, progress=False, on_progress=on_progress
             )
 
-        self.assertEqual(stats.converted, total)
+        self.assertEqual(stats.recreated, total)
         self.assertEqual(sorted(c for c, _t in progress_calls), list(range(1, total + 1)))
 
     def test_convert_unique_continues_after_encode_error_and_returns_errors(
@@ -202,7 +202,7 @@ class XmlFixtureTests(XmlFixtureBase):
             self.assertEqual(len(plan.unique), 3)
             stats = convert_unique(plan, force=False, progress=False)
 
-        self.assertEqual(stats.converted, 2)
+        self.assertEqual(stats.recreated, 2)
         self.assertTrue(plan.unique[0].dest_path.exists())
         self.assertFalse(plan.unique[1].dest_path.exists())
         self.assertTrue(plan.unique[2].dest_path.exists())

@@ -122,7 +122,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
     ) -> None:
         """Given execute_prepared returns successes (and optional encode errors)
         then sets cancel: When the GUI write worker finishes: Then status is
-        Cancelled and encode errors still surface in the list dialog."""
+        Cancelled and encode errors still surface in the unified report."""
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -152,7 +152,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 ConverterApp, "_show_conversion_preview"
             ), patch.object(
                 ConverterApp, "_show_list_dialog", create=True
-            ) as show_list:
+            ) as show_list, patch.object(
+                ConverterApp, "_show_done_dialog"
+            ) as show_done:
                 execute = mocks["execute_prepared"]
                 showerror = mocks["show_centered_message"]
                 root = tk.Tk()
@@ -176,14 +178,20 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
 
                 execute.assert_called()
                 showerror.assert_not_called()
-                show_list.assert_called()
-                joined = list_dialog_text(show_list)
+                self.assertTrue(
+                    show_done.called,
+                    "cancel after encode must use the unified conversion report",
+                )
+                done_msg = show_done.call_args[0][0]
+                joined = list_dialog_text(show_list) if show_list.called else ""
                 self.assertIn(
                     "boom",
-                    joined,
+                    f"{joined}\n{done_msg}",
                     "cancel with known encode errors must surface them in "
-                    f"the scrollable list dialog; got lines={joined!r}",
+                    f"the conversion report; got {done_msg!r}",
                 )
+                done_title = show_done.call_args.kwargs.get("title")
+                self.assertEqual(done_title, "Cancelled")
                 self.assertEqual(app.status_var.get(), "Cancelled.")
                 self.assertFalse(app._busy)
         except tk.TclError:
@@ -397,8 +405,8 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
         self,
     ) -> None:
         """Given execute_prepared succeeds: When cancel_event is set before
-        finish scheduling: Then the GUI takes the _finish_cancelled path
-        (status Cancelled.), not _finish_ok / Done."""
+        finish scheduling: Then the unified report is titled Cancelled
+        (status Cancelled.), not Done."""
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -453,7 +461,8 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     "late cancel after XML write must finish cancelled, "
                     f"not Done; got {app.status_var.get()!r}",
                 )
-                show_done.assert_not_called()
+                show_done.assert_called()
+                self.assertEqual(show_done.call_args.kwargs.get("title"), "Cancelled")
                 self.assertFalse(app._busy)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")

@@ -25,8 +25,10 @@ from convert.models import (
     ItemResult,
     Plan,
     PlannedTrack,
+    conversion_exit_code,
     conversion_report_title,
     format_conversion_counts,
+    stats_for_playlist,
 )
 from convert.paths import source_key
 from convert.write import convert_unique
@@ -119,9 +121,115 @@ class ItemResultDeriveTests(unittest.TestCase):
 
     def test_format_counts_includes_state_changed(self) -> None:
         parts = format_conversion_counts(
-            ConvertStats(state_changed=["A.wav", "B.wav"])
+            ConvertStats(
+                item_results=[
+                    ItemResult(
+                        source=Path("a.flac"),
+                        destination=Path("A.wav"),
+                        action="transcode",
+                        outcome="state_changed",
+                    ),
+                    ItemResult(
+                        source=Path("b.flac"),
+                        destination=Path("B.wav"),
+                        action="transcode",
+                        outcome="state_changed",
+                    ),
+                ]
+            )
         )
         self.assertIn("2 state-changed", parts)
+
+    def test_recreated_counts_are_exclusive_of_converted_and_copied(self) -> None:
+        """Given three recreate_missing successes: When formatting counts:
+        Then the line is exclusive (recreated wrapping transcode/copy)."""
+        results = [
+            ItemResult(
+                source=Path("a.flac"),
+                destination=Path("A.wav"),
+                action="recreate_missing",
+                outcome="succeeded",
+                write="transcode",
+                playlists=("Night [WAV]", "Morning [WAV]"),
+            ),
+            ItemResult(
+                source=Path("b.flac"),
+                destination=Path("B.wav"),
+                action="recreate_missing",
+                outcome="succeeded",
+                write="transcode",
+                playlists=("Night [WAV]",),
+            ),
+            ItemResult(
+                source=Path("c.wav"),
+                destination=Path("C.wav"),
+                action="recreate_missing",
+                outcome="succeeded",
+                write="copy",
+                playlists=("Night [WAV]",),
+            ),
+        ]
+        stats = ConvertStats(item_results=results)
+        parts = format_conversion_counts(stats)
+        self.assertEqual(parts, ["3 recreated (2 transcoded, 1 copied)"])
+        night = stats_for_playlist(stats, "Night [WAV]")
+        morning = stats_for_playlist(stats, "Morning [WAV]")
+        self.assertEqual(
+            format_conversion_counts(night),
+            ["3 recreated (2 transcoded, 1 copied)"],
+        )
+        self.assertEqual(
+            format_conversion_counts(morning),
+            ["1 recreated (1 transcoded)"],
+        )
+
+    def test_exit_code_nonzero_for_conflicts_and_state_changed(self) -> None:
+        ok = ConvertStats(
+            item_results=[
+                ItemResult(
+                    source=Path("a.flac"),
+                    destination=Path("A.wav"),
+                    action="transcode",
+                    outcome="succeeded",
+                    write="transcode",
+                )
+            ]
+        )
+        self.assertEqual(conversion_exit_code(ok), 0)
+        conflict = ConvertStats(
+            item_results=[
+                ItemResult(
+                    source=Path("a.flac"),
+                    destination=Path("A.wav"),
+                    action="transcode",
+                    outcome="conflict",
+                )
+            ]
+        )
+        self.assertEqual(conversion_exit_code(conflict), 1)
+        changed = ConvertStats(
+            item_results=[
+                ItemResult(
+                    source=Path("a.flac"),
+                    destination=Path("A.wav"),
+                    action="transcode",
+                    outcome="state_changed",
+                )
+            ]
+        )
+        self.assertEqual(conversion_exit_code(changed), 1)
+        failed = ConvertStats(
+            item_results=[
+                ItemResult(
+                    source=Path("a.flac"),
+                    destination=Path("A.wav"),
+                    action="transcode",
+                    outcome="failed",
+                    error="boom",
+                )
+            ]
+        )
+        self.assertEqual(conversion_exit_code(failed), 1)
 
 
 if __name__ == "__main__":

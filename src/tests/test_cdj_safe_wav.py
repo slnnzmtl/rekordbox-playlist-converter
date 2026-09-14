@@ -742,7 +742,11 @@ class RewriteContainerTests(unittest.TestCase):
 
     def test_source_change_passthrough_rewrites_wav_from_source(self) -> None:
         """Given a complete passthrough dest: When the source stats change: Then
-        dest PCM matches the new source, not the previous dest."""
+        dest PCM matches the new source, not the previous dest.
+
+        Freshness uses size plus mtime_ns. Same-size content replacement is
+        invisible unless mtime (or an optional hash) also changes.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             src = root / "src.wav"
@@ -788,6 +792,8 @@ class RewriteContainerTests(unittest.TestCase):
             src_size = struct.unpack_from("<I", src_raw, src_at + 4)[0]
             src_raw[src_at + 8 : src_at + 8 + src_size] = b"\x11" * src_size
             src.write_bytes(src_raw)
+            later = src.stat().st_mtime_ns + 1_000_000_000
+            os.utime(src, ns=(later, later))
             encoded: list[Path] = []
 
             def fake_ffmpeg(
@@ -992,7 +998,8 @@ class RewriteContainerTests(unittest.TestCase):
             ):
                 stats = execute_prepared(prepared, force=False)
             self.assertTrue(dest.is_file())
-            self.assertEqual(stats.copied, 1)
+            self.assertEqual(stats.recreated, 1)
+            self.assertEqual(stats.copied, 0)
             self.assertEqual(stats.errors, [])
             self.assertIn((source_key(src), "wav"), stats.succeeded)
             self.assertFalse(
