@@ -254,10 +254,17 @@ def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
     if not isinstance(data, dict):
         return ["manifest root must be a JSON object"]
     if data.get("version") != MANIFEST_VERSION:
-        errors.append(
-            f"manifest version must be {MANIFEST_VERSION}, "
-            f"got {data.get('version')!r}"
-        )
+        found = data.get("version")
+        if found == 1:
+            errors.append(
+                "manifest version 1 is unsupported; delete "
+                f"{MANIFEST_NAME} or choose a new output folder"
+            )
+        else:
+            errors.append(
+                f"manifest version must be {MANIFEST_VERSION}, "
+                f"got {found!r}"
+            )
     if data.get("layout") != MANIFEST_LAYOUT:
         errors.append(
             f"manifest layout must be {MANIFEST_LAYOUT!r}, "
