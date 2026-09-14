@@ -13,10 +13,13 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+import os
+
 import cdj_wav
 from cli_error import CliError
 from convert.format_policy import classify_source
 import convert.plan
+import convert.write
 from convert import encode
 import ffmpeg_tools
 from convert.freshness import bind_complete_assignment
@@ -856,6 +859,70 @@ class RewriteContainerTests(unittest.TestCase):
             self.assertEqual(stats.errors, [])
             self.assertEqual(stats.converted, 1)
             self.assertEqual(dest.read_bytes(), b"RIFF-FROM-SOURCE")
+
+    def test_invalid_sidecar_is_not_replaced_onto_dest(self) -> None:
+        """Given rewrite_container writes an invalid sidecar: When convert:
+        Then dest is not os.replace'd with garbage; conversion falls through."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.wav"
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(src, frames=8)
+            write_pcm_wav(dest, frames=4)
+            prior = dest.read_bytes()
+            source_bytes = src.read_bytes()
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                passthrough=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            plan.manifest.tracks[source_key(src)]["wav"]["recipe"]["revision"] = 2
+            replaced_payloads: list[bytes] = []
+            real_replace = os.replace
+
+            def watch_replace(src_path: str | bytes | os.PathLike, dst_path) -> None:
+                src_p = Path(src_path)
+                if Path(dst_path) == dest and src_p.name.endswith("~"):
+                    replaced_payloads.append(src_p.read_bytes())
+                real_replace(src_path, dst_path)
+
+            def bad_rewrite(_src: Path, sidecar: Path) -> None:
+                sidecar.write_bytes(b"not-a-valid-wav-sidecar")
+
+            with mock.patch.object(
+                convert.write, "rewrite_wav_pcm", side_effect=bad_rewrite
+            ), mock.patch.object(os, "replace", side_effect=watch_replace):
+                stats = convert_unique(plan, force=False)
+            self.assertNotIn(b"not-a-valid-wav-sidecar", replaced_payloads)
+            self.assertFalse(dest.with_name(dest.name + "~").exists())
+            self.assertEqual(stats.errors, [])
+            self.assertNotEqual(dest.read_bytes(), prior)
+            self.assertEqual(dest.read_bytes(), source_bytes)
+            self.assertGreaterEqual(stats.copied + stats.converted, 1)
 
     def test_missing_dest_cdj_safe_wav_passthrough_succeeds(self) -> None:
         """Given a CDJ-safe WAV source and missing dest: When convert_unique

@@ -11,8 +11,12 @@ from typing import Callable
 
 import converter_manifest
 import xml_output
-from cdj_aiff import normalize_aiff_audio_chunks, write_aiff_id3
-from cdj_wav import rewrite_wav_pcm
+from cdj_aiff import (
+    is_canonical_aiff_output,
+    normalize_aiff_audio_chunks,
+    write_aiff_id3,
+)
+from cdj_wav import is_cdj_safe_wav, rewrite_wav_pcm
 from cli_error import CancelledError, CliError
 from convert.encode import copy_wav_atomic
 from convert.freshness import (
@@ -84,10 +88,17 @@ def _decisions_for_prepared(
     return out
 
 
-def _replace_via_sidecar(dest: Path, write: Callable[[Path], None]) -> None:
+def _replace_via_sidecar(
+    dest: Path,
+    write: Callable[[Path], None],
+    *,
+    validate: Callable[[Path], bool] | None = None,
+) -> None:
     sidecar = dest.with_name(dest.name + "~")
     try:
         write(sidecar)
+        if validate is not None and not validate(sidecar):
+            raise CliError(f"sidecar failed validation for {dest}")
         os.replace(sidecar, dest)
     except Exception:
         try:
@@ -332,6 +343,11 @@ def convert_unique(
                     _replace_via_sidecar(
                         item.dest_path,
                         lambda sidecar, src=pcm_src: rewrite_wav_pcm(src, sidecar),
+                        validate=lambda path: is_cdj_safe_wav(
+                            path,
+                            bit_depth=item.bit_depth,
+                            sample_rate=item.sample_rate,
+                        ),
                     )
                 except CliError:
                     action = "transcode"
@@ -356,7 +372,17 @@ def convert_unique(
                     write_aiff_id3(sidecar, item.source_el, cover)
 
                 try:
-                    _replace_via_sidecar(item.dest_path, write_aiff_sidecar)
+                    _replace_via_sidecar(
+                        item.dest_path,
+                        write_aiff_sidecar,
+                        validate=lambda path: is_canonical_aiff_output(
+                            path,
+                            item.source_el,
+                            cover,
+                            bit_depth=item.bit_depth,
+                            sample_rate=item.sample_rate,
+                        ),
+                    )
                 except CliError:
                     action = "transcode"
                 else:
