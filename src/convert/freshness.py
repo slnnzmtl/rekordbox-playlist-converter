@@ -20,7 +20,7 @@ OUTPUT_ONLY_ATTRS = frozenset(
 
 def source_signature(path: Path) -> dict[str, Any]:
     st = path.stat()
-    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "hash": None}
+    return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
 
 
 def _canonical_element(el: ET.Element) -> dict[str, Any]:

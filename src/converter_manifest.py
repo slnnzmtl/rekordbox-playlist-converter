@@ -30,6 +30,7 @@ from convert.quality import (
 MANIFEST_NAME = ".rekordbox-converter-manifest.json"
 MANIFEST_VERSION = 2
 MANIFEST_LAYOUT = "format-flat"
+ROOT_KEYS = frozenset({"version", "layout", "tracks"})
 SUPPORTED_FORMATS = OUTPUT_FORMATS
 _FORMAT_DIRS = FORMAT_DIR_NAMES
 RECORD_KEYS = frozenset({"dest", "state", "source", "metadata", "output", "recipe"})
@@ -245,6 +246,12 @@ def _validate_optional_freshness(record: dict[str, Any]) -> list[str]:
             errors.append("manifest metadata must be an object")
         else:
             errors.extend(_unknown_field_errors(metadata, METADATA_KEYS, "metadata"))
+            sig = metadata.get("signature")
+            if "signature" not in metadata or not isinstance(sig, str) or _SHA256_HASH.fullmatch(sig) is None:
+                errors.append(
+                    "manifest metadata signature must be sha256: followed by "
+                    "exactly 64 hexadecimal characters"
+                )
     output = record.get("output")
     if "output" in record:
         if not isinstance(output, dict):
@@ -265,12 +272,13 @@ def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
         return ["manifest root must be a JSON object"]
+    errors.extend(_unknown_field_errors(data, ROOT_KEYS, "root"))
     if data.get("version") != MANIFEST_VERSION:
         found = data.get("version")
         if found == 1:
             errors.append(
-                "manifest version 1 is unsupported; delete "
-                f"{MANIFEST_NAME} or choose a new output folder"
+                "manifest version 1 is unsupported; remove or recreate the "
+                "whole output library folder, or choose a new empty output folder"
             )
         else:
             errors.append(
@@ -424,7 +432,8 @@ def validate_library_folder(wav_dir: Path) -> str | None:
     if expanded.is_dir() and _has_legacy_library_content(expanded):
         return (
             "This folder looks like an older converter library without a "
-            "manifest. Choose a new empty output folder."
+            "manifest. Remove or recreate the whole output library folder, "
+            "or choose a new empty output folder."
         )
     return None
 
