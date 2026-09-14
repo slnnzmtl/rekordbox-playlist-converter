@@ -45,7 +45,7 @@ class TrackPreviewLabelTests(unittest.TestCase):
             "Kind": "FLAC File",
             "SampleRate": "44100",
         }
-        label, fmt, _depth, rate = track_preview_row(track)
+        label, fmt, _depth, rate, _rating = track_preview_row(track)
         self.assertEqual(label, "ABSL - Bestial")
         self.assertEqual(fmt, "FLAC")
         self.assertEqual(rate, "44100")
@@ -74,6 +74,7 @@ class GuiTracklistTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 source = write_xml(Path(tmp), TRACKLIST_XML)
+                original_xml = source.read_text(encoding="utf-8")
                 root, app = self._make_app(source)
                 tree = app.playlist_tree
                 dark, morning = tree.get_children("")
@@ -81,6 +82,11 @@ class GuiTracklistTests(unittest.TestCase):
                 tree.event_generate("<<TreeviewSelect>>")
 
                 preview = app.tracklist_tree
+                self.assertEqual(
+                    tuple(preview.cget("columns")),
+                    ("format", "bit_depth", "sample_rate", "rating"),
+                )
+                self.assertEqual(preview.heading("rating", "text"), "Rating")
                 groups = preview.get_children("")
                 self.assertEqual(preview.item(groups[0], "text"), "Dark forest (3 tracks)")
                 leaves = preview.get_children(groups[0])
@@ -95,9 +101,9 @@ class GuiTracklistTests(unittest.TestCase):
                 self.assertEqual(
                     [preview.item(r, "values") for r in leaves],
                     [
-                        ("FLAC", "—", "44100"),
-                        ("AIFF", "—", "48000"),
-                        ("—", "—", "—"),
+                        ("FLAC", "—", "44100", "★★★★★"),
+                        ("AIFF", "—", "48000", "★★☆☆☆"),
+                        ("—", "—", "—", "—"),
                     ],
                 )
                 self.assertEqual(
@@ -115,8 +121,8 @@ class GuiTracklistTests(unittest.TestCase):
                 self.assertEqual(
                     [preview.item(r, "values") for r in morning_leaves],
                     [
-                        ("FLAC", "—", "44100"),
-                        ("WAV", "—", "—"),
+                        ("FLAC", "—", "44100", "★★★★★"),
+                        ("WAV", "—", "—", "☆☆☆☆☆"),
                     ],
                 )
                 self.assertEqual(
@@ -131,6 +137,7 @@ class GuiTracklistTests(unittest.TestCase):
                     app.status_var.get(),
                     "Loaded 2 playlist(s). Select and Convert.",
                 )
+                self.assertEqual(source.read_text(encoding="utf-8"), original_xml)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -282,6 +289,10 @@ class GuiTracklistTests(unittest.TestCase):
                     ["Shogan - Revelation"],
                 )
                 self.assertEqual(
+                    [preview.item(r, "values") for r in leaves],
+                    [("AIFF", "—", "48000", "★★☆☆☆")],
+                )
+                self.assertEqual(
                     app.status_var.get(),
                     "1 unique tracks from 1 playlist",
                 )
@@ -359,7 +370,7 @@ class GuiTracklistTests(unittest.TestCase):
                     leaves = preview.get_children(preview.get_children("")[0])
                     self.assertEqual(
                         [preview.item(r, "values") for r in leaves],
-                        [("FLAC", "—", "44100")],
+                        [("FLAC", "—", "44100", "☆☆☆☆☆")],
                     )
                     self.assertEqual(
                         app.status_var.get(),
@@ -373,7 +384,7 @@ class GuiTracklistTests(unittest.TestCase):
                     leaves = preview.get_children(preview.get_children("")[0])
                     self.assertEqual(
                         [preview.item(r, "values") for r in leaves],
-                        [("FLAC", "24", "44100")],
+                        [("FLAC", "24", "44100", "☆☆☆☆☆")],
                     )
                     self.assertEqual(app.scan_status_var.get(), "")
                     tree.selection_set(crate)
@@ -439,7 +450,7 @@ class GuiTracklistTests(unittest.TestCase):
                     leaves = preview.get_children(preview.get_children("")[0])
                     self.assertEqual(
                         [preview.item(r, "values") for r in leaves],
-                        [("FLAC", "—", "44100")],
+                        [("FLAC", "—", "44100", "☆☆☆☆☆")],
                     )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -551,16 +562,16 @@ class GuiTracklistTests(unittest.TestCase):
   <COLLECTION Entries="4">
     <TRACK TrackID="1" Name="Zebra" Artist="Z"
            Location="file://localhost/Users/me/music/Zebra.flac"
-           Kind="FLAC File" SampleRate="48000"/>
+           Kind="FLAC File" SampleRate="48000" Rating="51"/>
     <TRACK TrackID="2" Name="Alpha" Artist="A"
            Location="file://localhost/Users/me/music/Alpha.aiff"
-           Kind="AIFF File" SampleRate="44100"/>
+           Kind="AIFF File" SampleRate="44100" Rating="204"/>
     <TRACK TrackID="3" Name="Mid" Artist="M"
            Location="file://localhost/Users/me/music/Mid.wav"
-           Kind="WAV File" SampleRate="48000"/>
+           Kind="WAV File" SampleRate="48000" Rating="0"/>
     <TRACK TrackID="4" Name="Only" Artist="O"
            Location="file://localhost/Users/me/music/Only.flac"
-           Kind="FLAC File" SampleRate="44100"/>
+           Kind="FLAC File" SampleRate="44100" Rating="153"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="2">
@@ -646,6 +657,32 @@ class GuiTracklistTests(unittest.TestCase):
                         "Z - Zebra",
                         "M - Mid",
                         "A - Alpha",
+                    ],
+                )
+
+                preview.tk.call(preview.heading("rating", "command"))
+                crate_leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in crate_leaves],
+                    [
+                        "M - Mid",
+                        "Z - Zebra",
+                        "A - Alpha",
+                    ],
+                )
+                self.assertEqual(
+                    [preview.item(r, "values")[3] for r in crate_leaves],
+                    ["☆☆☆☆☆", "★☆☆☆☆", "★★★★☆"],
+                )
+
+                preview.tk.call(preview.heading("rating", "command"))
+                crate_leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in crate_leaves],
+                    [
+                        "A - Alpha",
+                        "Z - Zebra",
+                        "M - Mid",
                     ],
                 )
         except tk.TclError:

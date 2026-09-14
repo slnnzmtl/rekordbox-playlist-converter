@@ -22,9 +22,9 @@
   and filename collisions skip with warnings; cancel after encode still writes
   Import XML for successes.
 - Unique-track and prepare (ffprobe) run up to **4** workers in parallel. Cancel
-  stops in-flight encodes. GUI tracklist (Track / Format / Bit depth / Sample rate)
-  drives selection; folder tree + dual search; off-thread output-folder validation;
-  scrollable error/missing dialogs; centered window and dialogs.
+  stops in-flight encodes. GUI tracklist (Track / Format / Bit depth / Sample rate /
+  Rating) drives selection; folder tree + dual search; off-thread output-folder
+  validation; scrollable error/missing dialogs; centered window and dialogs.
 - Preferences: `library_dir` (legacy `wav_dir` read-only); save failures show on the
   status line without aborting convert. Prepare rejects invalid format / bit depth /
   sample rate instead of silently coercing.
