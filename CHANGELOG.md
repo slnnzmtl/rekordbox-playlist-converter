@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 2.0.0
+
+First public release of the v2 workflow and **manifest v2**. Do not publish
+GitHub release artifacts until the Rekordbox import matrix and packaged-app
+smoke rows in
+[docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
+are filled for the versions you claim. Rollback: keep the previous `.app` and
+output library; this release refuses unreleased v1 manifests (back up or use a
+new folder).
+
 - Preview shows reserved destination, action, classifier reason (writes audio /
   metadata only / nothing), quality, and size. Convert is blocked on unresolved
   destination conflicts or insufficient disk space. GUI and CLI `--dry-run`
@@ -14,7 +24,8 @@
 - Recorded Rekordbox 6/7 compatibility and packaged-app smoke checks live in
   [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
   (empty = untested).
-
+- The GUI may contact GitHub Releases to check for updates. There is no
+  analytics client.
 - Manifest **v2** is the first released converter-library contract. Unreleased v1
   and unknown future versions are refused (delete `.rekordbox-converter-manifest.json`
   or choose a new output folder). Reruns classify explicit actions from source,
