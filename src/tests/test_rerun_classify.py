@@ -74,7 +74,7 @@ class ClassifyAssignmentTests(unittest.TestCase):
                 dest_exists=True,
                 dest_stat={"size": 1, "mtime_ns": 1},
                 source_stat={"size": 1, "mtime_ns": 1},
-            ),
+            ).action,
             "in_place_noop",
         )
         self.assertEqual(
@@ -85,7 +85,7 @@ class ClassifyAssignmentTests(unittest.TestCase):
                 dest_exists=True,
                 dest_stat={"size": 1, "mtime_ns": 1},
                 source_stat={"size": 1, "mtime_ns": 1},
-            ),
+            ).action,
             "in_place_noop",
         )
 
@@ -114,7 +114,7 @@ class ClassifyAssignmentTests(unittest.TestCase):
                 dest_exists=False,
                 dest_stat=None,
                 source_stat={"size": 1, "mtime_ns": 1},
-            ),
+            ).action,
             "recreate_missing",
         )
 
@@ -131,11 +131,11 @@ class ClassifyAssignmentTests(unittest.TestCase):
             source_stat={"size": 10, "mtime_ns": 1},
         )
         self.assertEqual(
-            classify_assignment(**kwargs, force=False),
+            classify_assignment(**kwargs, force=False).action,
             "external_modification_conflict",
         )
         self.assertEqual(
-            classify_assignment(**kwargs, force=True),
+            classify_assignment(**kwargs, force=True).action,
             "external_modification_conflict",
         )
 
@@ -153,7 +153,7 @@ class ClassifyAssignmentTests(unittest.TestCase):
                 dest_exists=True,
                 dest_stat={"size": 99, "mtime_ns": 9},
                 source_stat={"size": 10, "mtime_ns": 1},
-            ),
+            ).action,
             "transcode",
         )
 
@@ -169,7 +169,7 @@ class ClassifyAssignmentTests(unittest.TestCase):
                 dest_exists=True,
                 dest_stat={"size": 20, "mtime_ns": 2},
                 source_stat={"size": 10, "mtime_ns": 1},
-            ),
+            ).action,
             "transcode",
         )
         passthrough = _item(passthrough=True)
@@ -181,7 +181,7 @@ class ClassifyAssignmentTests(unittest.TestCase):
                 dest_exists=True,
                 dest_stat={"size": 20, "mtime_ns": 2},
                 source_stat={"size": 10, "mtime_ns": 1},
-            ),
+            ).action,
             "rewrite_container",
         )
 
@@ -198,7 +198,7 @@ class ClassifyAssignmentTests(unittest.TestCase):
                 dest_exists=True,
                 dest_stat={"size": 20, "mtime_ns": 2},
                 source_stat={"size": 10, "mtime_ns": 1},
-            ),
+            ).action,
             "transcode",
         )
         item.source_el.set("Name", "New")
@@ -210,86 +210,126 @@ class ClassifyAssignmentTests(unittest.TestCase):
                 dest_exists=True,
                 dest_stat={"size": 20, "mtime_ns": 2},
                 source_stat={"size": 10, "mtime_ns": 1},
-            ),
+            ).action,
             "transcode",
         )
 
     def test_source_recipe_and_metadata_changes(self) -> None:
         """Given complete records: When source, recipe, or metadata differ: Then
-        the matching rebuild or refresh action is chosen."""
+        the matching rebuild or refresh action and reason code are chosen."""
         item = _item()
         record = _complete_record(item)
-        self.assertEqual(
-            classify_assignment(
-                item=item,
-                record=record,
-                force=False,
-                dest_exists=True,
-                dest_stat={"size": 20, "mtime_ns": 2},
-                source_stat={"size": 11, "mtime_ns": 1},
-            ),
-            "transcode",
+        source_changed = classify_assignment(
+            item=item,
+            record=record,
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 11, "mtime_ns": 1},
         )
+        self.assertEqual(source_changed.action, "transcode")
+        self.assertEqual(source_changed.reason, "source_changed")
+        self.assertEqual(source_changed.write_kind, "audio")
+
         deeper = _item(bit_depth=16, sample_rate=44100)
-        self.assertEqual(
-            classify_assignment(
-                item=deeper,
-                record=_complete_record(_item()),
-                force=False,
-                dest_exists=True,
-                dest_stat={"size": 20, "mtime_ns": 2},
-                source_stat={"size": 10, "mtime_ns": 1},
-            ),
-            "transcode",
+        recipe_changed = classify_assignment(
+            item=deeper,
+            record=_complete_record(_item()),
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 10, "mtime_ns": 1},
         )
-        self.assertEqual(
-            classify_assignment(
-                item=item,
-                record=_complete_record(item, revision=2),
-                force=False,
-                dest_exists=True,
-                dest_stat={"size": 20, "mtime_ns": 2},
-                source_stat={"size": 10, "mtime_ns": 1},
-            ),
-            "rewrite_container",
+        self.assertEqual(recipe_changed.action, "transcode")
+        self.assertEqual(recipe_changed.reason, "recipe_changed")
+
+        revision = classify_assignment(
+            item=item,
+            record=_complete_record(item, revision=2),
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 10, "mtime_ns": 1},
         )
+        self.assertEqual(revision.action, "rewrite_container")
+        self.assertEqual(revision.reason, "revision_changed")
+
         wav = _item()
         wav.source_el.set("Name", "New")
-        self.assertEqual(
-            classify_assignment(
-                item=wav,
-                record=_complete_record(_item()),
-                force=False,
-                dest_exists=True,
-                dest_stat={"size": 20, "mtime_ns": 2},
-                source_stat={"size": 10, "mtime_ns": 1},
-            ),
-            "refresh_xml",
+        refresh = classify_assignment(
+            item=wav,
+            record=_complete_record(_item()),
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 10, "mtime_ns": 1},
         )
+        self.assertEqual(refresh.action, "refresh_xml")
+        self.assertEqual(refresh.reason, "metadata_changed")
+        self.assertEqual(refresh.write_kind, "metadata")
+
         aiff = _item(output_format="aiff")
         aiff.source_el.set("Name", "New")
-        self.assertEqual(
-            classify_assignment(
-                item=aiff,
-                record=_complete_record(_item(output_format="aiff")),
-                force=False,
-                dest_exists=True,
-                dest_stat={"size": 20, "mtime_ns": 2},
-                source_stat={"size": 10, "mtime_ns": 1},
-            ),
-            "update_metadata",
+        update = classify_assignment(
+            item=aiff,
+            record=_complete_record(_item(output_format="aiff")),
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 10, "mtime_ns": 1},
         )
-        self.assertEqual(
-            classify_assignment(
-                item=_item(),
-                record=_complete_record(_item()),
-                force=False,
-                dest_exists=True,
-                dest_stat={"size": 20, "mtime_ns": 2},
-                source_stat={"size": 10, "mtime_ns": 1},
-            ),
-            "reuse",
+        self.assertEqual(update.action, "update_metadata")
+        self.assertEqual(update.reason, "metadata_changed")
+
+        reuse = classify_assignment(
+            item=_item(),
+            record=_complete_record(_item()),
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 10, "mtime_ns": 1},
         )
+        self.assertEqual(reuse.action, "reuse")
+        self.assertEqual(reuse.reason, "unchanged")
+        self.assertEqual(reuse.write_kind, "none")
+
+    def test_force_incomplete_unverified_reasons(self) -> None:
+        """Force, incomplete, and unverified each expose a distinct reason."""
+        item = _item()
+        forced = classify_assignment(
+            item=item,
+            record=_complete_record(item),
+            force=True,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 10, "mtime_ns": 1},
+        )
+        self.assertEqual(forced.action, "transcode")
+        self.assertEqual(forced.reason, "force")
+
+        incomplete = _complete_record(item)
+        incomplete["state"] = "incomplete"
+        inc = classify_assignment(
+            item=item,
+            record=incomplete,
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 99, "mtime_ns": 9},
+            source_stat={"size": 10, "mtime_ns": 1},
+        )
+        self.assertEqual(inc.action, "transcode")
+        self.assertEqual(inc.reason, "incomplete")
+
+        unverified = classify_assignment(
+            item=item,
+            record={"dest": "WAV/A.wav"},
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 10, "mtime_ns": 1},
+        )
+        self.assertEqual(unverified.action, "transcode")
+        self.assertEqual(unverified.reason, "unverified")
 
 
 class ClassifyItemTests(unittest.TestCase):
@@ -331,11 +371,11 @@ class ClassifyItemTests(unittest.TestCase):
                 manifest=converter_manifest.empty_manifest(),
             )
             bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
-            self.assertEqual(classify_item(plan, item, False), "reuse")
+            self.assertEqual(classify_item(plan, item, False).action, "reuse")
             st = dest.stat()
             os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
             self.assertEqual(
-                classify_item(plan, item, False),
+                classify_item(plan, item, False).action,
                 "external_modification_conflict",
             )
 

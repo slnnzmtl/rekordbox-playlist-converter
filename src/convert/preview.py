@@ -10,15 +10,15 @@ from pathlib import Path
 from typing import Callable
 
 from cli_error import CancelledError
-from convert import format_policy
 from convert import plan as plan_module
 from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PlannedTrack
 from convert.paths import _format_size_mb
+from convert.rerun import ACTION_WRITE_KIND, classify_item, preview_reason
 
 
-def _preview_size(item: PlannedTrack, action: str) -> tuple[int | None, str]:
-    """Return (bytes, display). Reuse uses dest size; else estimate PCM."""
-    if action in {"reuse", "in_place_noop"}:
+def _preview_size(item: PlannedTrack, write_kind: str) -> tuple[int | None, str]:
+    """Return (bytes, display). No-write actions use dest size or —; else estimate PCM."""
+    if write_kind == "none":
         try:
             if item.dest_path.is_file():
                 size = item.dest_path.stat().st_size
@@ -76,7 +76,6 @@ def build_conversion_preview(
             plan_by_item.setdefault(id(item), plan)
 
     results: list[ConversionPreviewItem | None] = [None] * total
-    cover_lock = threading.Lock()
     progress_lock = threading.Lock()
     completed = 0
 
@@ -84,26 +83,23 @@ def build_conversion_preview(
         if cancel_event is not None and cancel_event.is_set():
             raise CancelledError("conversion cancelled during preview")
         plan = plan_by_item.get(id(item), plans[0])
-        action = format_policy.planned_action(
-            plan,
-            item,
-            force,
-            cover_lock=cover_lock,
-            cancel_event=cancel_event,
-        )
+        decision = classify_item(plan, item, force)
         try:
             relative_dest = item.dest_path.relative_to(library_dir).as_posix()
         except ValueError:
             relative_dest = item.dest_path.name
-        size_bytes, size_display = _preview_size(item, action)
+        size_bytes, size_display = _preview_size(item, decision.write_kind)
         return ConversionPreviewItem(
             relative_dest=relative_dest,
-            action=action,
+            action=decision.action,
             bit_depth=item.bit_depth,
             sample_rate=item.sample_rate,
             size_bytes=size_bytes,
             size_display=size_display,
             source_display=item.source_path.name,
+            reason=preview_reason(decision.action, decision.reason),
+            write_kind=decision.write_kind,
+            reason_code=decision.reason,
         )
 
     workers = plan_module.convert_worker_count(total, workers=workers)
@@ -147,15 +143,11 @@ def build_conversion_preview(
 
 
 def preview_write_bytes(preview: ConversionPreview) -> int:
-    """Bytes that copy/transcode will write; reuse needs no extra space."""
+    """Bytes that audio writes will consume; metadata/none need no extra space."""
     total = 0
     for item in preview.items:
-        if item.action in {
-            "reuse",
-            "in_place_noop",
-            "refresh_xml",
-            "external_modification_conflict",
-        }:
+        write_kind = item.write_kind or ACTION_WRITE_KIND.get(item.action, "none")
+        if write_kind != "audio":
             continue
         if item.size_bytes is None:
             continue
@@ -204,4 +196,29 @@ def insufficient_output_space_message(
     return (
         "Not enough free space in the output folder. "
         f"About {needed.removeprefix('≈ ')} needed, {available} available."
+    )
+
+
+def preview_block_message(
+    preview: ConversionPreview,
+    path: Path,
+    *,
+    disk_usage: Callable[[str | Path], object] | None = None,
+) -> str | None:
+    """Block confirm when conflicts remain or the output volume is too small."""
+    n = sum(
+        1
+        for item in preview.items
+        if item.action == "external_modification_conflict"
+    )
+    if n:
+        noun = "conflict" if n == 1 else "conflicts"
+        return (
+            f"{n} unresolved {noun}. "
+            "Destination files were changed outside this app."
+        )
+    return insufficient_output_space_message(
+        path,
+        preview_write_bytes(preview),
+        disk_usage=disk_usage,
     )

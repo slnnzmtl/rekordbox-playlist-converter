@@ -268,14 +268,20 @@ class ConversionPreviewTests(unittest.TestCase):
             cancel = threading.Event()
             calls: list[str] = []
 
-            def action_side_effect(plan_arg, item, force, **_kwargs):
+            def classify_side_effect(plan_arg, item, force):
+                from convert.rerun import Decision
+
                 calls.append(item.dest_name)
                 if len(calls) == 1:
                     cancel.set()
-                return "transcode"
+                return Decision(
+                    action="transcode",
+                    reason="dest_missing",
+                    write_kind="audio",
+                )
 
-            with patch.object(
-                convert.format_policy, "planned_action", side_effect=action_side_effect
+            with patch(
+                "convert.preview.classify_item", side_effect=classify_side_effect
             ), patch.object(convert.plan, "default_convert_workers", return_value=1):
                 with self.assertRaises(CancelledError):
                     build_conversion_preview(
@@ -320,7 +326,9 @@ class ConversionPreviewTests(unittest.TestCase):
             barrier_slots = 0
             overlapped = threading.Event()
 
-            def action_with_overlap(plan_arg, item, force, **_kwargs):
+            def classify_with_overlap(plan_arg, item, force):
+                from convert.rerun import Decision
+
                 nonlocal barrier_slots
                 join = False
                 with lock:
@@ -333,10 +341,14 @@ class ConversionPreviewTests(unittest.TestCase):
                         overlapped.set()
                     except threading.BrokenBarrierError:
                         pass
-                return "transcode"
+                return Decision(
+                    action="transcode",
+                    reason="dest_missing",
+                    write_kind="audio",
+                )
 
-            with patch.object(
-                convert.format_policy, "planned_action", side_effect=action_with_overlap
+            with patch(
+                "convert.preview.classify_item", side_effect=classify_with_overlap
             ), patch.object(convert.plan, "default_convert_workers", return_value=2):
                 preview = build_conversion_preview([plan], items, force=False)
             self.assertTrue(
@@ -507,9 +519,9 @@ class ConversionPreviewTests(unittest.TestCase):
         """Given preview rows: When summing write bytes: Then only copy/transcode
         with known sizes count."""
         preview = ConversionPreview(
-            selected=4,
-            resolved=4,
-            unique_outputs=4,
+            selected=6,
+            resolved=6,
+            unique_outputs=6,
             duplicates=0,
             missing=0,
             items=[
@@ -520,6 +532,7 @@ class ConversionPreviewTests(unittest.TestCase):
                     sample_rate=44100,
                     size_bytes=9_000_000,
                     size_display="8.6 MB",
+                    write_kind="none",
                 ),
                 ConversionPreviewItem(
                     relative_dest="b.wav",
@@ -528,6 +541,7 @@ class ConversionPreviewTests(unittest.TestCase):
                     sample_rate=44100,
                     size_bytes=1000,
                     size_display="≈ 0.0 MB",
+                    write_kind="audio",
                 ),
                 ConversionPreviewItem(
                     relative_dest="c.wav",
@@ -536,6 +550,7 @@ class ConversionPreviewTests(unittest.TestCase):
                     sample_rate=48000,
                     size_bytes=2500,
                     size_display="≈ 0.0 MB",
+                    write_kind="audio",
                 ),
                 ConversionPreviewItem(
                     relative_dest="d.wav",
@@ -544,6 +559,25 @@ class ConversionPreviewTests(unittest.TestCase):
                     sample_rate=48000,
                     size_bytes=None,
                     size_display="—",
+                    write_kind="audio",
+                ),
+                ConversionPreviewItem(
+                    relative_dest="e.wav",
+                    action="refresh_xml",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=5_000_000,
+                    size_display="4.8 MB",
+                    write_kind="metadata",
+                ),
+                ConversionPreviewItem(
+                    relative_dest="f.wav",
+                    action="external_modification_conflict",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=5_000_000,
+                    size_display="4.8 MB",
+                    write_kind="none",
                 ),
             ],
         )
