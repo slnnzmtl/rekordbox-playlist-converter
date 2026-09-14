@@ -39,6 +39,8 @@ class ConversionPreviewItem:
     reason: str = ""
     write_kind: str = "none"
     reason_code: str = ""
+    source_stat: dict | None = None
+    dest_stat: dict | None = None
 
 
 @dataclass
@@ -83,6 +85,7 @@ class ConvertStats:
     appended: int = 0
     errors: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
+    state_changed: list[str] = field(default_factory=list)
     # (source_key, format) that skipped, copied, or converted successfully.
     succeeded: set[tuple[str, str]] = field(default_factory=set)
     # Entries appended per plan by apply_xml during execute_prepared.
@@ -113,6 +116,9 @@ def format_conversion_counts(
     if stats.conflicts:
         n = len(stats.conflicts)
         parts.append(f"{n} conflict{'s' if n != 1 else ''}")
+    if stats.state_changed:
+        n = len(stats.state_changed)
+        parts.append(f"{n} state-changed")
     if missing:
         parts.append(f"{missing} missing skipped")
     if stats.errors:
@@ -132,3 +138,4 @@ class PreparedConversion:
     library_dir: Path
     output: Path
     skipped: list[str]
+    decisions: dict[tuple[str, str], object] = field(default_factory=dict)

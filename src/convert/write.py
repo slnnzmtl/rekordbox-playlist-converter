@@ -35,6 +35,7 @@ from convert.models import (
 from convert.progress import Progress
 from convert.paths import source_key
 from convert.quality import coerce_output_format
+from convert.rerun import Decision, classify_item, _file_stat, _stats_match
 
 _MUTATING_ACTIONS = frozenset(
     {
@@ -44,6 +45,43 @@ _MUTATING_ACTIONS = frozenset(
         "recreate_missing",
     }
 )
+
+
+def _decisions_for_prepared(
+    prepared: PreparedConversion, force: bool
+) -> dict[tuple[str, str], Decision]:
+    if prepared.decisions:
+        return {
+            key: value
+            for key, value in prepared.decisions.items()
+            if isinstance(value, Decision)
+        }
+    by_rel = {row.relative_dest: row for row in prepared.preview.items}
+    plan_by_item: dict[int, Plan] = {}
+    for plan in prepared.plans:
+        for item in plan.unique:
+            plan_by_item.setdefault(id(item), plan)
+    out: dict[tuple[str, str], Decision] = {}
+    for item in prepared.items:
+        fmt = coerce_output_format(item.output_format)
+        key = (source_key(item.source_path), fmt)
+        try:
+            rel = item.dest_path.relative_to(prepared.library_dir).as_posix()
+        except ValueError:
+            rel = item.dest_path.name
+        row = by_rel.get(rel)
+        if row is not None and row.action:
+            out[key] = Decision(
+                action=row.action,
+                reason=row.reason_code or "",
+                write_kind=row.write_kind or "none",
+                source_stat=row.source_stat,
+                dest_stat=row.dest_stat,
+            )
+            continue
+        plan = plan_by_item.get(id(item), prepared.plans[0])
+        out[key] = classify_item(plan, item, force)
+    return out
 
 
 def _replace_via_sidecar(dest: Path, write: Callable[[Path], None]) -> None:
@@ -82,26 +120,32 @@ def _pcm_origin_for_container_rewrite(
 
 
 def _mutating_assignment_keys(
-    prepared: PreparedConversion, force: bool
+    prepared: PreparedConversion,
+    force: bool,
+    decisions: dict[tuple[str, str], Decision] | None = None,
 ) -> set[tuple[str, str]]:
     """Source/format keys that this batch will mutate and already have records."""
     keys: set[tuple[str, str]] = set()
     if not prepared.plans:
         return keys
-    plan_by_item: dict[int, Plan] = {}
-    for plan in prepared.plans:
-        for item in plan.unique:
-            plan_by_item.setdefault(id(item), plan)
+    frozen = decisions if decisions is not None else _decisions_for_prepared(
+        prepared, force
+    )
     for item in prepared.items:
-        plan = plan_by_item.get(id(item), prepared.plans[0])
-        action = format_policy.planned_action(plan, item, force)
+        fmt = coerce_output_format(item.output_format)
+        key = (source_key(item.source_path), fmt)
+        decision = frozen.get(key)
+        action = (
+            decision.action
+            if decision is not None
+            else format_policy.planned_action(prepared.plans[0], item, force)
+        )
         if action not in _MUTATING_ACTIONS:
             continue
-        fmt = coerce_output_format(item.output_format)
-        record = prepared.manifest.tracks.get(source_key(item.source_path), {}).get(fmt)
+        record = prepared.manifest.tracks.get(key[0], {}).get(fmt)
         if record is None:
             continue
-        keys.add((source_key(item.source_path), fmt))
+        keys.add(key)
     return keys
 
 
@@ -151,6 +195,7 @@ def convert_unique(
     workers: int | None = None,
     checkpoint_every: int | None = None,
     pending_assignments: set[tuple[str, str]] | None = None,
+    decisions: dict[tuple[str, str], Decision] | None = None,
 ) -> ConvertStats:
     """Encode/copy/reuse unique planned tracks; wait in-flight on cancel."""
     stats = ConvertStats()
@@ -197,14 +242,58 @@ def convert_unique(
         if checkpointed % checkpoint_every == 0:
             _save_manifest_with_pending(plan.manifest, plan.library_dir, pending)
 
+    def clear_pending_checkpoint(item: PlannedTrack) -> None:
+        """Drop pending incomplete overlay and checkpoint complete in-memory record."""
+        nonlocal checkpointed
+        fmt = coerce_output_format(item.output_format)
+        pending.discard((source_key(item.source_path), fmt))
+        if plan.manifest is None or not checkpoint_every:
+            return
+        checkpointed += 1
+        _save_manifest_with_pending(plan.manifest, plan.library_dir, pending)
+
+    def snapshot_blocks_write(
+        item: PlannedTrack, decision: Decision, name: str
+    ) -> bool:
+        """Return True if frozen stats no longer match; records conflict/state_changed."""
+        key_src = decision.source_stat
+        if key_src is not None:
+            current_src = _file_stat(item.source_path)
+            if current_src is None or not _stats_match(key_src, current_src):
+                with stats_lock:
+                    clear_pending_checkpoint(item)
+                    stats.state_changed.append(name)
+                finish("state_changed", name)
+                return True
+        frozen_dest = decision.dest_stat
+        current_dest = _file_stat(item.dest_path)
+        dest_changed = (frozen_dest is None and current_dest is not None) or (
+            frozen_dest is not None and not _stats_match(frozen_dest, current_dest)
+        )
+        if dest_changed:
+            with stats_lock:
+                clear_pending_checkpoint(item)
+                stats.conflicts.append(name)
+            finish("conflict", name)
+            return True
+        return False
+
     def process_one(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
             return
         name = item.dest_name
         is_aiff = coerce_output_format(item.output_format) == "aiff"
-        action = format_policy.planned_action(
-            plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
-        )
+        fmt = coerce_output_format(item.output_format)
+        key = (source_key(item.source_path), fmt)
+        decision = decisions.get(key) if decisions else None
+        if decision is not None:
+            if snapshot_blocks_write(item, decision, name):
+                return
+            action = decision.action
+        else:
+            action = format_policy.planned_action(
+                plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
+            )
         if action in {"reuse", "in_place_noop", "refresh_xml"}:
             if action == "refresh_xml":
                 with stats_lock:
@@ -216,6 +305,7 @@ def convert_unique(
             return
         if action == "external_modification_conflict":
             with stats_lock:
+                clear_pending_checkpoint(item)
                 stats.conflicts.append(name)
             finish("conflict", name)
             return
@@ -362,7 +452,9 @@ def execute_prepared(
     Encode cancel waits in-flight; successes still receive apply_xml + write.
     Hosts map cancel vs errors vs ok from the returned stats and cancel_event.
     """
-    pending = _mutating_assignment_keys(prepared, force)
+    decisions = _decisions_for_prepared(prepared, force)
+    prepared.decisions = dict(decisions)
+    pending = _mutating_assignment_keys(prepared, force, decisions)
     converter_manifest.save_manifest(
         _prebatch_incomplete_manifest(prepared, force, pending),
         prepared.library_dir,
@@ -378,6 +470,7 @@ def execute_prepared(
         workers=workers,
         checkpoint_every=checkpoint_every,
         pending_assignments=pending,
+        decisions=decisions,
     )
     _save_manifest_with_pending(prepared.manifest, prepared.library_dir, pending)
     appended_by_plan: list[int] = []

@@ -80,6 +80,209 @@ class ExecutePreparedTests(XmlFixtureBase):
         self.assertEqual(names, ["Untitled Intelligent List [WAV]"])
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
 
+    def test_late_dest_change_after_pending_stays_complete_conflict(self) -> None:
+        """Given a frozen transcode with pending incomplete: When dest changes
+        before write: Then execute reports conflict, disk stays complete, and
+        the next classify is conflict not rebuild."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(dest)
+            prior = dest.read_bytes()
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {"Name": "rekordbox", "Version": "6.8.5", "Company": "AlphaTheta"},
+            )
+            output_root = skeleton_from(source_root)
+            manifest = converter_manifest.empty_manifest()
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=False,
+                manifest=manifest,
+            )
+            bind_complete_assignment(manifest, item, "WAV/A.wav")
+            from convert.rerun import Decision
+
+            src_stat = source_signature(src)
+            out_stat = output_signature(dest)
+            decision = Decision(
+                action="transcode",
+                reason="force",
+                write_kind="audio",
+                source_stat={"size": src_stat["size"], "mtime_ns": src_stat["mtime_ns"]},
+                dest_stat={"size": out_stat["size"], "mtime_ns": out_stat["mtime_ns"]},
+            )
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=[item],
+                manifest=manifest,
+                preview=ConversionPreview(
+                    selected=1,
+                    resolved=1,
+                    unique_outputs=1,
+                    duplicates=0,
+                    missing=0,
+                    items=[],
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+                decisions={(source_key(src), "wav"): decision},
+            )
+            st = dest.stat()
+            os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000))
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"OVERWRITTEN")
+
+            with patch.object(
+                convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg
+            ), patch.object(
+                xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
+            ):
+                stats = execute_prepared(prepared, force=True)
+            self.assertEqual(stats.conflicts, [dest.name])
+            self.assertEqual(encoded, [])
+            self.assertEqual(dest.read_bytes(), prior)
+            on_disk = converter_manifest.load_manifest(root)
+            record = on_disk.tracks[source_key(src)]["wav"]
+            self.assertEqual(assignment_state(record), "complete")
+            plan.manifest = on_disk
+            self.assertEqual(
+                classify_item(plan, item, False).action,
+                "external_modification_conflict",
+            )
+
+    def test_late_source_change_after_freeze_reports_state_changed(self) -> None:
+        """Given a frozen transcode: When source changes before write: Then
+        execute reports state_changed, does not overwrite dest, and disk stays
+        complete."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(dest)
+            prior = dest.read_bytes()
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {"Name": "rekordbox", "Version": "6.8.5", "Company": "AlphaTheta"},
+            )
+            output_root = skeleton_from(source_root)
+            manifest = converter_manifest.empty_manifest()
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=False,
+                manifest=manifest,
+            )
+            bind_complete_assignment(manifest, item, "WAV/A.wav")
+            from convert.rerun import Decision
+
+            src_stat = source_signature(src)
+            out_stat = output_signature(dest)
+            decision = Decision(
+                action="transcode",
+                reason="force",
+                write_kind="audio",
+                source_stat={"size": src_stat["size"], "mtime_ns": src_stat["mtime_ns"]},
+                dest_stat={"size": out_stat["size"], "mtime_ns": out_stat["mtime_ns"]},
+            )
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=[item],
+                manifest=manifest,
+                preview=ConversionPreview(
+                    selected=1,
+                    resolved=1,
+                    unique_outputs=1,
+                    duplicates=0,
+                    missing=0,
+                    items=[],
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+                decisions={(source_key(src), "wav"): decision},
+            )
+            src.write_bytes(b"fLaCchanged")
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"OVERWRITTEN")
+
+            with patch.object(
+                convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg
+            ), patch.object(
+                xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
+            ):
+                stats = execute_prepared(prepared, force=True)
+            self.assertEqual(stats.state_changed, [dest.name])
+            self.assertEqual(stats.conflicts, [])
+            self.assertEqual(encoded, [])
+            self.assertEqual(dest.read_bytes(), prior)
+            on_disk = converter_manifest.load_manifest(root)
+            record = on_disk.tracks[source_key(src)]["wav"]
+            self.assertEqual(assignment_state(record), "complete")
+
     def test_convert_unique_reclassifies_mtime_change_as_conflict(self) -> None:
         """Given preview would reuse: When dest mtime changes before write:
         Then convert_unique reports a conflict and does not overwrite dest."""
@@ -607,7 +810,7 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertEqual(assignment_state(rec_a), "complete")
             self.assertEqual(assignment_state(rec_b), "incomplete")
             plan.manifest = loaded
-            self.assertEqual(classify_item(plan, items[1], False), "transcode")
+            self.assertEqual(classify_item(plan, items[1], False).action, "transcode")
 
 
 if __name__ == "__main__":
