@@ -11,11 +11,11 @@ TRACKLIST_XML = """\
   <COLLECTION Entries="3">
     <TRACK TrackID="1" Name="Bestial" Artist="ABSL"
            Location="file://localhost/Users/me/music/Bestial.flac"
-           Kind="FLAC File" SampleRate="44100"/>
+           Kind="FLAC File" SampleRate="44100" Rating="255"/>
     <TRACK TrackID="2" Name="Revelation" Artist="Shogan"
            Location="file://localhost/Users/me/music/Revelation.aiff"
-           Kind="AIFF File" SampleRate="48000"/>
-    <TRACK TrackID="3" Name="NoLoc" Artist="Ghost" Kind="WAV File"/>
+           Kind="AIFF File" SampleRate="48000" Rating="102"/>
+    <TRACK TrackID="3" Name="NoLoc" Artist="Ghost" Kind="WAV File" Rating="0"/>
   </COLLECTION>
   <PLAYLISTS>
     <NODE Type="0" Name="ROOT" Count="2">

@@ -86,7 +86,7 @@ def build_tracklist_pane(
     bind_search(search_entry)
     tracklist_tree, track_scroll = tree_with_yscroll(
         right,
-        columns=("format", "bit_depth", "sample_rate"),
+        columns=("format", "bit_depth", "sample_rate", "rating"),
         show="tree headings",
         selectmode="extended",
         height=12,
@@ -112,10 +112,17 @@ def build_tracklist_pane(
         anchor="w",
         command=lambda: on_sort("sample_rate"),
     )
+    tracklist_tree.heading(
+        "rating",
+        text="Rating",
+        anchor="w",
+        command=lambda: on_sort("rating"),
+    )
     tracklist_tree.column("#0", stretch=True, minwidth=120)
     tracklist_tree.column("format", width=70, stretch=False, anchor="center")
     tracklist_tree.column("bit_depth", width=90, stretch=False, anchor="center")
     tracklist_tree.column("sample_rate", width=90, stretch=False, anchor="center")
+    tracklist_tree.column("rating", width=90, stretch=False, anchor="w")
     tracklist_tree.tag_configure(
         header_selected_tag,
         background=header_selected_bg,

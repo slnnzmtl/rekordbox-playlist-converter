@@ -357,8 +357,8 @@ class PlaylistsMixin:
         return False if entry is None else entry.virtual
 
     @staticmethod
-    def _track_preview_row(track) -> tuple[str, str, str, str]:
-        """Return (label, format, bit_depth, sample_rate) from a collection TRACK.
+    def _track_preview_row(track) -> tuple[str, str, str, str, str]:
+        """Return (label, format, bit_depth, sample_rate, rating) from a TRACK.
 
         Bit depth is always — here; file headers are filled asynchronously.
         """
@@ -411,7 +411,7 @@ class PlaylistsMixin:
             if node is None:
                 continue
             key_type = node.get("KeyType", "0")
-            matched: list[tuple[str, str, tuple[str, str, str], Path | None]] = []
+            matched: list[tuple[str, str, tuple[str, str, str, str], Path | None]] = []
             for entry in node.findall("TRACK"):
                 key = entry.get("Key") or ""
                 track = None
@@ -420,7 +420,7 @@ class PlaylistsMixin:
                         track = by_location.get(key)
                     else:
                         track = by_id.get(key)
-                label, fmt, depth, rate = self._track_preview_row(track)
+                label, fmt, depth, rate, rating = self._track_preview_row(track)
                 loc = (track.get("Location") or "") if track is not None else ""
                 path = runtime.decode_location(loc) if loc else None
                 if editing:
@@ -446,7 +446,7 @@ class PlaylistsMixin:
                     elif path not in seen_paths:
                         seen_paths.add(path)
                         paths.append(path)
-                matched.append((key, label, (fmt, depth, rate), path))
+                matched.append((key, label, (fmt, depth, rate, rating), path))
             if not matched:
                 continue
             group_key = (folder, name)
@@ -457,7 +457,7 @@ class PlaylistsMixin:
                 tk.END,
                 text=group_text,
                 open=is_open,
-                values=("", "", ""),
+                values=("", "", "", ""),
                 tags=(constants.TRACKLIST_HEADER_TAG,),
             )
             self._tracklist_group_iids[group_iid] = group_key
