@@ -81,15 +81,13 @@ def _pcm_origin_for_container_rewrite(
     return item.dest_path
 
 
-def _prebatch_incomplete_manifest(
+def _mutating_assignment_keys(
     prepared: PreparedConversion, force: bool
-) -> converter_manifest.ConverterManifest:
-    """Copy of the prepared manifest with planned mutations marked incomplete."""
-    clone = converter_manifest.ConverterManifest(
-        tracks=deepcopy(prepared.manifest.tracks)
-    )
+) -> set[tuple[str, str]]:
+    """Source/format keys that this batch will mutate and already have records."""
+    keys: set[tuple[str, str]] = set()
     if not prepared.plans:
-        return clone
+        return keys
     plan_by_item: dict[int, Plan] = {}
     for plan in prepared.plans:
         for item in plan.unique:
@@ -100,7 +98,42 @@ def _prebatch_incomplete_manifest(
         if action not in _MUTATING_ACTIONS:
             continue
         fmt = coerce_output_format(item.output_format)
-        record = clone.tracks.get(source_key(item.source_path), {}).get(fmt)
+        record = prepared.manifest.tracks.get(source_key(item.source_path), {}).get(fmt)
+        if record is None:
+            continue
+        keys.add((source_key(item.source_path), fmt))
+    return keys
+
+
+def _save_manifest_with_pending(
+    manifest: converter_manifest.ConverterManifest,
+    library_dir: Path,
+    pending: set[tuple[str, str]],
+) -> None:
+    """Persist in-memory records, overlaying incomplete on unfinished mutations."""
+    clone = converter_manifest.ConverterManifest(tracks=deepcopy(manifest.tracks))
+    for key, fmt in pending:
+        record = clone.tracks.get(key, {}).get(fmt)
+        if record is None:
+            continue
+        mark_incomplete(record)
+    converter_manifest.save_manifest(clone, library_dir)
+
+
+def _prebatch_incomplete_manifest(
+    prepared: PreparedConversion,
+    force: bool,
+    pending: set[tuple[str, str]] | None = None,
+) -> converter_manifest.ConverterManifest:
+    """Copy of the prepared manifest with planned mutations marked incomplete."""
+    clone = converter_manifest.ConverterManifest(
+        tracks=deepcopy(prepared.manifest.tracks)
+    )
+    keys = pending if pending is not None else _mutating_assignment_keys(
+        prepared, force
+    )
+    for key, fmt in keys:
+        record = clone.tracks.get(key, {}).get(fmt)
         if record is None:
             continue
         mark_incomplete(record)
@@ -117,6 +150,7 @@ def convert_unique(
     items: list[PlannedTrack] | None = None,
     workers: int | None = None,
     checkpoint_every: int | None = None,
+    pending_assignments: set[tuple[str, str]] | None = None,
 ) -> ConvertStats:
     """Encode/copy/reuse unique planned tracks; wait in-flight on cancel."""
     stats = ConvertStats()
@@ -127,6 +161,7 @@ def convert_unique(
     stats_lock = threading.Lock()
     cover_lock = threading.Lock()
     checkpointed = 0
+    pending = pending_assignments if pending_assignments is not None else set()
 
     def finish(action: str, name: str) -> None:
         nonlocal completed
@@ -155,11 +190,12 @@ def convert_unique(
             output=output_signature(item.dest_path),
             recipe=recipe_from_item(item),
         )
+        pending.discard((source_key(item.source_path), fmt))
         if not checkpoint_every:
             return
         checkpointed += 1
         if checkpointed % checkpoint_every == 0:
-            converter_manifest.save_manifest(plan.manifest, plan.library_dir)
+            _save_manifest_with_pending(plan.manifest, plan.library_dir, pending)
 
     def process_one(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
@@ -326,8 +362,10 @@ def execute_prepared(
     Encode cancel waits in-flight; successes still receive apply_xml + write.
     Hosts map cancel vs errors vs ok from the returned stats and cancel_event.
     """
+    pending = _mutating_assignment_keys(prepared, force)
     converter_manifest.save_manifest(
-        _prebatch_incomplete_manifest(prepared, force), prepared.library_dir
+        _prebatch_incomplete_manifest(prepared, force, pending),
+        prepared.library_dir,
     )
     plans = prepared.plans
     stats = convert_unique(
@@ -339,8 +377,9 @@ def execute_prepared(
         items=prepared.items,
         workers=workers,
         checkpoint_every=checkpoint_every,
+        pending_assignments=pending,
     )
-    converter_manifest.save_manifest(prepared.manifest, prepared.library_dir)
+    _save_manifest_with_pending(prepared.manifest, prepared.library_dir, pending)
     appended_by_plan: list[int] = []
     for one_plan in plans:
         appended_by_plan.append(xml_output.apply_xml(one_plan, stats.succeeded))

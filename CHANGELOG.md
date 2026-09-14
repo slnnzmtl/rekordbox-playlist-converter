@@ -9,8 +9,10 @@
   metadata, rewrite container, transcode, recreate missing, in-place skip, or
   conflict. Preview and execute share the classifier; execute reclassifies on a
   fresh filesystem snapshot. Mutating writes save incomplete first, then persist
-  complete signatures after a successful replace. Conflicts are not overwritten
-  and keep existing Import XML / playlist keys.
+  complete signatures after a successful replace. Mid-batch checkpoints and the
+  final save keep unfinished mutations incomplete on disk so a crash cannot look
+  like an external edit. Conflicts are not overwritten and keep existing Import
+  XML / playlist keys.
 
 - GUI **Unknown** playlist lists collection tracks that are not in any playlist.
 - GUI tracklist shows artist and title without a file-extension suffix;
