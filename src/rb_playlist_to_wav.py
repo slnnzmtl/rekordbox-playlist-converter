@@ -19,6 +19,7 @@ from convert import (
     prepare,
     prepare_batch,
 )
+from convert.models import format_conversion_counts
 from convert.plan import DEFAULT_OUTPUT, DEFAULT_WAV_DIR
 from convert.preview import (
     build_conversion_preview,
@@ -318,6 +319,10 @@ def run_convert_batch(
                 converted=stats.converted if i == 0 else 0,
                 copied=stats.copied if i == 0 else 0,
                 skipped=stats.skipped if i == 0 else 0,
+                pcm_rebuilt=stats.pcm_rebuilt if i == 0 else 0,
+                metadata_refreshed=stats.metadata_refreshed if i == 0 else 0,
+                reused=stats.reused if i == 0 else 0,
+                recreated=stats.recreated if i == 0 else 0,
                 conflicts=list(stats.conflicts) if i == 0 else [],
                 errors=list(stats.errors) if i == len(plans) - 1 else [],
                 succeeded=set(stats.succeeded),
@@ -397,18 +402,7 @@ def print_summary(
         return
     assert stats is not None
     print("Converted:")
-    parts = []
-    if stats.converted:
-        parts.append(f"{stats.converted} converted")
-    if stats.copied:
-        parts.append(f"{stats.copied} copied")
-    if stats.skipped:
-        parts.append(f"{stats.skipped} skipped")
-    if stats.conflicts:
-        n = len(stats.conflicts)
-        parts.append(f"{n} conflict{'s' if n != 1 else ''}")
-    if plan.warnings:
-        parts.append(f"{len(plan.warnings)} missing skipped")
+    parts = format_conversion_counts(stats, missing=len(plan.warnings))
     if not parts:
         parts.append(f"{unique_n} audio files")
     print(f"{', '.join(parts)} → {plan.media_dir}")
@@ -421,6 +415,16 @@ def print_summary(
         print(f"{plan.wav_playlist_name} (+{stats.appended} entries)")
     else:
         print(plan.wav_playlist_name)
+    if stats.conflicts:
+        print()
+        print("Conflicts:")
+        for name in stats.conflicts:
+            print(name)
+    if stats.errors:
+        print()
+        print("Failed:")
+        for err in stats.errors:
+            print(err)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -321,6 +321,10 @@ def execute_item(
         if action == "refresh_xml":
             with ctx.stats_lock:
                 ctx.checkpoint.mark_item_complete(item)
+                ctx.stats.metadata_refreshed += 1
+        else:
+            with ctx.stats_lock:
+                ctx.stats.reused += 1
         with ctx.stats_lock:
             ctx.stats.skipped += 1
         ctx.mark_succeeded(item)
@@ -352,6 +356,8 @@ def execute_item(
             )
             with ctx.stats_lock:
                 ctx.checkpoint.mark_item_complete(item)
+                ctx.stats.metadata_refreshed += 1
+                ctx.stats.skipped += 1
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
             return _item_result(item, action, "succeeded", write="copy")
@@ -371,6 +377,7 @@ def execute_item(
                 action = "transcode"
             else:
                 with ctx.stats_lock:
+                    ctx.stats.pcm_rebuilt += 1
                     ctx.stats.copied += 1
                     ctx.checkpoint.mark_item_complete(item)
                 ctx.mark_succeeded(item)
@@ -415,6 +422,7 @@ def execute_item(
                 action = "transcode"
             else:
                 with ctx.stats_lock:
+                    ctx.stats.pcm_rebuilt += 1
                     ctx.stats.copied += 1
                     ctx.checkpoint.mark_item_complete(item)
                 ctx.mark_succeeded(item)
@@ -440,6 +448,8 @@ def execute_item(
                     ctx.stats.copied += 1
                 else:
                     ctx.stats.converted += 1
+                if action == "recreate_missing":
+                    ctx.stats.recreated += 1
                 ctx.checkpoint.mark_item_complete(item)
             ctx.mark_succeeded(item)
             write = "copy" if item.passthrough else "transcode"
@@ -451,6 +461,8 @@ def execute_item(
             )
             with ctx.stats_lock:
                 ctx.stats.copied += 1
+                if action == "recreate_missing":
+                    ctx.stats.recreated += 1
                 ctx.checkpoint.mark_item_complete(item)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
@@ -469,6 +481,8 @@ def execute_item(
         )
         with ctx.stats_lock:
             ctx.stats.converted += 1
+            if action == "recreate_missing":
+                ctx.stats.recreated += 1
             ctx.checkpoint.mark_item_complete(item)
         ctx.mark_succeeded(item)
         ctx.finish("convert", name)

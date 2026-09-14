@@ -8,7 +8,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
-from convert.models import PreparedConversion
+from convert.models import ConvertStats, PreparedConversion, format_conversion_counts
 from convert.quality import (
     coerce_bit_depth,
     coerce_output_format,
@@ -317,16 +317,10 @@ class ConvertFlowMixin:
                 return
 
             for i, plan in enumerate(plans):
-                parts = []
-                if batch_stats.converted and plan is plans[0]:
-                    parts.append(f"{batch_stats.converted} converted")
-                if batch_stats.copied and plan is plans[0]:
-                    parts.append(f"{batch_stats.copied} copied")
-                if batch_stats.skipped and plan is plans[0]:
-                    parts.append(f"{batch_stats.skipped} skipped")
-                if batch_stats.conflicts and plan is plans[0]:
-                    n = len(batch_stats.conflicts)
-                    parts.append(f"{n} conflict{'s' if n != 1 else ''}")
+                counts = batch_stats if i == 0 else ConvertStats()
+                parts = format_conversion_counts(
+                    counts, missing=len(plan.warnings)
+                )
                 appended = (
                     batch_stats.appended_by_plan[i]
                     if i < len(batch_stats.appended_by_plan)
@@ -334,10 +328,14 @@ class ConvertFlowMixin:
                 )
                 if appended:
                     parts.append(f"+{appended} playlist entries")
-                if plan.warnings:
-                    parts.append(f"{len(plan.warnings)} missing skipped")
                 detail = ", ".join(parts) if parts else "done"
                 summaries.append(f"{plan.wav_playlist_name}: {detail}")
+            if batch_stats.errors:
+                summaries.append("Failed:")
+                summaries.extend(batch_stats.errors)
+            if batch_stats.conflicts:
+                summaries.append("Conflicts:")
+                summaries.extend(batch_stats.conflicts)
 
             if self._cancel_event.is_set():
                 _finish_cancel_with_errors(batch_stats.errors or None)
@@ -346,11 +344,12 @@ class ConvertFlowMixin:
                 self._ui(lambda: self._set_progress(0, 0))
             else:
                 self._ui(lambda t=total: self._set_progress(t, t))
-            if batch_stats.errors:
-                self._ui(lambda e=batch_stats.errors: self._finish_error(e))
-                return
             out = str(output)
-            if total_successful_conversions([batch_stats]) == 0:
+            if (
+                total_successful_conversions([batch_stats]) == 0
+                and not batch_stats.errors
+                and not batch_stats.conflicts
+            ):
                 self._ui(
                     lambda s=summaries, w=skipped: self._finish_no_conversions(s, w)
                 )

@@ -456,6 +456,7 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertEqual(encoded, [])
             self.assertEqual(stats.converted, 0)
             self.assertEqual(stats.skipped, 1)
+            self.assertEqual(stats.metadata_refreshed, 1)
             self.assertEqual(dest.read_bytes(), prior)
             written = ET.parse(plan.output).getroot()
             tracks = written.findall("COLLECTION/TRACK")

@@ -249,17 +249,18 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 execute.assert_called()
 
                 showerror.assert_not_called()
-                show_list.assert_called()
-                joined = list_dialog_text(show_list)
+                joined = ""
+                if show_list.called:
+                    joined = list_dialog_text(show_list)
+                self.assertTrue(
+                    show_done.called,
+                    "mixed success and encode errors must still show the Done report",
+                )
+                done_msg = show_done.call_args[0][0]
                 self.assertIn(
                     "boom",
-                    joined,
-                    "encode errors must appear in the scrollable list "
-                    f"dialog; got lines={joined!r}",
-                )
-                self.assertFalse(
-                    show_done.called,
-                    "must not finish as a clean Done when encode errors exist",
+                    f"{joined}\n{done_msg}",
+                    "encode errors must appear in the conversion report",
                 )
                 self.assertFalse(app._busy)
         except tk.TclError:
