@@ -351,7 +351,9 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             dest = root / "out.aiff"
             write_pcm_aiff(dest)
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
-            cdj_aiff.write_aiff_id3(dest, el, None)
+            cdj_aiff.write_aiff_id3(
+                dest, el, None, bit_depth=16, sample_rate=44100
+            )
             real_parse = cdj_aiff.parse_aiff_audio
             calls = {"n": 0}
 
@@ -368,6 +370,23 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                     )
                 )
             self.assertEqual(calls["n"], 1)
+
+    def test_write_aiff_id3_rejects_invalid_sidecar_and_leaves_dest(self) -> None:
+        """Given write_aiff_id3 builds a sidecar that fails canonical check:
+        When it runs: Then dest is unchanged and the sidecar is deleted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "out.aiff"
+            write_pcm_aiff(dest)
+            prior = dest.read_bytes()
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            sidecar = dest.with_name(dest.name + "~")
+            with mock.patch.object(
+                cdj_aiff, "is_canonical_aiff_output", return_value=False
+            ):
+                with self.assertRaises(CliError):
+                    cdj_aiff.write_aiff_id3(dest, el, None)
+            self.assertEqual(dest.read_bytes(), prior)
+            self.assertFalse(sidecar.exists())
 
     def test_extract_id3_chunk_does_not_read_ssnd_payload(self) -> None:
         """Given a large AIFF with ID3: When _extract_id3_chunk runs: Then it
@@ -414,7 +433,9 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             )
             shutil_copy = __import__("shutil").copy2
             shutil_copy(src, dest)
-            cdj_aiff.write_aiff_id3(dest, el, None)
+            cdj_aiff.write_aiff_id3(
+                dest, el, None, bit_depth=16, sample_rate=44100
+            )
             self.assertTrue(
                 cdj_aiff.is_cdj_safe_aiff(dest, bit_depth=16, sample_rate=44100)
             )
@@ -492,7 +513,7 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             dest.parent.mkdir()
             write_pcm_aiff(dest)
             old_el = ET.Element("TRACK", {"Name": "Old", "Artist": "DJ"})
-            cdj_aiff.write_aiff_id3(dest, old_el, None)
+            cdj_aiff.write_aiff_id3(dest, old_el, None, bit_depth=16, sample_rate=44100)
             before_ssnd = cdj_aiff.ssnd_pcm_bytes(dest)
             el = ET.Element("TRACK", {"Name": "Old", "Artist": "DJ"})
             item = PlannedTrack(
@@ -541,6 +562,69 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             assert tag is not None
             text, _cover = cdj_aiff._read_id3_frames(tag)
             self.assertEqual(text.get("TIT2"), "New")
+
+    def test_update_metadata_failed_validation_leaves_dest(self) -> None:
+        """Given update_metadata sidecar fails canonical check: When convert:
+        Then dest ID3 and PCM stay unchanged, ffmpeg is not called, and an
+        error is recorded."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "AIFF" / "out.aiff"
+            dest.parent.mkdir()
+            write_pcm_aiff(dest)
+            old_el = ET.Element("TRACK", {"Name": "Old", "Artist": "DJ"})
+            cdj_aiff.write_aiff_id3(dest, old_el, None, bit_depth=16, sample_rate=44100)
+            prior = dest.read_bytes()
+            el = ET.Element("TRACK", {"Name": "Old", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16be",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="aiff",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [AIFF]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                output_format="aiff",
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "AIFF/out.aiff")
+            el.set("Name", "New")
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"NOT-AIFF")
+
+            with mock.patch.object(
+                convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg
+            ), mock.patch.object(
+                cdj_aiff, "is_canonical_aiff_output", return_value=False
+            ):
+                stats = convert_unique(plan, force=False)
+            self.assertEqual(encoded, [])
+            self.assertEqual(dest.read_bytes(), prior)
+            self.assertFalse(dest.with_name(dest.name + "~").exists())
+            self.assertTrue(stats.errors)
 
     def test_rewrite_container_keeps_aiff_ssnd_without_ffmpeg(self) -> None:
         """Given a complete AIFF dest whose recipe revision differs: When convert:
@@ -897,7 +981,11 @@ class ApplyXmlRefreshTests(unittest.TestCase):
             dest = root / "t.aiff"
             write_pcm_aiff(dest)
             cdj_aiff.write_aiff_id3(
-                dest, ET.Element("TRACK", {"Name": "Old"}), None
+                dest,
+                ET.Element("TRACK", {"Name": "Old"}),
+                None,
+                bit_depth=16,
+                sample_rate=44100,
             )
             source_old = ET.Element(
                 "TRACK",

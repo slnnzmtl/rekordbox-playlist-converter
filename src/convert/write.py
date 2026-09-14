@@ -6,6 +6,7 @@ import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -32,6 +33,7 @@ from convert import format_policy
 from convert import plan as plan_module
 from convert.models import (
     ConvertStats,
+    ItemResult,
     Plan,
     PlannedTrack,
     PreparedConversion,
@@ -227,6 +229,259 @@ def _prebatch_incomplete_manifest(
     return clone
 
 
+@dataclass
+class ExecuteContext:
+    """Shared convert_unique state for one item execution."""
+
+    plan: Plan
+    force: bool
+    cancel_event: threading.Event | None
+    cover_lock: threading.Lock
+    stats: ConvertStats
+    stats_lock: threading.Lock
+    checkpoint: ManifestCheckpoint
+    finish: Callable[[str, str], None]
+
+    def mark_succeeded(self, item: PlannedTrack) -> None:
+        fmt = coerce_output_format(item.output_format)
+        with self.stats_lock:
+            self.stats.succeeded.add((source_key(item.source_path), fmt))
+
+
+def _item_result(
+    item: PlannedTrack,
+    action: str,
+    outcome: str,
+    *,
+    error: str | None = None,
+    write: str = "",
+) -> ItemResult:
+    return ItemResult(
+        source=item.source_path,
+        destination=item.dest_path,
+        action=action,
+        outcome=outcome,
+        error=error,
+        write=write,
+    )
+
+
+def _snapshot_blocks_write(
+    item: PlannedTrack, decision: Decision, ctx: ExecuteContext
+) -> ItemResult | None:
+    """Return a blocking result if frozen stats no longer match."""
+    name = item.dest_name
+    key_src = decision.source_stat
+    if key_src is not None:
+        current_src = file_snapshot(item.source_path)
+        if current_src is None or not snapshots_match(key_src, current_src):
+            with ctx.stats_lock:
+                ctx.checkpoint.discard_pending_and_save(item)
+                ctx.stats.state_changed.append(name)
+            ctx.finish("state_changed", name)
+            return _item_result(item, decision.action, "state_changed")
+    frozen_dest = decision.dest_stat
+    current_dest = file_snapshot(item.dest_path)
+    dest_changed = (frozen_dest is None and current_dest is not None) or (
+        frozen_dest is not None and not snapshots_match(frozen_dest, current_dest)
+    )
+    if dest_changed:
+        with ctx.stats_lock:
+            ctx.checkpoint.discard_pending_and_save(item)
+            ctx.stats.conflicts.append(name)
+        ctx.finish("conflict", name)
+        return _item_result(item, decision.action, "conflict")
+    return None
+
+
+def execute_item(
+    item: PlannedTrack,
+    decision: Decision | None,
+    ctx: ExecuteContext,
+) -> ItemResult:
+    """Run one planned item using a frozen decision, or classify if none."""
+    if ctx.cancel_event is not None and ctx.cancel_event.is_set():
+        return _item_result(item, "cancelled", "cancelled")
+    name = item.dest_name
+    is_aiff = coerce_output_format(item.output_format) == "aiff"
+    if decision is not None:
+        blocked = _snapshot_blocks_write(item, decision, ctx)
+        if blocked is not None:
+            return blocked
+        action = decision.action
+    else:
+        action = format_policy.planned_action(
+            ctx.plan,
+            item,
+            ctx.force,
+            cover_lock=ctx.cover_lock,
+            cancel_event=ctx.cancel_event,
+        )
+    if action in {"reuse", "in_place_noop", "refresh_xml"}:
+        if action == "refresh_xml":
+            with ctx.stats_lock:
+                ctx.checkpoint.mark_item_complete(item)
+        with ctx.stats_lock:
+            ctx.stats.skipped += 1
+        ctx.mark_succeeded(item)
+        ctx.finish("skip", name)
+        return _item_result(item, action, "succeeded")
+    if action == "external_modification_conflict":
+        with ctx.stats_lock:
+            ctx.checkpoint.discard_pending_and_save(item)
+            ctx.stats.conflicts.append(name)
+        ctx.finish("conflict", name)
+        return _item_result(item, action, "conflict")
+    try:
+        converter_manifest.ensure_dest_path_under_wav_dir(
+            ctx.plan.library_dir, item.dest_path
+        )
+        if action == "update_metadata":
+            cover = plan_module.cached_cover_jpeg(
+                item.source_path,
+                ctx.plan.cover_cache,
+                lock=ctx.cover_lock,
+                cancel_event=ctx.cancel_event,
+            )
+            write_aiff_id3(
+                item.dest_path,
+                item.source_el,
+                cover,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+            )
+            with ctx.stats_lock:
+                ctx.checkpoint.mark_item_complete(item)
+            ctx.mark_succeeded(item)
+            ctx.finish("copy", name)
+            return _item_result(item, action, "succeeded", write="copy")
+        if action == "rewrite_container" and not is_aiff:
+            pcm_src = _pcm_origin_for_container_rewrite(ctx.plan, item, ctx.force)
+            try:
+                _replace_via_sidecar(
+                    item.dest_path,
+                    lambda sidecar, src=pcm_src: rewrite_wav_pcm(src, sidecar),
+                    validate=lambda path: is_cdj_safe_wav(
+                        path,
+                        bit_depth=item.bit_depth,
+                        sample_rate=item.sample_rate,
+                    ),
+                )
+            except CliError:
+                action = "transcode"
+            else:
+                with ctx.stats_lock:
+                    ctx.stats.copied += 1
+                    ctx.checkpoint.mark_item_complete(item)
+                ctx.mark_succeeded(item)
+                ctx.finish("copy", name)
+                return _item_result(
+                    item, "rewrite_container", "succeeded", write="copy"
+                )
+        if action == "rewrite_container" and is_aiff:
+            cover = plan_module.cached_cover_jpeg(
+                item.source_path,
+                ctx.plan.cover_cache,
+                lock=ctx.cover_lock,
+                cancel_event=ctx.cancel_event,
+            )
+
+            def write_aiff_sidecar(sidecar: Path) -> None:
+                pcm_src = _pcm_origin_for_container_rewrite(
+                    ctx.plan, item, ctx.force
+                )
+                normalize_aiff_audio_chunks(pcm_src, sidecar)
+                write_aiff_id3(
+                    sidecar,
+                    item.source_el,
+                    cover,
+                    bit_depth=item.bit_depth,
+                    sample_rate=item.sample_rate,
+                )
+
+            try:
+                _replace_via_sidecar(
+                    item.dest_path,
+                    write_aiff_sidecar,
+                    validate=lambda path: is_canonical_aiff_output(
+                        path,
+                        item.source_el,
+                        cover,
+                        bit_depth=item.bit_depth,
+                        sample_rate=item.sample_rate,
+                    ),
+                )
+            except CliError:
+                action = "transcode"
+            else:
+                with ctx.stats_lock:
+                    ctx.stats.copied += 1
+                    ctx.checkpoint.mark_item_complete(item)
+                ctx.mark_succeeded(item)
+                ctx.finish("copy", name)
+                return _item_result(
+                    item, "rewrite_container", "succeeded", write="copy"
+                )
+        if is_aiff:
+            plan_module.write_aiff_output(
+                item.source_path,
+                item.dest_path,
+                item.source_el,
+                passthrough=item.passthrough,
+                codec=item.codec,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+                cover_cache=ctx.plan.cover_cache,
+                cancel_event=ctx.cancel_event,
+                cover_lock=ctx.cover_lock,
+            )
+            with ctx.stats_lock:
+                if item.passthrough:
+                    ctx.stats.copied += 1
+                else:
+                    ctx.stats.converted += 1
+                ctx.checkpoint.mark_item_complete(item)
+            ctx.mark_succeeded(item)
+            write = "copy" if item.passthrough else "transcode"
+            ctx.finish("copy" if item.passthrough else "convert", name)
+            return _item_result(item, action, "succeeded", write=write)
+        if item.passthrough:
+            copy_wav_atomic(
+                item.source_path, item.dest_path, cancel_event=ctx.cancel_event
+            )
+            with ctx.stats_lock:
+                ctx.stats.copied += 1
+                ctx.checkpoint.mark_item_complete(item)
+            ctx.mark_succeeded(item)
+            ctx.finish("copy", name)
+            return _item_result(item, action, "succeeded", write="copy")
+        if not item.codec:
+            raise CliError(f"no codec planned for {item.source_path}")
+        plan_module.run_ffmpeg(
+            item.source_path,
+            item.dest_path,
+            item.codec,
+            force=True,
+            sample_rate=item.sample_rate,
+            bit_depth=item.bit_depth,
+            cancel_event=ctx.cancel_event,
+            output_format=item.output_format,
+        )
+        with ctx.stats_lock:
+            ctx.stats.converted += 1
+            ctx.checkpoint.mark_item_complete(item)
+        ctx.mark_succeeded(item)
+        ctx.finish("convert", name)
+        return _item_result(item, action, "succeeded", write="transcode")
+    except CancelledError:
+        return _item_result(item, action, "cancelled")
+    except Exception as exc:  # noqa: BLE001 — collect all; report after pool
+        with ctx.stats_lock:
+            ctx.stats.errors.append(str(exc))
+        ctx.finish("error", name)
+        return _item_result(item, action, "failed", error=str(exc))
+
+
 def convert_unique(
     plan: Plan,
     force: bool,
@@ -258,201 +513,22 @@ def convert_unique(
             done = completed
         bar.update(done, action, name)
 
-    def mark_succeeded(item: PlannedTrack) -> None:
-        fmt = coerce_output_format(item.output_format)
-        with stats_lock:
-            stats.succeeded.add((source_key(item.source_path), fmt))
+    ctx = ExecuteContext(
+        plan=plan,
+        force=force,
+        cancel_event=cancel_event,
+        cover_lock=cover_lock,
+        stats=stats,
+        stats_lock=stats_lock,
+        checkpoint=checkpoint,
+        finish=finish,
+    )
 
-    def complete_assignment(item: PlannedTrack) -> None:
-        checkpoint.mark_item_complete(item)
-
-    def clear_pending_checkpoint(item: PlannedTrack) -> None:
-        checkpoint.discard_pending_and_save(item)
-
-    def snapshot_blocks_write(
-        item: PlannedTrack, decision: Decision, name: str
-    ) -> bool:
-        """Return True if frozen stats no longer match; records conflict/state_changed."""
-        key_src = decision.source_stat
-        if key_src is not None:
-            current_src = file_snapshot(item.source_path)
-            if current_src is None or not snapshots_match(key_src, current_src):
-                with stats_lock:
-                    clear_pending_checkpoint(item)
-                    stats.state_changed.append(name)
-                finish("state_changed", name)
-                return True
-        frozen_dest = decision.dest_stat
-        current_dest = file_snapshot(item.dest_path)
-        dest_changed = (frozen_dest is None and current_dest is not None) or (
-            frozen_dest is not None and not snapshots_match(frozen_dest, current_dest)
-        )
-        if dest_changed:
-            with stats_lock:
-                clear_pending_checkpoint(item)
-                stats.conflicts.append(name)
-            finish("conflict", name)
-            return True
-        return False
-
-    def execute_item(item: PlannedTrack) -> None:
-        if cancel_event is not None and cancel_event.is_set():
-            return
-        name = item.dest_name
-        is_aiff = coerce_output_format(item.output_format) == "aiff"
+    def run_item(item: PlannedTrack) -> ItemResult:
         fmt = coerce_output_format(item.output_format)
         key = (source_key(item.source_path), fmt)
-        decision = decisions.get(key) if decisions else None
-        if decision is not None:
-            if snapshot_blocks_write(item, decision, name):
-                return
-            action = decision.action
-        else:
-            action = format_policy.planned_action(
-                plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
-            )
-        if action in {"reuse", "in_place_noop", "refresh_xml"}:
-            if action == "refresh_xml":
-                with stats_lock:
-                    complete_assignment(item)
-            with stats_lock:
-                stats.skipped += 1
-            mark_succeeded(item)
-            finish("skip", name)
-            return
-        if action == "external_modification_conflict":
-            with stats_lock:
-                clear_pending_checkpoint(item)
-                stats.conflicts.append(name)
-            finish("conflict", name)
-            return
-        try:
-            converter_manifest.ensure_dest_path_under_wav_dir(
-                plan.library_dir, item.dest_path
-            )
-            if action == "update_metadata":
-                cover = plan_module.cached_cover_jpeg(
-                    item.source_path,
-                    plan.cover_cache,
-                    lock=cover_lock,
-                    cancel_event=cancel_event,
-                )
-                write_aiff_id3(item.dest_path, item.source_el, cover)
-                with stats_lock:
-                    complete_assignment(item)
-                mark_succeeded(item)
-                finish("copy", name)
-                return
-            if action == "rewrite_container" and not is_aiff:
-                pcm_src = _pcm_origin_for_container_rewrite(plan, item, force)
-                try:
-                    _replace_via_sidecar(
-                        item.dest_path,
-                        lambda sidecar, src=pcm_src: rewrite_wav_pcm(src, sidecar),
-                        validate=lambda path: is_cdj_safe_wav(
-                            path,
-                            bit_depth=item.bit_depth,
-                            sample_rate=item.sample_rate,
-                        ),
-                    )
-                except CliError:
-                    action = "transcode"
-                else:
-                    with stats_lock:
-                        stats.copied += 1
-                        complete_assignment(item)
-                    mark_succeeded(item)
-                    finish("copy", name)
-                    return
-            if action == "rewrite_container" and is_aiff:
-                cover = plan_module.cached_cover_jpeg(
-                    item.source_path,
-                    plan.cover_cache,
-                    lock=cover_lock,
-                    cancel_event=cancel_event,
-                )
-
-                def write_aiff_sidecar(sidecar: Path) -> None:
-                    pcm_src = _pcm_origin_for_container_rewrite(plan, item, force)
-                    normalize_aiff_audio_chunks(pcm_src, sidecar)
-                    write_aiff_id3(sidecar, item.source_el, cover)
-
-                try:
-                    _replace_via_sidecar(
-                        item.dest_path,
-                        write_aiff_sidecar,
-                        validate=lambda path: is_canonical_aiff_output(
-                            path,
-                            item.source_el,
-                            cover,
-                            bit_depth=item.bit_depth,
-                            sample_rate=item.sample_rate,
-                        ),
-                    )
-                except CliError:
-                    action = "transcode"
-                else:
-                    with stats_lock:
-                        stats.copied += 1
-                        complete_assignment(item)
-                    mark_succeeded(item)
-                    finish("copy", name)
-                    return
-            if is_aiff:
-                plan_module.write_aiff_output(
-                    item.source_path,
-                    item.dest_path,
-                    item.source_el,
-                    passthrough=item.passthrough,
-                    codec=item.codec,
-                    bit_depth=item.bit_depth,
-                    sample_rate=item.sample_rate,
-                    cover_cache=plan.cover_cache,
-                    cancel_event=cancel_event,
-                    cover_lock=cover_lock,
-                )
-                with stats_lock:
-                    if item.passthrough:
-                        stats.copied += 1
-                    else:
-                        stats.converted += 1
-                    complete_assignment(item)
-                mark_succeeded(item)
-                finish("copy" if item.passthrough else "convert", name)
-                return
-            if item.passthrough:
-                copy_wav_atomic(
-                    item.source_path, item.dest_path, cancel_event=cancel_event
-                )
-                with stats_lock:
-                    stats.copied += 1
-                    complete_assignment(item)
-                mark_succeeded(item)
-                finish("copy", name)
-                return
-            if not item.codec:
-                raise CliError(f"no codec planned for {item.source_path}")
-            plan_module.run_ffmpeg(
-                item.source_path,
-                item.dest_path,
-                item.codec,
-                force=True,
-                sample_rate=item.sample_rate,
-                bit_depth=item.bit_depth,
-                cancel_event=cancel_event,
-                output_format=item.output_format,
-            )
-            with stats_lock:
-                stats.converted += 1
-                complete_assignment(item)
-            mark_succeeded(item)
-            finish("convert", name)
-        except CancelledError:
-            return
-        except Exception as exc:  # noqa: BLE001 — collect all; report after pool
-            with stats_lock:
-                stats.errors.append(str(exc))
-            finish("error", name)
+        frozen = decisions.get(key) if decisions else None
+        return execute_item(item, frozen, ctx)
 
     try:
         if not items:
@@ -461,7 +537,7 @@ def convert_unique(
             len(items), workers=workers
         )
         with ThreadPoolExecutor(max_workers=effective_workers) as pool:
-            futures = [pool.submit(execute_item, item) for item in items]
+            futures = [pool.submit(run_item, item) for item in items]
             for fut in as_completed(futures):
                 fut.result()
     finally:

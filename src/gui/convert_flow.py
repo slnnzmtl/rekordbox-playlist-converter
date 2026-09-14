@@ -14,6 +14,7 @@ from convert.quality import (
     coerce_output_format,
     coerce_sample_rate,
 )
+from convert.rerun import ACTION_LABELS
 from gui import constants
 from gui import dialogs as gui_dialogs
 from gui import runtime
@@ -215,7 +216,7 @@ class ConvertFlowMixin:
             self.root,
             summary=summary,
             items=preview.items,
-            action_labels=constants.PREVIEW_ACTION_LABELS,
+            action_labels=ACTION_LABELS,
             bit_depth_labels=constants.BIT_DEPTH_LABELS,
             sample_rate_labels=constants.SAMPLE_RATE_LABELS,
             space_issue=space_issue,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import struct
 import subprocess
 import tempfile
@@ -403,29 +404,46 @@ def normalize_aiff_audio_chunks(source: Path, dest: Path) -> None:
 
 
 def write_aiff_id3(
-    path: Path, source_el: ET.Element, cover_jpeg: bytes | None
+    path: Path,
+    source_el: ET.Element,
+    cover_jpeg: bytes | None,
+    *,
+    bit_depth: int = 24,
+    sample_rate: int = 48000,
 ) -> None:
-    """Replace/add ID3 chunk; drop NAME and other non-COMM/SSND/ID3 chunks."""
+    """Replace/add ID3 chunk; drop NAME and other non-COMM/SSND/ID3 chunks.
+
+    Writes a sidecar, validates it, then replaces dest. On failure the sidecar
+    is deleted and dest is left unchanged.
+    """
     text = expected_id3_text_from_track(source_el)
     tag = build_id3v23_tag(text, cover_jpeg)
     parse_aiff_audio(path)
     id3_chunk = b"ID3 " + struct.pack(">I", len(tag)) + tag
     if len(tag) % 2:
         id3_chunk += b"\x00"
-    tmp = path.with_name(path.name + ".tmp")
+    sidecar = path.with_name(path.name + "~")
     try:
         with path.open("rb") as src:
             src.seek(0, 2)
             end = src.tell()
             selected = _stream_comm_ssnd_chunks(src, end)
-            with tmp.open("wb") as out:
+            with sidecar.open("wb") as out:
                 _write_form_aiff_chunks(src, out, selected, extra=id3_chunk)
-        tmp.replace(path)
+        if not is_canonical_aiff_output(
+            sidecar,
+            source_el,
+            cover_jpeg,
+            bit_depth=bit_depth,
+            sample_rate=sample_rate,
+        ):
+            raise CliError(f"sidecar failed validation for {path}")
+        os.replace(sidecar, path)
     except OSError as exc:
-        tmp.unlink(missing_ok=True)
+        sidecar.unlink(missing_ok=True)
         raise CliError(f"cannot write AIFF: {path}: {exc}") from exc
     except Exception:
-        tmp.unlink(missing_ok=True)
+        sidecar.unlink(missing_ok=True)
         raise
 
 
