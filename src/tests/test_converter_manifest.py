@@ -216,6 +216,54 @@ class ManifestValidationTests(unittest.TestCase):
                 errors = cm.validate_manifest_data(data, self.wav_dir)
                 self.assertTrue(any("hash" in e for e in errors), errors)
 
+    def test_validate_rejects_bad_freshness_types(self) -> None:
+        """Given malformed state, stats, or recipe values: When validate: Then
+        each bad type is reported."""
+        dest = "WAV/Artist - Track.wav"
+        cases = [
+            ({"dest": dest, "state": "done"}, "state"),
+            ({"dest": dest, "source": {"size": "10", "mtime_ns": 1}}, "size"),
+            ({"dest": dest, "source": {"size": 10, "mtime_ns": 1.5}}, "mtime"),
+            (
+                {
+                    "dest": dest,
+                    "recipe": {
+                        "format": "mp3",
+                        "bit_depth": 24,
+                        "sample_rate": 48000,
+                        "channels": 2,
+                        "revision": 1,
+                    },
+                },
+                "format",
+            ),
+            (
+                {
+                    "dest": dest,
+                    "recipe": {
+                        "format": "wav",
+                        "bit_depth": 32,
+                        "sample_rate": 48000,
+                        "channels": 2,
+                        "revision": 1,
+                    },
+                },
+                "bit_depth",
+            ),
+        ]
+        for record, needle in cases:
+            with self.subTest(needle=needle):
+                data = {
+                    "version": 2,
+                    "layout": "format-flat",
+                    "tracks": {"/s": {"wav": record}},
+                }
+                errors = cm.validate_manifest_data(data, self.wav_dir)
+                self.assertTrue(
+                    any(needle in e for e in errors),
+                    f"expected {needle!r} in {errors}",
+                )
+
 
 class LibraryFolderValidationTests(unittest.TestCase):
     def test_empty_or_missing_dir_is_ok(self) -> None:

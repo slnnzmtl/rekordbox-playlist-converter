@@ -13,7 +13,12 @@ from typing import Any
 
 from cli_error import CliError
 from convert.paths import abs_path, collision_key, same_file
-from convert.quality import OUTPUT_FORMATS, FORMAT_DIR_NAMES
+from convert.quality import (
+    BIT_DEPTHS,
+    FORMAT_DIR_NAMES,
+    OUTPUT_FORMATS,
+    SAMPLE_RATES,
+)
 
 MANIFEST_NAME = ".rekordbox-converter-manifest.json"
 MANIFEST_VERSION = 2
@@ -27,6 +32,7 @@ RECIPE_KEYS = frozenset(
     {"format", "bit_depth", "sample_rate", "channels", "revision"}
 )
 ALLOWED_STATES = frozenset({"complete", "incomplete", "unverified"})
+ALLOWED_CHANNELS = frozenset({2})
 _SHA256_HASH = re.compile(r"^sha256:[0-9a-fA-F]{64}$")
 
 
@@ -161,26 +167,84 @@ def _validate_optional_hash(value: object, where: str) -> str | None:
     return None
 
 
+def _is_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_stat_object(obj: dict[str, Any], where: str) -> list[str]:
+    errors = _unknown_field_errors(obj, SOURCE_OUTPUT_KEYS, where)
+    size = obj.get("size")
+    if "size" in obj and (not _is_int(size) or size < 0):
+        errors.append(f"manifest {where} size must be a non-negative integer")
+    mtime_ns = obj.get("mtime_ns")
+    if "mtime_ns" in obj and (not _is_int(mtime_ns) or mtime_ns < 0):
+        errors.append(f"manifest {where} mtime_ns must be a non-negative integer")
+    hash_err = _validate_optional_hash(obj.get("hash"), where)
+    if hash_err:
+        errors.append(hash_err)
+    return errors
+
+
+def _validate_recipe(recipe: dict[str, Any]) -> list[str]:
+    errors = _unknown_field_errors(recipe, RECIPE_KEYS, "recipe")
+    fmt = recipe.get("format")
+    if "format" in recipe and fmt not in OUTPUT_FORMATS:
+        errors.append(f"manifest recipe format must be wav or aiff, got {fmt!r}")
+    bit_depth = recipe.get("bit_depth")
+    if "bit_depth" in recipe and bit_depth not in BIT_DEPTHS:
+        errors.append(
+            f"manifest recipe bit_depth must be 16 or 24, got {bit_depth!r}"
+        )
+    sample_rate = recipe.get("sample_rate")
+    if "sample_rate" in recipe and sample_rate not in SAMPLE_RATES:
+        errors.append(
+            "manifest recipe sample_rate must be 44100 or 48000, "
+            f"got {sample_rate!r}"
+        )
+    channels = recipe.get("channels")
+    if "channels" in recipe and channels not in ALLOWED_CHANNELS:
+        errors.append(f"manifest recipe channels must be 2, got {channels!r}")
+    revision = recipe.get("revision")
+    if "revision" in recipe and (not _is_int(revision) or revision < 1):
+        errors.append(
+            "manifest recipe revision must be a positive integer, "
+            f"got {revision!r}"
+        )
+    return errors
+
+
 def _validate_optional_freshness(record: dict[str, Any]) -> list[str]:
     errors = _unknown_field_errors(record, RECORD_KEYS, "assignment")
+    state = record.get("state")
+    if state is not None and state not in ALLOWED_STATES:
+        errors.append(
+            "manifest state must be complete, incomplete, or unverified, "
+            f"got {state!r}"
+        )
     source = record.get("source")
-    if isinstance(source, dict):
-        errors.extend(_unknown_field_errors(source, SOURCE_OUTPUT_KEYS, "source"))
-        hash_err = _validate_optional_hash(source.get("hash"), "source")
-        if hash_err:
-            errors.append(hash_err)
+    if "source" in record:
+        if not isinstance(source, dict):
+            errors.append("manifest source must be an object")
+        else:
+            errors.extend(_validate_stat_object(source, "source"))
     metadata = record.get("metadata")
-    if isinstance(metadata, dict):
-        errors.extend(_unknown_field_errors(metadata, METADATA_KEYS, "metadata"))
+    if "metadata" in record:
+        if not isinstance(metadata, dict):
+            errors.append("manifest metadata must be an object")
+        else:
+            errors.extend(_unknown_field_errors(metadata, METADATA_KEYS, "metadata"))
     output = record.get("output")
-    if isinstance(output, dict):
-        errors.extend(_unknown_field_errors(output, SOURCE_OUTPUT_KEYS, "output"))
-        hash_err = _validate_optional_hash(output.get("hash"), "output")
-        if hash_err:
-            errors.append(hash_err)
+    if "output" in record:
+        if not isinstance(output, dict):
+            errors.append("manifest output must be an object")
+        else:
+            errors.extend(_validate_stat_object(output, "output"))
     recipe = record.get("recipe")
-    if isinstance(recipe, dict):
-        errors.extend(_unknown_field_errors(recipe, RECIPE_KEYS, "recipe"))
+    if "recipe" in record:
+        if not isinstance(recipe, dict):
+            errors.append("manifest recipe must be an object")
+        else:
+            errors.extend(_validate_recipe(recipe))
     return errors
 
 
