@@ -14,6 +14,13 @@ from cdj_aiff import normalize_aiff_audio_chunks, write_aiff_id3
 from cdj_wav import rewrite_wav_pcm
 from cli_error import CancelledError, CliError
 from convert.encode import copy_wav_atomic
+from convert.freshness import (
+    mark_complete,
+    metadata_signature,
+    output_signature,
+    recipe_from_item,
+    source_signature,
+)
 from convert import format_policy
 from convert import plan as plan_module
 from convert.models import (
@@ -71,6 +78,21 @@ def convert_unique(
         with stats_lock:
             stats.succeeded.add((source_key(item.source_path), fmt))
 
+    def complete_assignment(item: PlannedTrack) -> None:
+        if plan.manifest is None:
+            return
+        fmt = coerce_output_format(item.output_format)
+        record = plan.manifest.tracks.get(source_key(item.source_path), {}).get(fmt)
+        if record is None:
+            return
+        mark_complete(
+            record,
+            source=source_signature(item.source_path),
+            metadata=metadata_signature(item.source_el),
+            output=output_signature(item.dest_path),
+            recipe=recipe_from_item(item),
+        )
+
     def process_one(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
             return
@@ -80,6 +102,9 @@ def convert_unique(
             plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
         )
         if action in {"reuse", "in_place_noop", "refresh_xml"}:
+            if action == "refresh_xml":
+                with stats_lock:
+                    complete_assignment(item)
             with stats_lock:
                 stats.skipped += 1
             mark_succeeded(item)
@@ -102,6 +127,8 @@ def convert_unique(
                     cancel_event=cancel_event,
                 )
                 write_aiff_id3(item.dest_path, item.source_el, cover)
+                with stats_lock:
+                    complete_assignment(item)
                 mark_succeeded(item)
                 finish("copy", name)
                 return
@@ -116,6 +143,7 @@ def convert_unique(
                 else:
                     with stats_lock:
                         stats.copied += 1
+                        complete_assignment(item)
                     mark_succeeded(item)
                     finish("copy", name)
                     return
@@ -138,6 +166,7 @@ def convert_unique(
                 else:
                     with stats_lock:
                         stats.copied += 1
+                        complete_assignment(item)
                     mark_succeeded(item)
                     finish("copy", name)
                     return
@@ -159,6 +188,7 @@ def convert_unique(
                         stats.copied += 1
                     else:
                         stats.converted += 1
+                    complete_assignment(item)
                 mark_succeeded(item)
                 finish("copy" if item.passthrough else "convert", name)
                 return
@@ -168,6 +198,7 @@ def convert_unique(
                 )
                 with stats_lock:
                     stats.copied += 1
+                    complete_assignment(item)
                 mark_succeeded(item)
                 finish("copy", name)
                 return
@@ -185,6 +216,7 @@ def convert_unique(
             )
             with stats_lock:
                 stats.converted += 1
+                complete_assignment(item)
             mark_succeeded(item)
             finish("convert", name)
         except CancelledError:
@@ -234,6 +266,7 @@ def execute_prepared(
         items=prepared.items,
         workers=workers,
     )
+    converter_manifest.save_manifest(prepared.manifest, prepared.library_dir)
     appended_by_plan: list[int] = []
     for one_plan in plans:
         appended_by_plan.append(xml_output.apply_xml(one_plan, stats.succeeded))
