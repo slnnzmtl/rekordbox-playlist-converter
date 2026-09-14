@@ -84,26 +84,26 @@ class GuiTracklistTests(unittest.TestCase):
                 preview = app.tracklist_tree
                 self.assertEqual(
                     tuple(preview.cget("columns")),
-                    ("format", "bit_depth", "sample_rate", "rating"),
+                    ("track", "format", "bit_depth", "sample_rate", "rating"),
                 )
+                self.assertEqual(preview.heading("#0", "text"), "#")
+                self.assertEqual(preview.heading("track", "text"), "Track")
                 self.assertEqual(preview.heading("rating", "text"), "Rating")
                 groups = preview.get_children("")
-                self.assertEqual(preview.item(groups[0], "text"), "Dark forest (3 tracks)")
+                self.assertEqual(
+                    preview.item(groups[0], "values")[0], "Dark forest (3 tracks)"
+                )
                 leaves = preview.get_children(groups[0])
                 self.assertEqual(
                     [preview.item(r, "text") for r in leaves],
-                    [
-                        "ABSL - Bestial",
-                        "Shogan - Revelation",
-                        "(missing track)",
-                    ],
+                    ["1", "2", "3"],
                 )
                 self.assertEqual(
                     [preview.item(r, "values") for r in leaves],
                     [
-                        ("FLAC", "—", "44100", "★★★★★"),
-                        ("AIFF", "—", "48000", "★★☆☆☆"),
-                        ("—", "—", "—", "—"),
+                        ("ABSL - Bestial", "FLAC", "—", "44100", "★★★★★"),
+                        ("Shogan - Revelation", "AIFF", "—", "48000", "★★☆☆☆"),
+                        ("(missing track)", "—", "—", "—", "—"),
                     ],
                 )
                 self.assertEqual(
@@ -114,15 +114,18 @@ class GuiTracklistTests(unittest.TestCase):
                 tree.selection_set(dark, morning)
                 tree.event_generate("<<TreeviewSelect>>")
                 self.assertEqual(
-                    [preview.item(g, "text") for g in preview.get_children("")],
+                    [
+                        preview.item(g, "values")[0]
+                        for g in preview.get_children("")
+                    ],
                     ["Dark forest (3 tracks)", "Morning (2 tracks)"],
                 )
                 morning_leaves = preview.get_children(preview.get_children("")[1])
                 self.assertEqual(
                     [preview.item(r, "values") for r in morning_leaves],
                     [
-                        ("FLAC", "—", "44100", "★★★★★"),
-                        ("WAV", "—", "—", "☆☆☆☆☆"),
+                        ("ABSL - Bestial", "FLAC", "—", "44100", "★★★★★"),
+                        ("Ghost - NoLoc", "WAV", "—", "—", "☆☆☆☆☆"),
                     ],
                 )
                 self.assertEqual(
@@ -286,11 +289,11 @@ class GuiTracklistTests(unittest.TestCase):
                 leaves = preview.get_children(groups[0])
                 self.assertEqual(
                     [preview.item(r, "text") for r in leaves],
-                    ["Shogan - Revelation"],
+                    ["2"],
                 )
                 self.assertEqual(
                     [preview.item(r, "values") for r in leaves],
-                    [("AIFF", "—", "48000", "★★☆☆☆")],
+                    [("Shogan - Revelation", "AIFF", "—", "48000", "★★☆☆☆")],
                 )
                 self.assertEqual(
                     app.status_var.get(),
@@ -304,7 +307,7 @@ class GuiTracklistTests(unittest.TestCase):
                 leaves = preview.get_children(groups[0])
                 self.assertEqual(
                     [preview.item(r, "text") for r in leaves],
-                    ["Shogan - Revelation"],
+                    ["2"],
                 )
 
                 app.track_search_var.set("")
@@ -370,7 +373,7 @@ class GuiTracklistTests(unittest.TestCase):
                     leaves = preview.get_children(preview.get_children("")[0])
                     self.assertEqual(
                         [preview.item(r, "values") for r in leaves],
-                        [("FLAC", "—", "44100", "☆☆☆☆☆")],
+                        [("ABSL - Bestial", "FLAC", "—", "44100", "☆☆☆☆☆")],
                     )
                     self.assertEqual(
                         app.status_var.get(),
@@ -384,7 +387,7 @@ class GuiTracklistTests(unittest.TestCase):
                     leaves = preview.get_children(preview.get_children("")[0])
                     self.assertEqual(
                         [preview.item(r, "values") for r in leaves],
-                        [("FLAC", "24", "44100", "☆☆☆☆☆")],
+                        [("ABSL - Bestial", "FLAC", "24", "44100", "☆☆☆☆☆")],
                     )
                     self.assertEqual(app.scan_status_var.get(), "")
                     tree.selection_set(crate)
@@ -450,7 +453,7 @@ class GuiTracklistTests(unittest.TestCase):
                     leaves = preview.get_children(preview.get_children("")[0])
                     self.assertEqual(
                         [preview.item(r, "values") for r in leaves],
-                        [("FLAC", "—", "44100", "☆☆☆☆☆")],
+                        [("ABSL - Bestial", "FLAC", "—", "44100", "☆☆☆☆☆")],
                     )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -507,11 +510,15 @@ class GuiTracklistTests(unittest.TestCase):
                 preview = app.tracklist_tree
                 groups = preview.get_children("")
                 self.assertEqual(len(groups), 1)
-                self.assertEqual(preview.item(groups[0], "text"), "Mixed (2 tracks)")
+                self.assertEqual(preview.item(groups[0], "values")[0], "Mixed (2 tracks)")
                 leaves = preview.get_children(groups[0])
                 self.assertEqual(
-                    [preview.item(r, "text") for r in leaves],
+                    [preview.item(r, "values")[0] for r in leaves],
                     ["ABSL - Bestial", "(missing track)"],
+                )
+                self.assertEqual(
+                    [preview.item(r, "text") for r in leaves],
+                    ["1", "4"],
                 )
 
                 preview.selection_set(*leaves)
@@ -601,7 +608,7 @@ class GuiTracklistTests(unittest.TestCase):
                 groups = preview.get_children("")
                 crate_leaves = list(preview.get_children(groups[0]))
                 self.assertEqual(
-                    [preview.item(r, "text") for r in crate_leaves],
+                    [preview.item(r, "values")[0] for r in crate_leaves],
                     [
                         "Z - Zebra",
                         "A - Alpha",
@@ -609,11 +616,11 @@ class GuiTracklistTests(unittest.TestCase):
                     ],
                 )
 
-                cmd = preview.heading("#0", "command")
+                cmd = preview.heading("track", "command")
                 preview.tk.call(cmd)
                 crate_leaves = list(preview.get_children(groups[0]))
                 self.assertEqual(
-                    [preview.item(r, "text") for r in crate_leaves],
+                    [preview.item(r, "values")[0] for r in crate_leaves],
                     [
                         "A - Alpha",
                         "M - Mid",
@@ -622,19 +629,40 @@ class GuiTracklistTests(unittest.TestCase):
                 )
                 solo_leaves = list(preview.get_children(groups[1]))
                 self.assertEqual(
-                    [preview.item(r, "text") for r in solo_leaves],
+                    [preview.item(r, "values")[0] for r in solo_leaves],
                     ["O - Only"],
                 )
 
                 preview.tk.call(cmd)
                 crate_leaves = list(preview.get_children(groups[0]))
                 self.assertEqual(
-                    [preview.item(r, "text") for r in crate_leaves],
+                    [preview.item(r, "values")[0] for r in crate_leaves],
                     [
                         "Z - Zebra",
                         "M - Mid",
                         "A - Alpha",
                     ],
+                )
+
+                preview.tk.call(preview.heading("#0", "command"))
+                crate_leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in crate_leaves],
+                    ["1", "2", "3"],
+                )
+                self.assertEqual(
+                    [preview.item(r, "values")[0] for r in crate_leaves],
+                    [
+                        "Z - Zebra",
+                        "A - Alpha",
+                        "M - Mid",
+                    ],
+                )
+                preview.tk.call(preview.heading("#0", "command"))
+                crate_leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in crate_leaves],
+                    ["3", "2", "1"],
                 )
 
                 app.track_search_var.set("alpha")
@@ -643,7 +671,7 @@ class GuiTracklistTests(unittest.TestCase):
                 self.assertEqual(len(groups), 1)
                 leaves = list(preview.get_children(groups[0]))
                 self.assertEqual(
-                    [preview.item(r, "text") for r in leaves],
+                    [preview.item(r, "values")[0] for r in leaves],
                     ["A - Alpha"],
                 )
 
@@ -652,18 +680,18 @@ class GuiTracklistTests(unittest.TestCase):
                 groups = preview.get_children("")
                 crate_leaves = list(preview.get_children(groups[0]))
                 self.assertEqual(
-                    [preview.item(r, "text") for r in crate_leaves],
+                    [preview.item(r, "values")[0] for r in crate_leaves],
                     [
-                        "Z - Zebra",
                         "M - Mid",
                         "A - Alpha",
+                        "Z - Zebra",
                     ],
                 )
 
                 preview.tk.call(preview.heading("rating", "command"))
                 crate_leaves = list(preview.get_children(groups[0]))
                 self.assertEqual(
-                    [preview.item(r, "text") for r in crate_leaves],
+                    [preview.item(r, "values")[0] for r in crate_leaves],
                     [
                         "M - Mid",
                         "Z - Zebra",
@@ -671,14 +699,14 @@ class GuiTracklistTests(unittest.TestCase):
                     ],
                 )
                 self.assertEqual(
-                    [preview.item(r, "values")[3] for r in crate_leaves],
+                    [preview.item(r, "values")[4] for r in crate_leaves],
                     ["☆☆☆☆☆", "★☆☆☆☆", "★★★★☆"],
                 )
 
                 preview.tk.call(preview.heading("rating", "command"))
                 crate_leaves = list(preview.get_children(groups[0]))
                 self.assertEqual(
-                    [preview.item(r, "text") for r in crate_leaves],
+                    [preview.item(r, "values")[0] for r in crate_leaves],
                     [
                         "A - Alpha",
                         "Z - Zebra",
@@ -743,11 +771,11 @@ class GuiTracklistTests(unittest.TestCase):
                     root.update()
                     leaves = list(preview.get_children(preview.get_children("")[0]))
                     self.assertEqual(
-                        [preview.item(r, "values")[1] for r in leaves],
+                        [preview.item(r, "values")[2] for r in leaves],
                         ["16", "24"],
                     )
                     self.assertEqual(
-                        [preview.item(r, "text") for r in leaves],
+                        [preview.item(r, "values")[0] for r in leaves],
                         ["S - Shallow", "D - Deep"],
                     )
         except tk.TclError:

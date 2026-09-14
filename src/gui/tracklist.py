@@ -6,7 +6,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-_NUMBERED_SORT_COLUMNS = frozenset({"bit_depth", "sample_rate", "rating"})
+TRACKLIST_VALUE_COLUMNS = ("track", "format", "bit_depth", "sample_rate", "rating")
+
+_NUMBERED_SORT_COLUMNS = frozenset({"#0", "bit_depth", "sample_rate", "rating"})
+_VALUE_COLUMN_INDEX = {
+    name: i for i, name in enumerate(TRACKLIST_VALUE_COLUMNS)
+}
 
 
 def playlist_iid(kind: str, folder: str, name: str, *, playlist_label: Callable[[str, str], str]) -> str:
@@ -59,10 +64,14 @@ def track_search_haystack(label: str, fmt: str, path: Path | None) -> str:
 
 
 def tracklist_sort_key(text: str, values: list[Any], column: str):
-    """Sort key for a tracklist leaf: tree text plus column values."""
+    """Sort key for a tracklist leaf: tree text (# index) plus column values."""
     if column == "#0":
-        return text.casefold()
-    idx = {"format": 0, "bit_depth": 1, "sample_rate": 2, "rating": 3}.get(column)
+        raw = str(text or "")
+        try:
+            return (0, int(raw))
+        except ValueError:
+            return (1, 0)
+    idx = _VALUE_COLUMN_INDEX.get(column)
     if idx is None or idx >= len(values):
         return ""
     raw = str(values[idx] or "")

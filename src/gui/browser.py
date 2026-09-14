@@ -8,6 +8,7 @@ from tkinter import ttk
 from typing import Any
 
 from gui.layout import ACTION_BUTTON_WIDTH, HoverTooltip, bind_wraplength, tree_with_yscroll
+from gui.tracklist import TRACKLIST_VALUE_COLUMNS
 
 
 def build_menubar(
@@ -86,13 +87,19 @@ def build_tracklist_pane(
     bind_search(search_entry)
     tracklist_tree, track_scroll = tree_with_yscroll(
         right,
-        columns=("format", "bit_depth", "sample_rate", "rating"),
+        columns=TRACKLIST_VALUE_COLUMNS,
         show="tree headings",
         selectmode="extended",
         height=12,
     )
     tracklist_tree.heading(
-        "#0", text="Track", anchor="w", command=lambda: on_sort("#0")
+        "#0", text="#", anchor="center", command=lambda: on_sort("#0")
+    )
+    tracklist_tree.heading(
+        "track",
+        text="Track",
+        anchor="w",
+        command=lambda: on_sort("track"),
     )
     tracklist_tree.heading(
         "format",
@@ -118,7 +125,8 @@ def build_tracklist_pane(
         anchor="w",
         command=lambda: on_sort("rating"),
     )
-    tracklist_tree.column("#0", stretch=True, minwidth=120)
+    tracklist_tree.column("#0", width=40, stretch=False, anchor="center", minwidth=40)
+    tracklist_tree.column("track", stretch=True, minwidth=120)
     tracklist_tree.column("format", width=70, stretch=False, anchor="center")
     tracklist_tree.column("bit_depth", width=90, stretch=False, anchor="center")
     tracklist_tree.column("sample_rate", width=90, stretch=False, anchor="center")

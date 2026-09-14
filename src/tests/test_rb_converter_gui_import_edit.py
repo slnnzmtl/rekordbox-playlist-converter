@@ -353,7 +353,7 @@ class GuiImportEditMenusTests(unittest.TestCase):
                         break
                 app._refresh_tracklist_preview()
                 labels = [
-                    app.tracklist_tree.item(iid, "text")
+                    app.tracklist_tree.item(iid, "values")[0]
                     for iid in app._tracklist_iids
                 ]
                 self.assertTrue(any(lab.startswith("! ") for lab in labels))
@@ -477,7 +477,7 @@ class GuiImportEditMenusTests(unittest.TestCase):
                 app.playlist_tree.selection_set(unknown_iid)
                 app._refresh_tracklist_preview()
                 labels = [
-                    app.tracklist_tree.item(iid, "text")
+                    app.tracklist_tree.item(iid, "values")[0]
                     for iid in app._tracklist_iids
                 ]
                 self.assertIn("Artist - Track", labels)

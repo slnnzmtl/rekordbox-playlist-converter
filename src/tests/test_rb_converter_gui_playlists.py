@@ -223,7 +223,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 preview = app.tracklist_tree
                 groups = preview.get_children("")
                 self.assertEqual(
-                    [preview.item(g, "text") for g in groups],
+                    [preview.item(g, "values")[0] for g in groups],
                     ["Same (1 tracks)", "Same (1 tracks)"],
                 )
                 with self.assertRaises(CliError) as ctx:

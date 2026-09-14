@@ -411,8 +411,8 @@ class PlaylistsMixin:
             if node is None:
                 continue
             key_type = node.get("KeyType", "0")
-            matched: list[tuple[str, str, tuple[str, str, str, str], Path | None]] = []
-            for entry in node.findall("TRACK"):
+            matched: list[tuple[str, str, tuple[str, str, str, str, str], Path | None]] = []
+            for playlist_index, entry in enumerate(node.findall("TRACK"), start=1):
                 key = entry.get("Key") or ""
                 track = None
                 if key:
@@ -446,25 +446,35 @@ class PlaylistsMixin:
                     elif path not in seen_paths:
                         seen_paths.add(path)
                         paths.append(path)
-                matched.append((key, label, (fmt, depth, rate, rating), path))
+                matched.append(
+                    (
+                        key,
+                        str(playlist_index),
+                        (label, fmt, depth, rate, rating),
+                        path,
+                    )
+                )
             if not matched:
                 continue
             group_key = (folder, name)
             is_open = self._tracklist_group_open.setdefault(group_key, True)
             group_text = f"{name} ({len(matched)} tracks)"
+            group_values = (group_text,) + ("",) * (
+                len(gui_tracklist.TRACKLIST_VALUE_COLUMNS) - 1
+            )
             group_iid = self.tracklist_tree.insert(
                 "",
                 tk.END,
-                text=group_text,
+                text="",
                 open=is_open,
-                values=("",) * len(self.tracklist_tree.cget("columns")),
+                values=group_values,
                 tags=(constants.TRACKLIST_HEADER_TAG,),
             )
             self._tracklist_group_iids[group_iid] = group_key
             painted += 1
-            for key, label, values, path in matched:
+            for key, index_text, values, path in matched:
                 leaf_iid = self.tracklist_tree.insert(
-                    group_iid, tk.END, text=label, values=values
+                    group_iid, tk.END, text=index_text, values=values
                 )
                 self._tracklist_iids[leaf_iid] = TrackLeafRef(
                     folder=folder, name=name, key=key
@@ -574,9 +584,10 @@ class PlaylistsMixin:
             if depth is None:
                 continue
             values = list(self.tracklist_tree.item(iid, "values"))
-            if len(values) < 3:
+            bit_depth_idx = gui_tracklist.TRACKLIST_VALUE_COLUMNS.index("bit_depth")
+            if bit_depth_idx >= len(values):
                 continue
-            values[1] = depth
+            values[bit_depth_idx] = depth
             self.tracklist_tree.item(iid, values=values)
         if self._tracklist_sort_column == "bit_depth":
             self._apply_tracklist_sort()
