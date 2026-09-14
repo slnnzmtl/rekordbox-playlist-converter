@@ -332,6 +332,50 @@ class LibraryFolderValidationTests(unittest.TestCase):
             self.assertIsNotNone(err)
             self.assertIn("manifest", err.lower())
 
+    def test_v1_manifest_is_refused_with_delete_or_new_folder(self) -> None:
+        """Given an unreleased v1 manifest: When validate: Then refuse with
+        instructions to delete it or choose a new output folder."""
+        with tempfile.TemporaryDirectory() as tmp:
+            wav_dir = Path(tmp) / "lib"
+            wav_dir.mkdir()
+            (wav_dir / cm.MANIFEST_NAME).write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "layout": "format-flat",
+                        "tracks": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            err = cm.validate_library_folder(wav_dir)
+            self.assertIsNotNone(err)
+            assert err is not None
+            lowered = err.lower()
+            self.assertIn("version 1", lowered)
+            self.assertTrue(
+                "delete" in lowered and "new" in lowered,
+                err,
+            )
+
+    def test_unknown_and_future_versions_are_refused(self) -> None:
+        """Given version 0 or 3: When validate: Then each is an unsupported
+        version error naming the found version."""
+        with tempfile.TemporaryDirectory() as tmp:
+            wav_dir = Path(tmp) / "lib"
+            wav_dir.mkdir()
+            for version in (0, 3):
+                with self.subTest(version=version):
+                    data = {
+                        "version": version,
+                        "layout": "format-flat",
+                        "tracks": {},
+                    }
+                    errors = cm.validate_manifest_data(data, wav_dir)
+                    joined = " ".join(errors)
+                    self.assertIn("version", joined)
+                    self.assertIn(repr(version), joined)
+
 
 if __name__ == "__main__":
     unittest.main()
