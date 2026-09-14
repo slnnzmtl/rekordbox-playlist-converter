@@ -188,6 +188,33 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertTrue(any("invalid Rekordbox file URL" in e for e in errors))
 
 
+class PrintSummaryTests(unittest.TestCase):
+    def test_print_summary_reports_conflicts(self) -> None:
+        """Given convert stats with conflicts: When print_summary: Then the
+        Converted line includes the conflict count."""
+        import io
+        from convert.models import ConvertStats, Plan
+
+        plan = Plan(
+            playlist_name="P",
+            wav_playlist_name="P [WAV]",
+            library_dir=Path("/tmp"),
+            media_dir=Path("/tmp/WAV"),
+            output=Path("/tmp/o.xml"),
+            tracks=[],
+            unique=[],
+            source_root=ET.Element("DJ_PLAYLISTS"),
+            output_root=ET.Element("DJ_PLAYLISTS"),
+            output_existed=False,
+        )
+        stats = ConvertStats(converted=1, conflicts=["A.wav", "B.wav"])
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            rb.print_summary(plan, stats, dry_run=False)
+        self.assertIn("1 converted", buf.getvalue())
+        self.assertIn("2 conflicts", buf.getvalue())
+
+
 
 if __name__ == "__main__":
     unittest.main()

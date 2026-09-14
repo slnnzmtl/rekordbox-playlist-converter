@@ -323,6 +323,9 @@ class ConvertFlowMixin:
                     parts.append(f"{batch_stats.copied} copied")
                 if batch_stats.skipped and plan is plans[0]:
                     parts.append(f"{batch_stats.skipped} skipped")
+                if batch_stats.conflicts and plan is plans[0]:
+                    n = len(batch_stats.conflicts)
+                    parts.append(f"{n} conflict{'s' if n != 1 else ''}")
                 appended = (
                     batch_stats.appended_by_plan[i]
                     if i < len(batch_stats.appended_by_plan)

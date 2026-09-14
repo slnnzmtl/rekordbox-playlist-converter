@@ -318,6 +318,7 @@ def run_convert_batch(
                 converted=stats.converted if i == 0 else 0,
                 copied=stats.copied if i == 0 else 0,
                 skipped=stats.skipped if i == 0 else 0,
+                conflicts=list(stats.conflicts) if i == 0 else [],
                 errors=list(stats.errors) if i == len(plans) - 1 else [],
                 succeeded=set(stats.succeeded),
                 appended=appended,
@@ -403,6 +404,9 @@ def print_summary(
         parts.append(f"{stats.copied} copied")
     if stats.skipped:
         parts.append(f"{stats.skipped} skipped")
+    if stats.conflicts:
+        n = len(stats.conflicts)
+        parts.append(f"{n} conflict{'s' if n != 1 else ''}")
     if plan.warnings:
         parts.append(f"{len(plan.warnings)} missing skipped")
     if not parts:
