@@ -209,19 +209,20 @@ def apply_xml(plan: Plan, success: set[tuple[str, str]]) -> int:
 
     wav_node, existed = find_or_create_wav_playlist(plan.output_root, plan.wav_playlist_name)
     appended = 0
-    present = set(playlist_keys(wav_node)) if existed else set()
-    seen_this_run: set[str] = set()
+    desired: list[str] = []
     for item in plan.tracks:
         if item.dest_location not in dest_to_id:
             continue
-        tid = dest_to_id[item.dest_location]
-        if tid in present or tid in seen_this_run:
-            continue
-        ET.SubElement(wav_node, "TRACK", {"Key": tid})
-        present.add(tid)
-        seen_this_run.add(tid)
-        appended += 1
-    return appended
+        desired.append(dest_to_id[item.dest_location])
+    existing = playlist_keys(wav_node) if existed else []
+    if existing == desired:
+        return 0
+    if len(existing) <= len(desired) and existing == desired[: len(existing)]:
+        for tid in desired[len(existing) :]:
+            ET.SubElement(wav_node, "TRACK", {"Key": tid})
+            appended += 1
+        return appended
+    return 0
 
 
 def validate_import_xml(root: ET.Element) -> list[str]:

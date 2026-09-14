@@ -213,9 +213,8 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
 
     def test_rb6_style_convert_write_validate(self) -> None:
         """DDD-146 contract: Import XML playlists are flat `[WAV]`/`[AIFF]`
-        nodes (no nested source folders), and repeated playlist Keys are
-        deduped. Nested Rekordbox folders and duplicate Keys are not
-        preserved."""
+        nodes (no nested source folders). Repeated playlist Keys and order
+        are preserved; the collection still stores each dest once."""
         out = self._convert_and_validate(
             fixture=RB6_FIXTURE,
             playlist="Night Set",
@@ -236,9 +235,10 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
         )
         pl = find_playlists_by_name(out, "Night Set [WAV]")
         self.assertEqual(len(pl), 1)
-        # Repeated source Key in playlist → one Key after dedup on new node.
-        self.assertEqual(len(pl[0].findall("TRACK")), 2)
         cafe = next(t for t in tracks if t.get("Name") == "Café & Dreams")
+        space = next(t for t in tracks if t.get("Name") == "Space Track")
+        keys = [t.get("Key") for t in pl[0].findall("TRACK")]
+        self.assertEqual(keys, [cafe.get("TrackID"), space.get("TrackID"), cafe.get("TrackID")])
         self.assertEqual(cafe.get("Rating"), "51")
         self.assertEqual(cafe.get("AverageBpm"), "128.00")
         self.assertEqual(cafe.get("Tonality"), "Am")
@@ -263,7 +263,7 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
         coll = out.find("COLLECTION")
         assert coll is not None
         self.assertEqual(coll.get("Entries"), "2")
-        self.assertEqual(pl[0].get("Entries"), "2")
+        self.assertEqual(pl[0].get("Entries"), "3")
 
     def test_rb6_style_aiff_preserves_kind_and_cues(self) -> None:
         out = self._convert_and_validate(
@@ -280,7 +280,7 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
         self.assertEqual(len(cafe.findall("POSITION_MARK")), 3)
         pl = find_playlists_by_name(out, "Night Set [AIFF]")
         self.assertEqual(len(pl), 1)
-        self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2"])
+        self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2", "1"])
 
     def test_shared_track_across_playlists_one_collection_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

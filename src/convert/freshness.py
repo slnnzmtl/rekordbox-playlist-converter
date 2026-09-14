@@ -19,6 +19,9 @@ OUTPUT_ONLY_ATTRS = frozenset(
 
 
 def source_signature(path: Path) -> dict[str, Any]:
+    """Size and mtime_ns. Same-size, same-mtime replacements are not detected;
+    optional content hashes stay reserved for later deep verification.
+    """
     st = path.stat()
     return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
 

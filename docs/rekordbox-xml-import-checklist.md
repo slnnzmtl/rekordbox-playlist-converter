@@ -8,7 +8,9 @@ Use the same source collection as the automated fidelity fixture where
 practical: ratings, BPM, key, comments, colour, memory cue, hot cue, loop,
 constant and variable-tempo grids, a nested source folder, a track shared
 across playlists, and a repeated Key in one source playlist (Import XML
-still stores that track once per playlist).
+stores the track once in COLLECTION and repeats the Key in playlist order).
+Generated `[WAV]`/`[AIFF]` playlists stay flat (source folder hierarchy is
+not reproduced).
 
 Target: **Rekordbox 6.x** and **Rekordbox 7.x** on each OS below.
 
@@ -35,7 +37,7 @@ Mark each cell: **pass** / **fail** / **limitation** plus a short note.
 | Constant grid (one TEMPO) | | |
 | Variable-tempo grid (multiple TEMPO) | | |
 | Playlist order | | |
-| Repeated source Key (one playlist Key after dedup) | | |
+| Repeated source Key (same Key more than once, order preserved) | | |
 | Track shared across playlists (one collection row) | | |
 | Track Location plays from converter output path | | |
 | Notes | | |
@@ -58,7 +60,7 @@ Mark each cell: **pass** / **fail** / **limitation** plus a short note.
 | Constant grid (one TEMPO) | | |
 | Variable-tempo grid (multiple TEMPO) | | |
 | Playlist order | | |
-| Repeated source Key (one playlist Key after dedup) | | |
+| Repeated source Key (same Key more than once, order preserved) | | |
 | Track shared across playlists (one collection row) | | |
 | Track Location plays from converter output path | | |
 | Notes | | |
