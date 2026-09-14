@@ -12,13 +12,14 @@ from typing import Callable
 from cli_error import CancelledError
 from convert import plan as plan_module
 from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PlannedTrack
-from convert.paths import _format_size_mb
-from convert.rerun import ACTION_WRITE_KIND, classify_item, preview_reason
+from convert.rerun import ACTION_WRITE_KIND, Decision, classify_item, preview_reason
+from convert.paths import _format_size_mb, source_key
+from convert.quality import coerce_output_format
 
 
-def _preview_size(item: PlannedTrack, write_kind: str) -> tuple[int | None, str]:
-    """Return (bytes, display). No-write actions use dest size or —; else estimate PCM."""
-    if write_kind == "none":
+def preview_size(item: PlannedTrack, write_kind: str) -> tuple[int | None, str]:
+    """Return (bytes, display). Audio estimates PCM; other kinds use dest size or —."""
+    if write_kind != "audio":
         try:
             if item.dest_path.is_file():
                 size = item.dest_path.stat().st_size
@@ -32,6 +33,10 @@ def _preview_size(item: PlannedTrack, write_kind: str) -> tuple[int | None, str]
     bytes_per_sample = 2 if item.bit_depth == 16 else 3
     estimated = int(duration * item.sample_rate * bytes_per_sample * 2)
     return estimated, _format_size_mb(estimated, approximate=True)
+
+
+def _preview_size(item: PlannedTrack, write_kind: str) -> tuple[int | None, str]:
+    return preview_size(item, write_kind)
 
 
 def build_conversion_preview(
@@ -78,17 +83,22 @@ def build_conversion_preview(
     results: list[ConversionPreviewItem | None] = [None] * total
     progress_lock = threading.Lock()
     completed = 0
+    decisions: dict[tuple[str, str], Decision] = {}
 
     def classify_one(index: int, item: PlannedTrack) -> ConversionPreviewItem:
         if cancel_event is not None and cancel_event.is_set():
             raise CancelledError("conversion cancelled during preview")
         plan = plan_by_item.get(id(item), plans[0])
         decision = classify_item(plan, item, force)
+        fmt = coerce_output_format(item.output_format)
+        key = (source_key(item.source_path), fmt)
+        with progress_lock:
+            decisions[key] = decision
         try:
             relative_dest = item.dest_path.relative_to(library_dir).as_posix()
         except ValueError:
             relative_dest = item.dest_path.name
-        size_bytes, size_display = _preview_size(item, decision.write_kind)
+        size_bytes, size_display = preview_size(item, decision.write_kind)
         return ConversionPreviewItem(
             relative_dest=relative_dest,
             action=decision.action,
@@ -141,6 +151,7 @@ def build_conversion_preview(
         duplicates=duplicates,
         missing=missing,
         items=preview_items,
+        decisions=decisions,
     )
 
 

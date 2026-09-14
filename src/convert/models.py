@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from convert.rerun import Decision
     from converter_manifest import ConverterManifest
 
 
@@ -51,6 +52,7 @@ class ConversionPreview:
     duplicates: int
     missing: int
     items: list[ConversionPreviewItem] = field(default_factory=list)
+    decisions: dict[tuple[str, str], Decision] = field(default_factory=dict)
 
 
 @dataclass
@@ -138,4 +140,4 @@ class PreparedConversion:
     library_dir: Path
     output: Path
     skipped: list[str]
-    decisions: dict[tuple[str, str], object] = field(default_factory=dict)
+    decisions: dict[tuple[str, str], Decision] = field(default_factory=dict)

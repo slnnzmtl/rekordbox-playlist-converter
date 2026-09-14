@@ -95,9 +95,11 @@ def _rebuild_action(item: PlannedTrack) -> str:
     return "rewrite_container" if item.passthrough else "transcode"
 
 
-def _stats_match(
+def snapshots_match(
     stored: dict[str, Any] | None, current: dict[str, Any] | None
 ) -> bool:
+    """True when size and mtime_ns both match. Same-size content with an
+    identical timestamp is treated as unchanged; full hashes stay optional."""
     if stored is None or current is None:
         return False
     return stored.get("size") == current.get("size") and stored.get(
@@ -105,7 +107,8 @@ def _stats_match(
     ) == current.get("mtime_ns")
 
 
-def _file_stat(path: Path) -> dict[str, Any] | None:
+def file_snapshot(path: Path) -> dict[str, Any] | None:
+    """Return size and mtime_ns for a file, or None if it is missing."""
     try:
         if not path.is_file():
             return None
@@ -113,6 +116,16 @@ def _file_stat(path: Path) -> dict[str, Any] | None:
     except OSError:
         return None
     return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
+def _stats_match(
+    stored: dict[str, Any] | None, current: dict[str, Any] | None
+) -> bool:
+    return snapshots_match(stored, current)
+
+
+def _file_stat(path: Path) -> dict[str, Any] | None:
+    return file_snapshot(path)
 
 
 def classify_assignment(

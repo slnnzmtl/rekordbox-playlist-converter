@@ -583,6 +583,34 @@ class ConversionPreviewTests(unittest.TestCase):
         )
         self.assertEqual(preview_write_bytes(preview), 3500)
 
+    def test_preview_size_for_xml_refresh_uses_existing_dest(self) -> None:
+        """Given refresh_xml (metadata write_kind): When sizing: Then dest
+        bytes are shown, not an estimated PCM payload."""
+        from convert.preview import preview_size
+
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "A.wav"
+            dest.write_bytes(b"x" * 2048)
+            item = PlannedTrack(
+                source_el=ET.Element("TRACK"),
+                source_path=Path(tmp) / "a.flac",
+                dest_path=dest,
+                dest_location="file://localhost/A.wav",
+                dest_name="A.wav",
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=24,
+                sample_rate=48000,
+                duration_seconds=180.0,
+            )
+            size, display = preview_size(item, "metadata")
+            self.assertEqual(size, 2048)
+            self.assertFalse(display.startswith("≈"))
+            audio_size, audio_display = preview_size(item, "audio")
+            self.assertGreater(audio_size or 0, 2048)
+            self.assertTrue(audio_display.startswith("≈"))
+
     def test_insufficient_output_space_message_when_free_below_required(
         self,
     ) -> None:

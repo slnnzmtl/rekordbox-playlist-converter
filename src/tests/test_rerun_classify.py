@@ -380,5 +380,24 @@ class ClassifyItemTests(unittest.TestCase):
             )
 
 
+class FileSnapshotTests(unittest.TestCase):
+    def test_file_snapshot_matches_size_and_mtime(self) -> None:
+        """Given a file: When snapshot is taken twice after an explicit mtime
+        bump: Then snapshots_match is false even if size is unchanged."""
+        from convert.rerun import file_snapshot, snapshots_match
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "a.wav"
+            path.write_bytes(b"abcd")
+            first = file_snapshot(path)
+            assert first is not None
+            self.assertTrue(snapshots_match(first, file_snapshot(path)))
+            st = path.stat()
+            os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000))
+            second = file_snapshot(path)
+            self.assertFalse(snapshots_match(first, second))
+            self.assertEqual(first["size"], second["size"])
+
+
 if __name__ == "__main__":
     unittest.main()

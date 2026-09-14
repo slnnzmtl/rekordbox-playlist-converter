@@ -66,6 +66,12 @@ class ExecutePreparedTests(XmlFixtureBase):
             )
             self.assertEqual(errors, [])
             assert prepared is not None
+            from convert.rerun import Decision
+
+            self.assertTrue(prepared.decisions)
+            self.assertTrue(
+                all(isinstance(d, Decision) for d in prepared.decisions.values())
+            )
 
             stats = execute_prepared(prepared, force=False, progress=False)
 
@@ -171,7 +177,7 @@ class ExecutePreparedTests(XmlFixtureBase):
             ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
             ):
-                stats = execute_prepared(prepared, force=True)
+                stats = execute_prepared(prepared, force=True, checkpoint_every=0)
             self.assertEqual(stats.conflicts, [dest.name])
             self.assertEqual(encoded, [])
             self.assertEqual(dest.read_bytes(), prior)
