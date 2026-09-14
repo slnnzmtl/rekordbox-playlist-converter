@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -28,7 +29,7 @@ class ManifestError(CliError):
 class ConverterManifest:
     """In-memory source→(format→dest) assignments for one wav_dir."""
 
-    tracks: dict[str, dict[str, dict[str, str]]] = field(default_factory=dict)
+    tracks: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
 
     def get_dest(self, source_key: str, output_format: str) -> str | None:
         dest = self.tracks.get(source_key, {}).get(output_format, {}).get("dest")
@@ -212,11 +213,11 @@ def load_manifest(wav_dir: Path) -> ConverterManifest:
     if errors:
         raise ManifestError(errors[0])
     tracks = data["tracks"]
-    typed: dict[str, dict[str, dict[str, str]]] = {}
+    typed: dict[str, dict[str, dict[str, Any]]] = {}
     for sk, formats in tracks.items():
         typed[sk] = {}
         for fmt, record in formats.items():
-            typed[sk][fmt] = {"dest": record["dest"]}
+            typed[sk][fmt] = deepcopy(record)
     return ConverterManifest(tracks=typed)
 
 

@@ -103,6 +103,36 @@ class ManifestValidationTests(unittest.TestCase):
         )
         self.assertEqual(cm.validate_manifest_data(data, self.wav_dir), [])
 
+    def test_load_preserves_optional_freshness_fields(self) -> None:
+        """Given a v2 record with dest plus freshness objects: When load: Then
+        state, source, metadata, output, and recipe are kept."""
+        record = {
+            "dest": "WAV/Artist - Track.wav",
+            "state": "complete",
+            "source": {"size": 10, "mtime_ns": 1, "hash": None},
+            "metadata": {
+                "signature": "sha256:" + ("ab" * 32),
+            },
+            "output": {"size": 20, "mtime_ns": 2, "hash": None},
+            "recipe": {
+                "format": "wav",
+                "bit_depth": 24,
+                "sample_rate": 48000,
+                "channels": 2,
+                "revision": 1,
+            },
+        }
+        payload = {
+            "version": 2,
+            "layout": "format-flat",
+            "tracks": {"/music/a.flac": {"wav": record}},
+        }
+        (self.wav_dir / cm.MANIFEST_NAME).write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        loaded = cm.load_manifest(self.wav_dir)
+        self.assertEqual(loaded.tracks["/music/a.flac"]["wav"], record)
+
 
 class LibraryFolderValidationTests(unittest.TestCase):
     def test_empty_or_missing_dir_is_ok(self) -> None:
