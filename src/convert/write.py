@@ -93,6 +93,7 @@ def convert_unique(
     cancel_event: threading.Event | None = None,
     items: list[PlannedTrack] | None = None,
     workers: int | None = None,
+    checkpoint_every: int | None = None,
 ) -> ConvertStats:
     """Encode/copy/reuse unique planned tracks; wait in-flight on cancel."""
     stats = ConvertStats()
@@ -102,6 +103,7 @@ def convert_unique(
     completed = 0
     stats_lock = threading.Lock()
     cover_lock = threading.Lock()
+    checkpointed = 0
 
     def finish(action: str, name: str) -> None:
         nonlocal completed
@@ -116,6 +118,7 @@ def convert_unique(
             stats.succeeded.add((source_key(item.source_path), fmt))
 
     def complete_assignment(item: PlannedTrack) -> None:
+        nonlocal checkpointed
         if plan.manifest is None:
             return
         fmt = coerce_output_format(item.output_format)
@@ -129,6 +132,11 @@ def convert_unique(
             output=output_signature(item.dest_path),
             recipe=recipe_from_item(item),
         )
+        if not checkpoint_every:
+            return
+        checkpointed += 1
+        if checkpointed % checkpoint_every == 0:
+            converter_manifest.save_manifest(plan.manifest, plan.library_dir)
 
     def process_one(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
@@ -286,6 +294,7 @@ def execute_prepared(
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
     workers: int | None = None,
+    checkpoint_every: int = 8,
 ) -> ConvertStats:
     """Save manifest, convert unique items, apply XML per plan, write import XML.
 
@@ -304,6 +313,7 @@ def execute_prepared(
         cancel_event=cancel_event,
         items=prepared.items,
         workers=workers,
+        checkpoint_every=checkpoint_every,
     )
     converter_manifest.save_manifest(prepared.manifest, prepared.library_dir)
     appended_by_plan: list[int] = []

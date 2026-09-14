@@ -460,6 +460,54 @@ class ExecutePreparedTests(XmlFixtureBase):
         for formats in last.values():
             self.assertEqual(assignment_state(formats["wav"]), "complete")
 
+    def test_execute_prepared_checkpoints_manifest_during_batch(self) -> None:
+        """Given several recreates: When execute_prepared runs with checkpoint
+        every completion: Then the manifest is saved between pre-batch and final."""
+        saves: list[dict] = []
+        real_save = converter_manifest.save_manifest
+
+        def tracking_save(manifest, wav_dir):
+            saves.append(deepcopy(manifest.tracks))
+            real_save(manifest, wav_dir)
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ), patch.object(
+            converter_manifest, "save_manifest", side_effect=tracking_save
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            execute_prepared(
+                prepared, force=False, progress=False, checkpoint_every=1
+            )
+
+        self.assertGreaterEqual(len(saves), 5)
+        completes = [
+            sum(
+                1
+                for formats in snapshot.values()
+                if assignment_state(formats["wav"]) == "complete"
+            )
+            for snapshot in saves
+        ]
+        self.assertEqual(completes[0], 0)
+        self.assertEqual(completes[-1], 3)
+        self.assertTrue(any(0 < n < 3 for n in completes[1:-1]))
+
 
 if __name__ == "__main__":
     unittest.main()
