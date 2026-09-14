@@ -32,6 +32,7 @@ from convert.freshness import (
 from convert.models import ConversionPreview, Plan, PlannedTrack, PreparedConversion
 from convert.paths import source_key
 from convert.prepare import prepare_batch
+from convert.rerun import classify_item
 from convert.write import convert_unique, execute_prepared
 from convert_fixtures import XmlFixtureTests as XmlFixtureBase, write_pcm_wav
 from rekordbox_xml import encode_location, iter_playlists, skeleton_from
@@ -507,6 +508,106 @@ class ExecutePreparedTests(XmlFixtureBase):
         self.assertEqual(completes[0], 0)
         self.assertEqual(completes[-1], 3)
         self.assertTrue(any(0 < n < 3 for n in completes[1:-1]))
+
+    def test_checkpoint_keeps_unfinished_complete_tracks_incomplete(self) -> None:
+        """Given two complete dests forced to rebuild: When the second write
+        replaces dest then fails before complete persist: Then disk still marks
+        that assignment incomplete and classify is a rebuild, not a conflict."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            items: list[PlannedTrack] = []
+            for name, pcm in (("A", b"\x11"), ("B", b"\x22")):
+                src = root / f"{name}.flac"
+                src.write_bytes(b"fLaC" + pcm)
+                dest = root / "WAV" / f"{name}.wav"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                write_pcm_wav(dest)
+                el = ET.Element("TRACK", {"Name": name, "Artist": "DJ"})
+                item = PlannedTrack(
+                    source_el=el,
+                    source_path=src,
+                    dest_path=dest,
+                    dest_location=encode_location(dest),
+                    dest_name=dest.name,
+                    codec="pcm_s16le",
+                    passthrough=False,
+                    noop=False,
+                    bit_depth=16,
+                    sample_rate=44100,
+                    output_format="wav",
+                )
+                items.append(item)
+            manifest = converter_manifest.empty_manifest()
+            bind_complete_assignment(manifest, items[0], "WAV/A.wav")
+            bind_complete_assignment(manifest, items[1], "WAV/B.wav")
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {"Name": "rekordbox", "Version": "6.8.5", "Company": "AlphaTheta"},
+            )
+            output_root = skeleton_from(source_root)
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=root / "WAV",
+                output=root / "o.xml",
+                tracks=list(items),
+                unique=list(items),
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=False,
+                manifest=manifest,
+            )
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=list(items),
+                manifest=manifest,
+                preview=ConversionPreview(
+                    selected=2,
+                    resolved=2,
+                    unique_outputs=2,
+                    duplicates=0,
+                    missing=0,
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+            )
+            writes = {"n": 0}
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                dest_path.write_bytes(b"NEW-" + source.name.encode())
+                writes["n"] += 1
+                if writes["n"] >= 2:
+                    raise RuntimeError("crash after replace")
+
+            with patch.object(
+                convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg
+            ), patch.object(
+                xml_output, "probe_dest_tech", return_value=("4", "1411", "44100")
+            ), patch.object(
+                convert.plan, "default_convert_workers", return_value=1
+            ):
+                stats = execute_prepared(
+                    prepared,
+                    force=True,
+                    progress=False,
+                    workers=1,
+                    checkpoint_every=1,
+                )
+            self.assertTrue(stats.errors)
+            loaded = converter_manifest.load_manifest(root)
+            rec_a = loaded.tracks[source_key(items[0].source_path)]["wav"]
+            rec_b = loaded.tracks[source_key(items[1].source_path)]["wav"]
+            self.assertEqual(assignment_state(rec_a), "complete")
+            self.assertEqual(assignment_state(rec_b), "incomplete")
+            plan.manifest = loaded
+            self.assertEqual(classify_item(plan, items[1], False), "transcode")
 
 
 if __name__ == "__main__":
