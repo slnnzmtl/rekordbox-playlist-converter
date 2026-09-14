@@ -100,6 +100,8 @@ def build_conversion_preview(
             reason=preview_reason(decision.action, decision.reason),
             write_kind=decision.write_kind,
             reason_code=decision.reason,
+            source_stat=decision.source_stat,
+            dest_stat=decision.dest_stat,
         )
 
     workers = plan_module.convert_worker_count(total, workers=workers)
