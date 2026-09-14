@@ -76,3 +76,31 @@ Tester: _______________  Date: _______________
 
 A preparation-loss or wrong-playback failure on a tested version **blocks**
 publishing v2.0.0.
+
+---
+
+## Packaged macOS app smoke (release candidate)
+
+Build with `./scripts/build-macos-app.sh`. Do not commit `dist/`. Record
+artifact identity here.
+
+| Check | Result |
+| --- | --- |
+| Converter commit | |
+| `Simple Rekordbox Converter.app` path | |
+| Version in About / window title (`2.0.0`) | |
+| `lipo -archs` shows `x86_64` and `arm64` | |
+| Bundled `ffmpeg` and `ffprobe` run from the app | |
+| First launch (Gatekeeper right-click Open) | |
+| Fresh preferences (no saved XML/folder) | |
+| Documents-access allowed vs declined fallback | |
+| XML select, playlist browse, conversion preview | |
+| Convert, Cancel, rerun (reuse / conflict if set up) | |
+| Import XML edit, Reveal output folder | |
+| Help → Check for Updates… | |
+| Output `WAV/` or `AIFF/`, `.rekordbox-converter-manifest.json` version 2, `rekordbox-import.xml` | |
+| Notes | |
+
+Smoke failures that affect conversion, recovery, data safety, or startup
+**block** publication.
+
