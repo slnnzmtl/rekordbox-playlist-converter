@@ -857,6 +857,84 @@ class RewriteContainerTests(unittest.TestCase):
             self.assertEqual(stats.converted, 1)
             self.assertEqual(dest.read_bytes(), b"RIFF-FROM-SOURCE")
 
+    def test_missing_dest_cdj_safe_wav_passthrough_succeeds(self) -> None:
+        """Given a CDJ-safe WAV source and missing dest: When convert_unique
+        runs: Then the dest is copied, marked succeeded, and no codec error."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "source.wav"
+            write_pcm_wav(src)
+            dest = root / "WAV" / "DJ - Song.wav"
+            dest.parent.mkdir()
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                passthrough=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {"Name": "rekordbox", "Version": "6.8.5", "Company": "AlphaTheta"},
+            )
+            from rekordbox_xml import skeleton_from
+            from convert.models import PreparedConversion, ConversionPreview
+            from convert.write import execute_prepared
+            import xml_output
+
+            output_root = skeleton_from(source_root)
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "rekordbox-import.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=[item],
+                manifest=plan.manifest,
+                preview=ConversionPreview(
+                    selected=1,
+                    resolved=1,
+                    unique_outputs=1,
+                    duplicates=0,
+                    missing=0,
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+            )
+            with mock.patch.object(
+                xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
+            ):
+                stats = execute_prepared(prepared, force=False)
+            self.assertTrue(dest.is_file())
+            self.assertEqual(stats.copied, 1)
+            self.assertEqual(stats.errors, [])
+            self.assertIn((source_key(src), "wav"), stats.succeeded)
+            self.assertFalse(
+                any("no codec planned" in e for e in stats.errors)
+            )
+            out = ET.parse(plan.output).getroot()
+            self.assertEqual(len(out.findall("COLLECTION/TRACK")), 1)
+            self.assertEqual(xml_output.validate_import_xml(out), [])
+
 
 if __name__ == "__main__":
     unittest.main()
