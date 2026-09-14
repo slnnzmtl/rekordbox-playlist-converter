@@ -106,15 +106,19 @@ def convert_unique(
                 finish("copy", name)
                 return
             if action == "rewrite_container" and not is_aiff:
-                _replace_via_sidecar(
-                    item.dest_path,
-                    lambda sidecar: rewrite_wav_pcm(item.dest_path, sidecar),
-                )
-                with stats_lock:
-                    stats.copied += 1
-                mark_succeeded(item)
-                finish("copy", name)
-                return
+                try:
+                    _replace_via_sidecar(
+                        item.dest_path,
+                        lambda sidecar: rewrite_wav_pcm(item.dest_path, sidecar),
+                    )
+                except CliError:
+                    action = "transcode"
+                else:
+                    with stats_lock:
+                        stats.copied += 1
+                    mark_succeeded(item)
+                    finish("copy", name)
+                    return
             if action == "rewrite_container" and is_aiff:
                 cover = plan_module.cached_cover_jpeg(
                     item.source_path,
@@ -127,12 +131,16 @@ def convert_unique(
                     normalize_aiff_audio_chunks(item.dest_path, sidecar)
                     write_aiff_id3(sidecar, item.source_el, cover)
 
-                _replace_via_sidecar(item.dest_path, write_aiff_sidecar)
-                with stats_lock:
-                    stats.copied += 1
-                mark_succeeded(item)
-                finish("copy", name)
-                return
+                try:
+                    _replace_via_sidecar(item.dest_path, write_aiff_sidecar)
+                except CliError:
+                    action = "transcode"
+                else:
+                    with stats_lock:
+                        stats.copied += 1
+                    mark_succeeded(item)
+                    finish("copy", name)
+                    return
             if is_aiff:
                 plan_module.write_aiff_output(
                     item.source_path,

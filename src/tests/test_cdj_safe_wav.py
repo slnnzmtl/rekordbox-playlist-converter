@@ -672,6 +672,61 @@ class RewriteContainerTests(unittest.TestCase):
             out_size = struct.unpack_from("<I", out_raw, out_at + 4)[0]
             self.assertEqual(out_raw[out_at + 8 : out_at + 8 + out_size], before_pcm)
 
+    def test_unsafe_dest_rewrite_falls_back_to_transcode(self) -> None:
+        """Given rewrite_container but dest is not a valid WAV: When convert:
+        Then ffmpeg transcodes from the source and dest is not left as garbage."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            dest.write_bytes(b"not a wav")
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            plan.manifest.tracks[source_key(src)]["wav"]["recipe"]["revision"] = 2
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                dest_path.write_bytes(b"RIFF-FROM-SOURCE")
+
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+                stats = convert_unique(plan, force=False)
+            self.assertEqual(encoded, [dest])
+            self.assertEqual(stats.errors, [])
+            self.assertEqual(stats.converted, 1)
+            self.assertEqual(dest.read_bytes(), b"RIFF-FROM-SOURCE")
+
 
 if __name__ == "__main__":
     unittest.main()
