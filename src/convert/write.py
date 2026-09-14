@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from pathlib import Path
 from typing import Callable
 
@@ -16,6 +17,7 @@ from cli_error import CancelledError, CliError
 from convert.encode import copy_wav_atomic
 from convert.freshness import (
     mark_complete,
+    mark_incomplete,
     metadata_signature,
     output_signature,
     recipe_from_item,
@@ -33,6 +35,15 @@ from convert.progress import Progress
 from convert.paths import source_key
 from convert.quality import coerce_output_format
 
+_MUTATING_ACTIONS = frozenset(
+    {
+        "transcode",
+        "rewrite_container",
+        "update_metadata",
+        "recreate_missing",
+    }
+)
+
 
 def _replace_via_sidecar(dest: Path, write: Callable[[Path], None]) -> None:
     sidecar = dest.with_name(dest.name + "~")
@@ -45,6 +56,32 @@ def _replace_via_sidecar(dest: Path, write: Callable[[Path], None]) -> None:
         except OSError:
             pass
         raise
+
+
+def _prebatch_incomplete_manifest(
+    prepared: PreparedConversion, force: bool
+) -> converter_manifest.ConverterManifest:
+    """Copy of the prepared manifest with planned mutations marked incomplete."""
+    clone = converter_manifest.ConverterManifest(
+        tracks=deepcopy(prepared.manifest.tracks)
+    )
+    if not prepared.plans:
+        return clone
+    plan_by_item: dict[int, Plan] = {}
+    for plan in prepared.plans:
+        for item in plan.unique:
+            plan_by_item.setdefault(id(item), plan)
+    for item in prepared.items:
+        plan = plan_by_item.get(id(item), prepared.plans[0])
+        action = format_policy.planned_action(plan, item, force)
+        if action not in _MUTATING_ACTIONS:
+            continue
+        fmt = coerce_output_format(item.output_format)
+        record = clone.tracks.get(source_key(item.source_path), {}).get(fmt)
+        if record is None:
+            continue
+        mark_incomplete(record)
+    return clone
 
 
 def convert_unique(
@@ -255,7 +292,9 @@ def execute_prepared(
     Encode cancel waits in-flight; successes still receive apply_xml + write.
     Hosts map cancel vs errors vs ok from the returned stats and cancel_event.
     """
-    converter_manifest.save_manifest(prepared.manifest, prepared.library_dir)
+    converter_manifest.save_manifest(
+        _prebatch_incomplete_manifest(prepared, force), prepared.library_dir
+    )
     plans = prepared.plans
     stats = convert_unique(
         plans[0],

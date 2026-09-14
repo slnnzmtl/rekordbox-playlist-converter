@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 
@@ -293,6 +294,48 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertEqual(record["source"], source_signature(item.source_path))
             self.assertEqual(record["output"], output_signature(item.dest_path))
             self.assertEqual(record["dest"], item.dest_path.relative_to(self.wav_dir).as_posix())
+
+    def test_execute_prepared_saves_incomplete_before_mutating(self) -> None:
+        """Given planned recreates: When execute_prepared runs: Then the first
+        manifest save marks those assignments incomplete before ffmpeg writes."""
+        saves: list[dict] = []
+        real_save = converter_manifest.save_manifest
+
+        def tracking_save(manifest, wav_dir):
+            saves.append(deepcopy(manifest.tracks))
+            real_save(manifest, wav_dir)
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ), patch.object(
+            converter_manifest, "save_manifest", side_effect=tracking_save
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            execute_prepared(prepared, force=False, progress=False)
+
+        self.assertGreaterEqual(len(saves), 2)
+        first = saves[0]
+        for formats in first.values():
+            record = formats["wav"]
+            self.assertEqual(record.get("state"), "incomplete")
+        last = saves[-1]
+        for formats in last.values():
+            self.assertEqual(assignment_state(formats["wav"]), "complete")
 
 
 if __name__ == "__main__":
