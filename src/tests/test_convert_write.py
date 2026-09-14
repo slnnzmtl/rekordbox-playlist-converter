@@ -22,11 +22,17 @@ import ffmpeg_tools
 import cdj_wav
 import convert.plan
 import xml_output
-from convert.freshness import bind_complete_assignment
+from convert.freshness import (
+    assignment_state,
+    bind_complete_assignment,
+    output_signature,
+    source_signature,
+)
 from convert.models import ConversionPreview, Plan, PlannedTrack, PreparedConversion
+from convert.paths import source_key
+from convert.prepare import prepare_batch
 from convert.write import convert_unique, execute_prepared
 from convert_fixtures import XmlFixtureTests as XmlFixtureBase, write_pcm_wav
-from convert.prepare import prepare_batch
 from rekordbox_xml import encode_location, iter_playlists, skeleton_from
 
 
@@ -250,6 +256,43 @@ class ExecutePreparedTests(XmlFixtureBase):
                 for node in written.findall("PLAYLISTS/NODE/NODE/TRACK")
             ]
             self.assertEqual(keys, ["99"])
+
+    def test_execute_prepared_persists_complete_signatures(self) -> None:
+        """Given a first-run convert: When execute_prepared finishes: Then each
+        written dest has a complete v2 record matching source and output stats."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            stats = execute_prepared(prepared, force=False, progress=False)
+
+        self.assertEqual(stats.converted, 3)
+        self.assertEqual(len(encoded), 3)
+        loaded = converter_manifest.load_manifest(self.wav_dir)
+        for item in prepared.items:
+            record = loaded.tracks[source_key(item.source_path)]["wav"]
+            self.assertEqual(assignment_state(record), "complete")
+            self.assertEqual(record["source"], source_signature(item.source_path))
+            self.assertEqual(record["output"], output_signature(item.dest_path))
+            self.assertEqual(record["dest"], item.dest_path.relative_to(self.wav_dir).as_posix())
 
 
 if __name__ == "__main__":
