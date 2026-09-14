@@ -1,4 +1,11 @@
-"""Per-format sticky dest assignments under wav_dir (private to convert/prepare batch)."""
+"""Sticky dest assignments and v2 freshness state for one output library.
+
+Version 2 is the first public manifest contract. Unreleased version 1 and
+unknown future versions are refused. Each format assignment stores a dest
+plus optional source/metadata/output signatures, a durable recipe (format,
+bit depth, sample rate, channels, revision — not passthrough), and state
+(complete, incomplete, unverified). Optional hashes are sha256: plus 64 hex.
+"""
 
 from __future__ import annotations
 
@@ -422,7 +429,9 @@ def save_manifest(manifest: ConverterManifest, wav_dir: Path) -> None:
     root = abs_path(wav_dir)
     root.mkdir(parents=True, exist_ok=True)
     path = root / MANIFEST_NAME
-    payload = json.dumps(manifest.to_dict(), indent=2, ensure_ascii=False) + "\n"
+    payload = json.dumps(
+        manifest.to_dict(), indent=2, ensure_ascii=False, sort_keys=True
+    ) + "\n"
     fd, tmp_name = tempfile.mkstemp(
         dir=root, prefix=".manifest-", suffix=".tmp.json"
     )
