@@ -324,6 +324,52 @@ class ManifestValidationTests(unittest.TestCase):
                     f"expected {needle!r} in {errors}",
                 )
 
+    def test_validate_rejects_unknown_root_keys(self) -> None:
+        """Given extra root fields: When validate: Then unknown root keys are
+        rejected."""
+        data = {
+            "version": 2,
+            "layout": "format-flat",
+            "tracks": {},
+            "extra": True,
+        }
+        errors = cm.validate_manifest_data(data, self.wav_dir)
+        self.assertTrue(any("unknown root" in e for e in errors), errors)
+
+    def test_validate_rejects_malformed_metadata_signature(self) -> None:
+        """Given metadata.signature that is not sha256: plus 64 hex: When
+        validate: Then the signature is rejected."""
+        dest = "WAV/Artist - Track.wav"
+        for bad in ("123", "sha256:abcd", "md5:" + ("ab" * 32), 12, None):
+            with self.subTest(signature=bad):
+                record: dict = {
+                    "dest": dest,
+                    "metadata": {"signature": bad},
+                }
+                data = {
+                    "version": 2,
+                    "layout": "format-flat",
+                    "tracks": {"/s": {"wav": record}},
+                }
+                errors = cm.validate_manifest_data(data, self.wav_dir)
+                self.assertTrue(
+                    any("signature" in e for e in errors),
+                    errors,
+                )
+        ok = {
+            "version": 2,
+            "layout": "format-flat",
+            "tracks": {
+                "/s": {
+                    "wav": {
+                        "dest": dest,
+                        "metadata": {"signature": "sha256:" + ("ab" * 32)},
+                    }
+                }
+            },
+        }
+        self.assertEqual(cm.validate_manifest_data(ok, self.wav_dir), [])
+
 
 class LibraryFolderValidationTests(unittest.TestCase):
     def test_empty_or_missing_dir_is_ok(self) -> None:
@@ -394,7 +440,8 @@ class LibraryFolderValidationTests(unittest.TestCase):
 
     def test_v1_manifest_is_refused_with_delete_or_new_folder(self) -> None:
         """Given an unreleased v1 manifest: When validate: Then refuse with
-        instructions to delete it or choose a new output folder."""
+        instructions to remove or recreate the whole output library, or choose
+        a new empty folder — not only delete the JSON."""
         with tempfile.TemporaryDirectory() as tmp:
             wav_dir = Path(tmp) / "lib"
             wav_dir.mkdir()
@@ -413,10 +460,9 @@ class LibraryFolderValidationTests(unittest.TestCase):
             assert err is not None
             lowered = err.lower()
             self.assertIn("version 1", lowered)
-            self.assertTrue(
-                "delete" in lowered and "new" in lowered,
-                err,
-            )
+            self.assertIn("whole", lowered)
+            self.assertIn("new empty", lowered)
+            self.assertNotIn(f"delete {cm.MANIFEST_NAME.lower()}", lowered)
 
     def test_unknown_and_future_versions_are_refused(self) -> None:
         """Given version 0 or 3: When validate: Then each is an unsupported

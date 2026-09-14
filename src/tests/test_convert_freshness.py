@@ -35,7 +35,7 @@ class SourceSignatureTests(unittest.TestCase):
             sig = source_signature(path)
             self.assertEqual(sig["size"], st.st_size)
             self.assertEqual(sig["mtime_ns"], st.st_mtime_ns)
-            self.assertIsNone(sig["hash"])
+            self.assertNotIn("hash", sig)
             self.assertEqual(path.read_bytes(), before)
             self.assertEqual(path.stat().st_mtime_ns, st.st_mtime_ns)
 
