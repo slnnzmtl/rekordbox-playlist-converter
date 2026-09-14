@@ -248,7 +248,13 @@ def write_aiff_output(
             )
             if not is_cdj_safe_aiff(tmp, bit_depth=bit_depth, sample_rate=sample_rate):
                 raise CliError(f"AIFF audio stage failed for {source}")
-        write_aiff_id3(tmp, source_el, cover)
+        write_aiff_id3(
+            tmp,
+            source_el,
+            cover,
+            bit_depth=bit_depth,
+            sample_rate=sample_rate,
+        )
         if not is_canonical_aiff_output(
             tmp, source_el, cover, bit_depth=bit_depth, sample_rate=sample_rate
         ):

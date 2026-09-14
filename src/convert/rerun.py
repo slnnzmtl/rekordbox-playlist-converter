@@ -118,16 +118,6 @@ def file_snapshot(path: Path) -> dict[str, Any] | None:
     return {"size": st.st_size, "mtime_ns": st.st_mtime_ns}
 
 
-def _stats_match(
-    stored: dict[str, Any] | None, current: dict[str, Any] | None
-) -> bool:
-    return snapshots_match(stored, current)
-
-
-def _file_stat(path: Path) -> dict[str, Any] | None:
-    return file_snapshot(path)
-
-
 def classify_assignment(
     *,
     item: PlannedTrack,
@@ -153,7 +143,7 @@ def classify_assignment(
         )
     record = record or {}
     state = assignment_state(record)
-    if state == "complete" and not _stats_match(record.get("output"), dest_stat):
+    if state == "complete" and not snapshots_match(record.get("output"), dest_stat):
         return _decision(
             "external_modification_conflict",
             "external_modification",
@@ -181,7 +171,7 @@ def classify_assignment(
             source_stat=source_stat,
             dest_stat=dest_stat,
         )
-    if not _stats_match(record.get("source"), source_stat):
+    if not snapshots_match(record.get("source"), source_stat):
         return _decision(
             _rebuild_action(item),
             "source_changed",
@@ -235,12 +225,12 @@ def classify_item(plan: Plan, item: PlannedTrack, force: bool) -> Decision:
     record = None
     if plan.manifest is not None:
         record = plan.manifest.tracks.get(source_key(item.source_path), {}).get(fmt)
-    dest_stat = _file_stat(item.dest_path)
+    dest_stat = file_snapshot(item.dest_path)
     return classify_assignment(
         item=item,
         record=record,
         force=force,
         dest_exists=dest_stat is not None,
         dest_stat=dest_stat,
-        source_stat=_file_stat(item.source_path),
+        source_stat=file_snapshot(item.source_path),
     )

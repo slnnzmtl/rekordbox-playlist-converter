@@ -32,15 +32,5 @@ SAMPLE_RATE_LABELS = {"44100": "44.1 kHz", "48000": "48 kHz"}
 BIT_DEPTH_FROM_LABEL = {label: value for value, label in BIT_DEPTH_LABELS.items()}
 SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.items()}
 CANCELLED_STATUS_CLEAR_MS = 3000
-PREVIEW_ACTION_LABELS = {
-    "reuse": "Reuse existing",
-    "refresh_xml": "Refresh XML",
-    "update_metadata": "Update metadata",
-    "rewrite_container": "Rebuild container",
-    "transcode": "Transcode",
-    "recreate_missing": "Recreate missing",
-    "external_modification_conflict": "Conflict",
-    "in_place_noop": "In-place skip",
-}
 SEARCH_DEBOUNCE_MS = 200
 WAV_DIR_VALIDATE_DEBOUNCE_MS = 300

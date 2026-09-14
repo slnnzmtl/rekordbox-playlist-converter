@@ -35,10 +35,6 @@ def preview_size(item: PlannedTrack, write_kind: str) -> tuple[int | None, str]:
     return estimated, _format_size_mb(estimated, approximate=True)
 
 
-def _preview_size(item: PlannedTrack, write_kind: str) -> tuple[int | None, str]:
-    return preview_size(item, write_kind)
-
-
 def build_conversion_preview(
     plans: list[Plan],
     items: list[PlannedTrack],

@@ -117,7 +117,9 @@ class ConversionPreviewTests(unittest.TestCase):
             aiff_dest = root / "AIFF" / "out.aiff"
             aiff_dest.parent.mkdir(parents=True)
             __import__("shutil").copy2(aiff_src, aiff_dest)
-            cdj_aiff.write_aiff_id3(aiff_dest, el, None)
+            cdj_aiff.write_aiff_id3(
+                aiff_dest, el, None, bit_depth=16, sample_rate=44100
+            )
             aiff_item = PlannedTrack(
                 source_el=el,
                 source_path=aiff_src,

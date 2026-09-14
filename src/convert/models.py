@@ -56,6 +56,17 @@ class ConversionPreview:
 
 
 @dataclass
+class ItemResult:
+    source: Path
+    destination: Path
+    action: str
+    outcome: str  # succeeded, conflict, state_changed, failed, cancelled
+    playlists: tuple[str, ...] = ()
+    error: str | None = None
+    write: str = ""
+
+
+@dataclass
 class Plan:
     playlist_name: str
     wav_playlist_name: str
