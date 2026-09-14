@@ -542,6 +542,64 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             text, _cover = cdj_aiff._read_id3_frames(tag)
             self.assertEqual(text.get("TIT2"), "New")
 
+    def test_rewrite_container_keeps_aiff_ssnd_without_ffmpeg(self) -> None:
+        """Given a complete AIFF dest whose recipe revision differs: When convert:
+        Then SSND PCM is unchanged, extra chunks are dropped, and ffmpeg is not
+        called."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "AIFF" / "out.aiff"
+            dest.parent.mkdir()
+            write_pcm_aiff(dest, extra_chunks=[(b"NAME", b"x\x00")])
+            before_ssnd = cdj_aiff.ssnd_pcm_bytes(dest)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16be",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="aiff",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [AIFF]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                output_format="aiff",
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "AIFF/out.aiff")
+            plan.manifest.tracks[source_key(src)]["aiff"]["recipe"]["revision"] = 2
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"NOT-AIFF")
+
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+                stats = convert_unique(plan, force=False)
+            self.assertEqual(encoded, [])
+            self.assertEqual(stats.errors, [])
+            self.assertEqual(cdj_aiff.ssnd_pcm_bytes(dest), before_ssnd)
+            info = cdj_aiff.parse_aiff_audio(dest)
+            self.assertEqual(set(info.chunk_ids), {"COMM", "SSND", "ID3 "})
+
     def test_convert_unique_extracts_cover_once_per_source(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

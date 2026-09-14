@@ -5,11 +5,12 @@ from __future__ import annotations
 import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Callable
 
 import converter_manifest
 import xml_output
-from cdj_aiff import write_aiff_id3
+from cdj_aiff import normalize_aiff_audio_chunks, write_aiff_id3
 from cdj_wav import rewrite_wav_pcm
 from cli_error import CancelledError, CliError
 from convert.encode import copy_wav_atomic
@@ -24,6 +25,19 @@ from convert.models import (
 from convert.progress import Progress
 from convert.paths import source_key
 from convert.quality import coerce_output_format
+
+
+def _replace_via_sidecar(dest: Path, write: Callable[[Path], None]) -> None:
+    sidecar = dest.with_name(dest.name + "~")
+    try:
+        write(sidecar)
+        os.replace(sidecar, dest)
+    except Exception:
+        try:
+            sidecar.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
 
 
 def convert_unique(
@@ -92,16 +106,28 @@ def convert_unique(
                 finish("copy", name)
                 return
             if action == "rewrite_container" and not is_aiff:
-                sidecar = item.dest_path.with_name(item.dest_path.name + "~")
-                try:
-                    rewrite_wav_pcm(item.dest_path, sidecar)
-                    os.replace(sidecar, item.dest_path)
-                except Exception:
-                    try:
-                        sidecar.unlink(missing_ok=True)
-                    except OSError:
-                        pass
-                    raise
+                _replace_via_sidecar(
+                    item.dest_path,
+                    lambda sidecar: rewrite_wav_pcm(item.dest_path, sidecar),
+                )
+                with stats_lock:
+                    stats.copied += 1
+                mark_succeeded(item)
+                finish("copy", name)
+                return
+            if action == "rewrite_container" and is_aiff:
+                cover = plan_module.cached_cover_jpeg(
+                    item.source_path,
+                    plan.cover_cache,
+                    lock=cover_lock,
+                    cancel_event=cancel_event,
+                )
+
+                def write_aiff_sidecar(sidecar: Path) -> None:
+                    normalize_aiff_audio_chunks(item.dest_path, sidecar)
+                    write_aiff_id3(sidecar, item.source_el, cover)
+
+                _replace_via_sidecar(item.dest_path, write_aiff_sidecar)
                 with stats_lock:
                     stats.copied += 1
                 mark_succeeded(item)
