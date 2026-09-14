@@ -15,7 +15,8 @@ collection, then use the rekordbox xml pane — never File → Import.
 ────────────────────────────────────────
 
 This app does not open Rekordbox’s internal database. It only reads an XML
-export.
+export. The GUI may check GitHub Releases for updates (Help → Check for
+Updates…). There is no analytics in this app.
 
 1. Open Rekordbox and wait until analysis has finished on the tracks you care
    about (cues and grids come from this export).
@@ -155,4 +156,9 @@ Play one track. Confirm it is on a disk Rekordbox can read.
 
 New tracks later: export XML from Rekordbox again, convert with the same output
 folder, refresh Imported Library, then import the new rows.
+
+Troubleshooting: if Convert is disabled, read the preview reason — conflicts
+mean a destination was edited outside this app; free some disk space if the
+output volume is full. Compatibility and packaged-app smoke notes:
+docs/rekordbox-xml-import-checklist.md (empty cells are untested).
 """
