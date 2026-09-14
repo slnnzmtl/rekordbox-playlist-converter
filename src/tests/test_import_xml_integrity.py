@@ -171,8 +171,6 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
             with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
                 ffmpeg_tools, "run_ffprobe", side_effect=self._probe
             ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-                convert.format_policy, "is_cdj_safe_wav", return_value=False
-            ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("100", "2116", "44100")
             ):
                 rc = rb.run_convert_batch(
@@ -268,8 +266,6 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
             with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
                 ffmpeg_tools, "run_ffprobe", side_effect=self._probe
             ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
-                convert.format_policy, "is_cdj_safe_wav", return_value=False
-            ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
             ):
                 rc = rb.run_convert_batch(

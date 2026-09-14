@@ -85,6 +85,34 @@ class ManifestValidationTests(unittest.TestCase):
                 errors = cm.validate_manifest_data(data, self.wav_dir)
                 self.assertTrue(errors, f"expected errors for {dest!r}/{fmt}")
 
+    def test_set_dest_keeps_existing_freshness_fields(self) -> None:
+        """Given a complete record: When set_dest: Then dest updates and
+        state, source, metadata, output, and recipe stay."""
+        m = cm.empty_manifest()
+        record = {
+            "dest": "WAV/Artist - Track.wav",
+            "state": "complete",
+            "source": {"size": 10, "mtime_ns": 1, "hash": None},
+            "metadata": {"signature": "sha256:" + ("ab" * 32)},
+            "output": {"size": 20, "mtime_ns": 2, "hash": None},
+            "recipe": {
+                "format": "wav",
+                "bit_depth": 24,
+                "sample_rate": 48000,
+                "channels": 2,
+                "revision": 1,
+            },
+        }
+        m.tracks["/music/a.flac"] = {"wav": record}
+        m.set_dest("/music/a.flac", "wav", "WAV/Artist - Track.wav")
+        kept = m.tracks["/music/a.flac"]["wav"]
+        self.assertEqual(kept["dest"], "WAV/Artist - Track.wav")
+        self.assertEqual(kept["state"], "complete")
+        self.assertEqual(kept["source"], record["source"])
+        self.assertEqual(kept["metadata"], record["metadata"])
+        self.assertEqual(kept["output"], record["output"])
+        self.assertEqual(kept["recipe"], record["recipe"])
+
     def test_save_manifest_uses_hidden_name(self) -> None:
         """Given a valid assignment: When save: Then hidden MANIFEST_NAME is
         written atomically with layout, version, and dest."""

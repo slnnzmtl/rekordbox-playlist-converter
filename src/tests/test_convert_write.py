@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -19,10 +21,12 @@ import converter_manifest
 import ffmpeg_tools
 import cdj_wav
 import convert.plan
-from convert.write import execute_prepared
-from convert_fixtures import XmlFixtureTests as XmlFixtureBase
+from convert.freshness import bind_complete_assignment
+from convert.models import Plan, PlannedTrack
+from convert.write import convert_unique, execute_prepared
+from convert_fixtures import XmlFixtureTests as XmlFixtureBase, write_pcm_wav
 from convert.prepare import prepare_batch
-from rekordbox_xml import iter_playlists
+from rekordbox_xml import encode_location, iter_playlists
 
 
 class ExecutePreparedTests(XmlFixtureBase):
@@ -66,6 +70,63 @@ class ExecutePreparedTests(XmlFixtureBase):
         names = [name for _folder, name, _node in iter_playlists(out)]
         self.assertEqual(names, ["Untitled Intelligent List [WAV]"])
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
+
+    def test_convert_unique_reclassifies_mtime_change_as_conflict(self) -> None:
+        """Given preview would reuse: When dest mtime changes before write:
+        Then convert_unique reports a conflict and does not overwrite dest."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(dest)
+            prior = dest.read_bytes()
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            st = dest.stat()
+            os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"OVERWRITTEN")
+
+            with patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+                stats = convert_unique(plan, force=False)
+            self.assertEqual(stats.conflicts, [dest.name])
+            self.assertEqual(stats.converted, 0)
+            self.assertEqual(encoded, [])
+            self.assertEqual(dest.read_bytes(), prior)
+            self.assertEqual(stats.succeeded, set())
 
 
 if __name__ == "__main__":

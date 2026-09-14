@@ -322,6 +322,7 @@ def build_plan(
         max_bit_depth=max_bit_depth,
         max_sample_rate=max_sample_rate,
         cover_cache=cover_cache,
+        manifest=manifest,
     )
     if errors:
         return plan, errors

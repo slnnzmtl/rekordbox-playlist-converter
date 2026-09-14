@@ -65,6 +65,7 @@ class Plan:
     max_bit_depth: int = 24
     max_sample_rate: int = 48000
     cover_cache: dict[Path, bytes | None] = field(default_factory=dict)
+    manifest: ConverterManifest | None = None
 
 
 @dataclass
@@ -74,6 +75,7 @@ class ConvertStats:
     skipped: int = 0
     appended: int = 0
     errors: list[str] = field(default_factory=list)
+    conflicts: list[str] = field(default_factory=list)
     # (source_key, format) that skipped, copied, or converted successfully.
     succeeded: set[tuple[str, str]] = field(default_factory=set)
     # Entries appended per plan by apply_xml during execute_prepared.

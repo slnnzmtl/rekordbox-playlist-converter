@@ -58,7 +58,12 @@ class ConverterManifest:
         return dest or None
 
     def set_dest(self, source_key: str, output_format: str, dest: str) -> None:
-        self.tracks.setdefault(source_key, {})[output_format] = {"dest": dest}
+        formats = self.tracks.setdefault(source_key, {})
+        record = formats.get(output_format)
+        if record is None:
+            formats[output_format] = {"dest": dest}
+            return
+        record["dest"] = dest
 
     def dest_collision_keys(
         self, *, exclude: tuple[str, str] | None = None

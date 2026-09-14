@@ -19,7 +19,9 @@ from convert.format_policy import classify_source
 import convert.plan
 from convert import encode
 import ffmpeg_tools
+from convert.freshness import bind_complete_assignment
 from convert.models import Plan, PlannedTrack
+import converter_manifest
 from convert.prepare import prepare
 from convert.write import convert_unique
 from rekordbox_xml import encode_location
@@ -367,8 +369,10 @@ class SkipCdjSafeDestTests(unittest.TestCase):
     def test_skips_cdj_safe_dest_reconverts_unsafe_unless_force(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            src = root / "a.flac"
-            src.write_bytes(b"fLaC")
+            src_safe = root / "a.flac"
+            src_unsafe = root / "b.flac"
+            src_safe.write_bytes(b"fLaC")
+            src_unsafe.write_bytes(b"fLaC")
             media_dir = root / "WAV" / "P"
             media_dir.mkdir(parents=True)
             safe_dest = media_dir / "safe.wav"
@@ -376,7 +380,7 @@ class SkipCdjSafeDestTests(unittest.TestCase):
             unsafe_dest = media_dir / "unsafe.wav"
             write_pcm_wav(unsafe_dest, sample_rate=48000)
 
-            def make_item(dest: Path) -> PlannedTrack:
+            def make_item(src: Path, dest: Path) -> PlannedTrack:
                 el = ET.Element(
                     "TRACK", {"TrackID": "1", "Location": encode_location(src)}
                 )
@@ -393,8 +397,8 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                     sample_rate=44100,
                 )
 
-            safe_item = make_item(safe_dest)
-            unsafe_item = make_item(unsafe_dest)
+            safe_item = make_item(src_safe, safe_dest)
+            unsafe_item = make_item(src_unsafe, unsafe_dest)
             plan = Plan(
                 playlist_name="P",
                 wav_playlist_name="P [WAV]",
@@ -407,6 +411,8 @@ class SkipCdjSafeDestTests(unittest.TestCase):
                 output_root=ET.Element("DJ_PLAYLISTS"),
                 output_existed=False,
             )
+            plan.manifest = converter_manifest.empty_manifest()
+            bind_complete_assignment(plan.manifest, safe_item, "WAV/P/safe.wav")
             converted: list[Path] = []
 
             def fake_ffmpeg(

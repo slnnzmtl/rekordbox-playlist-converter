@@ -112,7 +112,7 @@ class PrepareWriteBoundaryTests(unittest.TestCase):
                 self.assertEqual(prepare.call_count, prepare_count)
                 execute.assert_called_once()
                 self.assertEqual(list(execute.call_args.args[0].items), prepared_items)
-                self.assertEqual(planned_action_calls, ["transcode"])
+                self.assertEqual(planned_action_calls, ["recreate_missing"])
                 self.assertIsNone(app._prepared_conversion)
                 self.assertFalse(app._busy)
         except tk.TclError:
@@ -152,7 +152,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                 ),
                 ConversionPreviewItem(
                     relative_dest="WAV/B - Two.wav",
-                    action="copy",
+                    action="recreate_missing",
                     bit_depth=24,
                     sample_rate=48000,
                     size_bytes=288000,
@@ -248,7 +248,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                         ),
                         (
                             "two.wav",
-                            "Copy",
+                            "Recreate missing",
                             "24-bit / 48 kHz",
                             "≈ 0.3 MB",
                         ),

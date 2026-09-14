@@ -421,9 +421,7 @@ class XmlFixtureTests(XmlFixtureBase):
 
             with patch.object(encode, "_COPY_CHUNK_SIZE", 8), patch(
                 "builtins.open", side_effect=open_side_effect
-            ), patch.object(convert.plan, "default_convert_workers", return_value=1), patch.object(
-                convert.format_policy, "is_cdj_safe_wav", return_value=False
-            ):
+            ), patch.object(convert.plan, "default_convert_workers", return_value=1):
                 convert_unique(
                     plan, force=False, progress=False, cancel_event=cancel
                 )

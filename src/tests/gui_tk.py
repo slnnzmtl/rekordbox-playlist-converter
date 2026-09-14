@@ -250,6 +250,7 @@ def mock_convert_plan(*, n_unique: int = 2):
         output=Path("/tmp/out.xml"),
         output_format="wav",
         cover_cache={},
+        manifest=None,
     )
 
 

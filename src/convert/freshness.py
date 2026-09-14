@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
+from convert.paths import source_key
 from convert.quality import coerce_bit_depth, coerce_output_format, coerce_sample_rate
 
 RECIPE_REVISION = 1
@@ -118,4 +119,22 @@ def assignment_state(record: dict[str, Any]) -> str:
     ):
         return "complete"
     return "unverified"
+
+
+def bind_complete_assignment(
+    manifest: Any,
+    item: Any,
+    relative_dest: str,
+) -> None:
+    """Store a complete freshness record for *item* at *relative_dest*."""
+    record: dict[str, Any] = {"dest": relative_dest}
+    mark_complete(
+        record,
+        source=source_signature(item.source_path),
+        metadata=metadata_signature(item.source_el),
+        output=output_signature(item.dest_path),
+        recipe=recipe_from_item(item),
+    )
+    fmt = coerce_output_format(item.output_format)
+    manifest.tracks.setdefault(source_key(item.source_path), {})[fmt] = record
 
