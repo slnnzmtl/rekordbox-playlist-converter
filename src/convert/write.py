@@ -8,6 +8,7 @@ from typing import Callable
 
 import converter_manifest
 import xml_output
+from cdj_aiff import write_aiff_id3
 from cli_error import CancelledError, CliError
 from convert.encode import copy_wav_atomic
 from convert import format_policy
@@ -77,6 +78,17 @@ def convert_unique(
             converter_manifest.ensure_dest_path_under_wav_dir(
                 plan.library_dir, item.dest_path
             )
+            if action == "update_metadata":
+                cover = plan_module.cached_cover_jpeg(
+                    item.source_path,
+                    plan.cover_cache,
+                    lock=cover_lock,
+                    cancel_event=cancel_event,
+                )
+                write_aiff_id3(item.dest_path, item.source_el, cover)
+                mark_succeeded(item)
+                finish("copy", name)
+                return
             if is_aiff:
                 plan_module.write_aiff_output(
                     item.source_path,
