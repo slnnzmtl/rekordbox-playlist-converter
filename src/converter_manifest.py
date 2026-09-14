@@ -14,7 +14,7 @@ from convert.paths import abs_path, collision_key, same_file
 from convert.quality import OUTPUT_FORMATS, FORMAT_DIR_NAMES
 
 MANIFEST_NAME = ".rekordbox-converter-manifest.json"
-MANIFEST_VERSION = 1
+MANIFEST_VERSION = 2
 MANIFEST_LAYOUT = "format-flat"
 SUPPORTED_FORMATS = OUTPUT_FORMATS
 _FORMAT_DIRS = FORMAT_DIR_NAMES

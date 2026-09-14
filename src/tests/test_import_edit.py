@@ -24,7 +24,7 @@ def _write_import_xml(path: Path, body: str) -> None:
 
 def _write_manifest(library: Path, tracks: dict) -> None:
     payload = {
-        "version": 1,
+        "version": 2,
         "layout": "format-flat",
         "tracks": tracks,
     }
