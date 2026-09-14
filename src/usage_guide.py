@@ -59,15 +59,19 @@ export.
 5. Choose Maximum output quality (bit depth 16-bit/24-bit and rate
    44.1 kHz/48 kHz). These are maxima, not targets: 16-bit tracks stay
    16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are 24-bit / 48 kHz.
-6. Click Convert (beside the progress bar). A Conversion preview lists unique
-   outputs, actions, quality, and size. Back (or Escape) writes nothing and
+6. Click Convert (beside the progress bar). A Conversion preview lists each
+   unique input, reserved destination, action, reason, quality, and size.
+   Reasons say whether the step writes audio, updates metadata only, or writes
+   nothing. Convert stays disabled on unresolved destination conflicts or
+   insufficient disk space. Back (or Escape) writes nothing and
    returns to the main window. Confirm Convert to start encoding. While
    converting, Cancel replaces Convert in that spot. Cancel stops in-flight
    encodes (up to 4 at once); files already written are kept and Import XML
    includes tracks already in the success set (re-run Convert to finish the
-   rest). If some tracks fail, convertible tracks still finish and all errors
-   are reported together. After success, Reveal output folder opens the chosen
-   output folder.
+   rest). The Done report lists converted, copied, PCM-rebuilt,
+   metadata-refreshed, reused, recreated, missing, conflicting, and failed
+   tracks together (successes stay visible if some tracks fail). After a
+   finished run, Reveal output folder opens the chosen output folder.
 
 What you get:
 • Audio files in <output folder>/WAV/ or …/AIFF/ as <artist> - <track>
@@ -79,8 +83,11 @@ What you get:
 • Playlist inside that file named {your playlist} [WAV] or [AIFF]
 
 Your original files stay where they are. Re-running with the same output folder
-adds new tracks and refreshes metadata for existing dest paths; it does not
-replace the playlist. Each unique source converts once per batch even if it
+classifies each reserved destination (reuse, refresh XML, update AIFF tags,
+rebuild container, transcode, recreate missing, in-place skip, or conflict).
+Conflicts are not overwritten; Convert is blocked until they are resolved.
+Cancel stops in-flight encodes; already-written files and Import XML for
+successes are kept. Each unique source converts once per batch even if it
 appears in several playlists. Assignments are sticky per source and format.
 If two different sources would share <artist> - <track>, the second gets (2),
 then (3), and so on. Deleting a generated audio file recreates it at the same

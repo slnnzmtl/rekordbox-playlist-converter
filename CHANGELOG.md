@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Preview shows reserved destination, action, classifier reason (writes audio /
+  metadata only / nothing), quality, and size. Convert is blocked on unresolved
+  destination conflicts or insufficient disk space. GUI and CLI `--dry-run`
+  share the same labels.
+- The conversion report counts converted, copied, PCM-rebuilt,
+  metadata-refreshed, reused, recreated, missing, conflicting, and failed
+  outputs; mixed batches keep successes visible.
+- Automated Import XML round-trips cover ratings, key, comments, unknown
+  fields, memory/hot/loop marks, and variable-tempo grids for WAV and AIFF.
+- Recorded Rekordbox 6/7 compatibility and packaged-app smoke checks live in
+  [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
+  (empty = untested).
+
 - Manifest **v2** is the first released converter-library contract. Unreleased v1
   and unknown future versions are refused (delete `.rekordbox-converter-manifest.json`
   or choose a new output folder). Reruns classify explicit actions from source,

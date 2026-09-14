@@ -1,4 +1,4 @@
-# Rekordbox playlist → WAV
+# Simple Rekordbox Converter
 
 <p align="center">
   <img src="assets/rpc-logo-white.png" alt="Simple Rekordbox Converter logo" width="160">
@@ -81,7 +81,11 @@ cd rekordbox-playlist-converter
 3. Pick the XML export, pick one or more playlists (`1`, `1,4,7`, or `all`), and confirm the output folder (default `./output`). Audio lands under `output/WAV/` or `output/AIFF/` as `<artist> - <track>`; the import file is `output/rekordbox-import.xml`.
 4. Follow the import steps printed at the end — or open **[USAGE.md](USAGE.md)** and do section 3.
 
-The new playlist in the import file is named `{original} [WAV]` or `{original} [AIFF]`. Running again **adds** tracks and refreshes metadata for existing dest paths; it does not wipe the playlist. A hidden sticky `.rekordbox-converter-manifest.json` in the output folder remembers each source’s path per format so reruns stay stable. Deleting that manifest leaves the audio unmanaged and the folder is refused — use a new empty output folder.
+The new playlist in the import file is named `{original} [WAV]` or `{original} [AIFF]`. Running again classifies each reserved destination: reuse, refresh Import XML, update AIFF tags, rebuild the container, transcode, recreate a missing file, skip in-place, or **conflict** (dest changed outside this app — Convert is blocked until you resolve it). A hidden sticky `.rekordbox-converter-manifest.json` (**version 2**) remembers ownership, source/metadata/output signatures, and the conversion recipe. Deleting that manifest leaves the audio unmanaged and the folder is refused — use a new empty output folder. Leftover **development** v1 manifests are refused the same way: back up or delete the folder rather than migrating it.
+
+Compatibility with real Rekordbox 6/7 imports is recorded in
+[docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
+(empty cells are untested, not supported).
 
 ## Options (optional)
 
