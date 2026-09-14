@@ -9,7 +9,7 @@
 
 Turn a Rekordbox playlist of lossless tracks into **WAV** or **AIFF** files, **without changing your originals**. Cues, beatgrid, rating, BPM, and tags are copied into a new playlist named `{your playlist} [WAV]` or `{your playlist} [AIFF]`.
 
-Works with Rekordbox **6** and **7**.
+Supports the Rekordbox **6** and **7** XML export → convert → **rekordbox xml** import **workflow**. Live import compatibility with specific Rekordbox builds is **untested until** the evidence matrix in [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md) is filled — empty cells mean unverified, not a claim of support.
 
 **Not File → Import.** Rekordbox loads this XML from the **rekordbox xml** pane. The full click-path is in **[USAGE.md](USAGE.md)**.
 
@@ -91,9 +91,9 @@ cd rekordbox-playlist-converter
 
 The new playlist in the import file is named `{original} [WAV]` or `{original} [AIFF]`. Running again classifies each reserved destination: reuse, refresh Import XML, update AIFF tags, rebuild the container, transcode, recreate a missing file, skip in-place, or **conflict** (dest changed outside this app — Convert is blocked until you resolve it). A hidden sticky `.rekordbox-converter-manifest.json` (**version 2**) remembers ownership, source/metadata/output signatures, and the conversion recipe. Deleting that manifest leaves the audio unmanaged and the folder is refused — use a new empty output folder. Leftover **development** v1 manifests are refused the same way: back up or delete the folder rather than migrating it.
 
-Compatibility with real Rekordbox 6/7 imports is recorded in
+Compatibility with real Rekordbox 6/7 imports is tracked in
 [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
-(empty cells are untested, not supported).
+(empty cells are untested — do not treat them as verified support).
 
 ## Options (optional)
 

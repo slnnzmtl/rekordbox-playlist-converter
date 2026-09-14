@@ -212,6 +212,10 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
             return out
 
     def test_rb6_style_convert_write_validate(self) -> None:
+        """DDD-146 contract: Import XML playlists are flat `[WAV]`/`[AIFF]`
+        nodes (no nested source folders), and repeated playlist Keys are
+        deduped. Nested Rekordbox folders and duplicate Keys are not
+        preserved."""
         out = self._convert_and_validate(
             fixture=RB6_FIXTURE,
             playlist="Night Set",
