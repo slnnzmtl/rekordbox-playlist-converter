@@ -168,6 +168,54 @@ class ManifestValidationTests(unittest.TestCase):
                     f"expected {needle!r} in {errors}",
                 )
 
+    def test_validate_rejects_malformed_hashes(self) -> None:
+        """Given source or output hash that is not sha256: plus 64 hex: When
+        validate: Then the hash is rejected; null and omitted hashes pass."""
+        dest = "WAV/Artist - Track.wav"
+        ok_none = {
+            "dest": dest,
+            "source": {"size": 1, "mtime_ns": 1, "hash": None},
+        }
+        ok_omitted = {
+            "dest": dest,
+            "source": {"size": 1, "mtime_ns": 1},
+        }
+        ok_sha = {
+            "dest": dest,
+            "source": {
+                "size": 1,
+                "mtime_ns": 1,
+                "hash": "sha256:" + ("ab" * 32),
+            },
+        }
+        for record in (ok_none, ok_omitted, ok_sha):
+            data = {
+                "version": 2,
+                "layout": "format-flat",
+                "tracks": {"/s": {"wav": record}},
+            }
+            self.assertEqual(cm.validate_manifest_data(data, self.wav_dir), [])
+        bad_hashes = [
+            "sha256:abcd",
+            "sha256:" + ("zz" * 32),
+            "md5:" + ("ab" * 32),
+            "ab" * 32,
+            12,
+        ]
+        for bad in bad_hashes:
+            with self.subTest(hash=bad):
+                record = {
+                    "dest": dest,
+                    "output": {"size": 1, "mtime_ns": 1, "hash": bad},
+                }
+                data = {
+                    "version": 2,
+                    "layout": "format-flat",
+                    "tracks": {"/s": {"wav": record}},
+                }
+                errors = cm.validate_manifest_data(data, self.wav_dir)
+                self.assertTrue(any("hash" in e for e in errors), errors)
+
 
 class LibraryFolderValidationTests(unittest.TestCase):
     def test_empty_or_missing_dir_is_ok(self) -> None:
