@@ -43,10 +43,11 @@ export.
    sort within each playlist group. Format and rate come from the
    export; bit depth is read from FLAC, ALAC (M4A), WAV, or AIFF file headers
    when the file is on disk, otherwise — (Scanning bit depth… appears beside the
-   unique-tracks status line while that runs). Track rows start selected; hold ⌃ to
+   unique-tracks status line while that runs). Hover a track row to see its
+   file path. Track rows start selected; hold ⌃ to
    refine which tracks to convert (across playlists). Playlist search filters
    the left tree; track search filters the current tracklist (artist / title /
-   filename).
+   filename / format).
 3. Confirm the output folder. Defaults are ~/Documents/rekordbox-converter when
    Documents access is allowed, or ~/rekordbox-converter if you decline that
    request; Browse… can prompt again when you open Documents. Import XML is
@@ -65,8 +66,8 @@ export.
    encodes (up to 4 at once); files already written are kept and Import XML
    includes tracks already in the success set (re-run Convert to finish the
    rest). If some tracks fail, convertible tracks still finish and all errors
-   are reported together. After success, Reveal audio folder opens the selected
-   format directory (WAV/ or AIFF/).
+   are reported together. After success, Reveal output folder opens the chosen
+   output folder.
 
 What you get:
 • Audio files in <output folder>/WAV/ or …/AIFF/ as <artist> - <track>
@@ -86,6 +87,20 @@ then (3), and so on. Deleting a generated audio file recreates it at the same
 assignment on the next run. Dest files that already match the chosen profile
 are skipped unless you force a rebuild (CLI: --force). CLI --dry-run prints
 the same plan as this preview and writes nothing.
+
+Editing a generated library (GUI):
+• When the output folder already has rekordbox-import.xml and the hidden
+  converter manifest, an Edit button appears beside Import XML.
+• Edit mode loads that Import XML (not your Rekordbox source export). Remove
+  playlists or tracks from the right-click menus, or Reveal in Finder for a
+  track file. Shift/Command-click to select several tracks, then right-click to
+  remove them together. Tracks left in the collection with no playlist appear
+  under Unknown. Missing tracks show a ! prefix.
+• Changes stay in a draft until Save. Save shows a preview of pending removals
+  (move to Trash), then updates the Import XML and
+  manifest and moves deleted managed audio to the Trash. Cancel discards the
+  draft.
+• Conversion, Refresh, and folder browsing stay locked while you edit.
 
 ────────────────────────────────────────
 3. Bring it into Rekordbox

@@ -257,11 +257,11 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     {
                         "prepare_batch": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                     }
                 ) as mocks:
                     prepare = mocks["prepare_batch"]
-                    showerror = mocks["messagebox.showerror"]
+                    showerror = mocks["show_centered_message"]
                     mark_output_folder_valid(app)
                     app._start_convert()
                     root.update()
@@ -342,7 +342,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     {
                         "prepare_batch": {"side_effect": fake_prepare},
                         "threading.Thread": {"side_effect": run_inline_thread},
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                     }
                 ):
                     mark_output_folder_valid(app)
@@ -396,7 +396,7 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                     {
                         "prepare_batch": {"side_effect": fake_prepare},
                         "threading.Thread": {"side_effect": run_inline_thread},
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                     }
                 ):
                     mark_output_folder_valid(app)
@@ -417,11 +417,11 @@ class GuiPlaylistExplorerTests(unittest.TestCase):
                 with app_patches(
                     {
                         "prepare_batch": {"side_effect": fake_prepare},
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                     }
                 ) as mocks:
                     prepare = mocks["prepare_batch"]
-                    showerror = mocks["messagebox.showerror"]
+                    showerror = mocks["show_centered_message"]
                     mark_output_folder_valid(app)
                     app._start_convert()
                     prepare.assert_not_called()

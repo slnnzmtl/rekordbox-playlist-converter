@@ -17,14 +17,11 @@ def playlist_row_text(kind: str, name: str, count: int) -> str:
     return f"{name} ({count} tracks)"
 
 
-def track_preview_row(
-    track: Any,
-    *,
-    decode_location: Callable[[str], Path | None],
-) -> tuple[str, str, str, str]:
+def track_preview_row(track: Any) -> tuple[str, str, str, str]:
     """Return (label, format, bit_depth, sample_rate) from a collection TRACK.
 
     Bit depth is always — here; file headers are filled asynchronously.
+    The label is artist - title without a file-extension suffix.
     """
     empty = "—"
     if track is None:
@@ -32,10 +29,6 @@ def track_preview_row(
     artist = track.get("Artist") or ""
     title = track.get("Name") or ""
     label = f"{artist} - {title}" if artist else title
-    loc = track.get("Location") or ""
-    path = decode_location(loc) if loc else None
-    if path is not None and path.suffix:
-        label = f"{label}{path.suffix.lower()}"
     kind = (track.get("Kind") or "").strip()
     if kind.endswith(" File"):
         fmt = kind[: -len(" File")].strip() or empty
@@ -43,6 +36,14 @@ def track_preview_row(
         fmt = kind or empty
     rate = (track.get("SampleRate") or "").strip() or empty
     return label, fmt, empty, rate
+
+
+def track_search_haystack(label: str, fmt: str, path: Path | None) -> str:
+    """Casefolded text matched by track search (label, format column, filename)."""
+    parts = [label, fmt]
+    if path is not None:
+        parts.append(path.name)
+    return " ".join(parts).casefold()
 
 
 def tracklist_sort_key(text: str, values: list[Any], column: str):

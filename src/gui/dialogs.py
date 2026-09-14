@@ -131,15 +131,13 @@ def show_conversion_preview_dialog(
     on_convert: Callable[[], None],
     place_over: Callable[[tk.Toplevel], None],
 ) -> tk.Toplevel:
-    """Conversion preview table; caller owns Back/Convert semantics.
-
-    Built without make_dialog so there is no transient/grab (matches prior UX).
-    """
+    """Conversion preview table; caller owns Back/Convert semantics."""
     dlg = tk.Toplevel(parent)
     dlg.title("Conversion preview")
     dlg.geometry("960x540")
     dlg.minsize(960, 540)
     dlg.resizable(True, True)
+    dlg.transient(parent)
 
     frm = ttk.Frame(dlg, padding=16)
     frm.grid(row=0, column=0, sticky="nsew")
@@ -216,6 +214,92 @@ def show_conversion_preview_dialog(
     return dlg
 
 
+def show_edit_confirm_dialog(
+    parent: tk.Tk,
+    *,
+    title: str,
+    summary: str,
+    rows: list[Any],
+    confirm_label: str,
+    place_over: Callable[[tk.Toplevel], None],
+) -> bool:
+    """Preview table of edit actions; Back cancels, confirm returns True."""
+    result = False
+    dlg = tk.Toplevel(parent)
+    dlg.title(title)
+    dlg.geometry("760x480")
+    dlg.minsize(640, 360)
+    dlg.resizable(True, True)
+    dlg.transient(parent)
+    dlg.grab_set()
+
+    frm = ttk.Frame(dlg, padding=16)
+    frm.grid(row=0, column=0, sticky="nsew")
+    dlg.columnconfigure(0, weight=1)
+    dlg.rowconfigure(0, weight=1)
+    frm.columnconfigure(0, weight=1)
+    frm.rowconfigure(1, weight=1)
+
+    summary_label = ttk.Label(frm, text=summary)
+    summary_label.grid(row=0, column=0, sticky="w", pady=(0, 8))
+    bind_wraplength(summary_label, frm, inset=32)
+
+    table_frame = ttk.Frame(frm)
+    table_frame.grid(row=1, column=0, sticky="nsew")
+    table_frame.columnconfigure(0, weight=1)
+    table_frame.rowconfigure(0, weight=1)
+
+    table, yscroll = tree_with_yscroll(
+        table_frame,
+        columns=("action", "playlist"),
+        show="tree headings",
+        selectmode="browse",
+        height=14,
+    )
+    table.heading("#0", text="Track", anchor="w")
+    table.heading("action", text="Action", anchor="w")
+    table.heading("playlist", text="Playlist", anchor="w")
+    table.column("#0", width=320, stretch=True, minwidth=140)
+    table.column("action", width=180, stretch=False, anchor="w")
+    table.column("playlist", width=200, stretch=True, minwidth=120)
+    table.grid(row=0, column=0, sticky="nsew")
+    yscroll.grid(row=0, column=1, sticky="ns")
+
+    for row in rows:
+        table.insert(
+            "",
+            tk.END,
+            text=row.track,
+            values=(row.action, row.playlist),
+        )
+
+    btns = ttk.Frame(frm)
+    btns.grid(row=2, column=0, sticky="ew", pady=(12, 0))
+    btns.columnconfigure(0, weight=1)
+
+    def on_back() -> None:
+        nonlocal result
+        result = False
+        dlg.destroy()
+
+    def on_confirm() -> None:
+        nonlocal result
+        result = True
+        dlg.destroy()
+
+    ttk.Button(
+        btns, text="Back", command=on_back, width=ACTION_BUTTON_WIDTH
+    ).grid(row=0, column=0, sticky="w")
+    ttk.Button(
+        btns, text=confirm_label, command=on_confirm, width=ACTION_BUTTON_WIDTH
+    ).grid(row=0, column=1, sticky="e")
+    dlg.protocol("WM_DELETE_WINDOW", on_back)
+    dlg.bind("<Escape>", lambda _e: on_back())
+    place_over(dlg)
+    dlg.wait_window()
+    return result
+
+
 def show_list_dialog(
     parent: tk.Tk,
     title: str,
@@ -269,12 +353,63 @@ def show_list_dialog(
         dlg.wait_window()
 
 
+def _centered_message_shell(
+    parent: tk.Tk, title: str, message: str
+) -> tuple[tk.Toplevel, ttk.Frame]:
+    dlg, frm = make_dialog(parent, title, grab=True, resizable=False)
+    msg_label = ttk.Label(frm, text=message, justify=tk.LEFT)
+    msg_label.grid(row=0, column=0, sticky="w")
+    bind_wraplength(msg_label, frm, inset=32)
+    btns = ttk.Frame(frm)
+    btns.grid(row=1, column=0, sticky="e", pady=(16, 0))
+    return dlg, btns
+
+
+def show_centered_message(parent: tk.Tk, title: str, message: str) -> None:
+    """Centered OK dialog (replaces macOS system alerts)."""
+    dlg, btns = _centered_message_shell(parent, title, message)
+
+    def close() -> None:
+        dlg.destroy()
+
+    ttk.Button(btns, text="OK", command=close).pack(side=tk.RIGHT)
+    dlg.bind("<Return>", lambda _e: close())
+    dlg.bind("<Escape>", lambda _e: close())
+    dlg.protocol("WM_DELETE_WINDOW", close)
+    place_dialog_over_parent(dlg, parent)
+    dlg.wait_window()
+
+
+def ask_centered_yesno(parent: tk.Tk, title: str, message: str) -> bool:
+    """Centered Yes/No dialog (replaces macOS system askyesno)."""
+    result = False
+    dlg, btns = _centered_message_shell(parent, title, message)
+
+    def on_no() -> None:
+        nonlocal result
+        result = False
+        dlg.destroy()
+
+    def on_yes() -> None:
+        nonlocal result
+        result = True
+        dlg.destroy()
+
+    ttk.Button(btns, text="No", command=on_no).pack(side=tk.LEFT, padx=(0, 8))
+    ttk.Button(btns, text="Yes", command=on_yes).pack(side=tk.LEFT)
+    dlg.bind("<Return>", lambda _e: on_yes())
+    dlg.bind("<Escape>", lambda _e: on_no())
+    dlg.protocol("WM_DELETE_WINDOW", on_no)
+    place_dialog_over_parent(dlg, parent)
+    dlg.wait_window()
+    return result
+
+
 def show_done_dialog(
     parent: tk.Tk,
     message: str,
     *,
-    open_dir: Path | None,
-    import_xml: Path | None,
+    output_folder: Path | None,
     reveal: Callable[[Path], None],
     on_open_guide: Callable[[], None],
     place_over: Callable[[tk.Toplevel], None],
@@ -290,27 +425,18 @@ def show_done_dialog(
     def close() -> None:
         dlg.destroy()
 
-    def reveal_library() -> None:
-        if open_dir is not None:
-            reveal(open_dir)
-        close()
-
-    def reveal_import_xml() -> None:
-        if import_xml is not None:
-            reveal(import_xml)
+    def reveal_output() -> None:
+        if output_folder is not None:
+            reveal(output_folder)
         close()
 
     def open_guide() -> None:
         close()
         on_open_guide()
 
-    if open_dir is not None:
+    if output_folder is not None:
         ttk.Button(
-            btns, text="Reveal audio folder", command=reveal_library
-        ).pack(side=tk.LEFT, padx=(0, 8))
-    if import_xml is not None:
-        ttk.Button(
-            btns, text="Reveal import XML", command=reveal_import_xml
+            btns, text="Reveal output folder", command=reveal_output
         ).pack(side=tk.LEFT, padx=(0, 8))
     ttk.Button(btns, text="Open usage guide", command=open_guide).pack(
         side=tk.LEFT, padx=(0, 8)

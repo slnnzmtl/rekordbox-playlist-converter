@@ -215,6 +215,32 @@ class PlaylistXmlHelperTests(unittest.TestCase):
         leaves = rx.iter_playlists(root)
         self.assertEqual([(f, n) for f, n, _ in leaves], [("", "Has One")])
 
+    def test_unreferenced_collection_track_ids_skips_playlist_keys(self) -> None:
+        """Given one collection TRACK with no playlist Key: When listing
+        unreferenced ids: Then only that TrackID is returned."""
+        xml = """\
+<?xml version="1.0" encoding="UTF-8"?>
+<DJ_PLAYLISTS Version="1.0.0">
+  <PRODUCT Name="rekordbox" Version="6.8.5" Company="AlphaTheta"/>
+  <COLLECTION Entries="2">
+    <TRACK TrackID="1" Name="Listed"/>
+    <TRACK TrackID="2" Name="Orphan"/>
+  </COLLECTION>
+  <PLAYLISTS>
+    <NODE Type="0" Name="ROOT" Count="1">
+      <NODE Name="Set" Type="1" KeyType="0" Entries="1">
+        <TRACK Key="1"/>
+      </NODE>
+    </NODE>
+  </PLAYLISTS>
+</DJ_PLAYLISTS>
+"""
+        root = ET.fromstring(xml)
+        self.assertEqual(rx.unreferenced_collection_track_ids(root), ["2"])
+        node = rx.unknown_playlist_node(["2"])
+        self.assertEqual(node.get("Name"), rx.UNKNOWN_PLAYLIST_NAME)
+        self.assertEqual([e.get("Key") for e in node.findall("TRACK")], ["2"])
+
     def test_resolve_playlist_disambiguates_same_leaf_name(self) -> None:
         xml = """\
 <?xml version="1.0" encoding="UTF-8"?>

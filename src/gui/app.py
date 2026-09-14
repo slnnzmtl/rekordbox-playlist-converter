@@ -14,6 +14,7 @@ from convert.quality import (
 from gui import constants
 from gui import runtime
 from gui.convert_flow import ConvertFlowMixin
+from gui.import_edit import ImportEditMixin
 from gui.layout import SearchPlaceholder, active_display_bounds, fit_window_geometry
 from gui.playlists import PlaylistsMixin
 from gui.shell import ShellMixin
@@ -21,7 +22,7 @@ from gui.types import PlaylistEntry, TrackLeafRef
 from version import __version__
 
 
-class ConverterApp(ConvertFlowMixin, PlaylistsMixin, ShellMixin):
+class ConverterApp(ImportEditMixin, ConvertFlowMixin, PlaylistsMixin, ShellMixin):
     def __init__(
         self,
         root: tk.Tk,
@@ -82,6 +83,9 @@ class ConverterApp(ConvertFlowMixin, PlaylistsMixin, ShellMixin):
         self._copy_status_clear_id: str | None = None
         self._documents_accessible = False
         self._source_root = None
+        self._view_root = None
+        self._import_edit_draft = None
+        self._import_edit_selection_snapshot: tuple[tuple[str, str], ...] = ()
         self._collection_indexes_cache: tuple[dict, dict] | None = None
         self._playlist_entries: list[PlaylistEntry] = []
         # iid -> (kind, folder, name) for rows currently in the tree

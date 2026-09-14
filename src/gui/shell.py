@@ -26,6 +26,7 @@ from gui.helpers import app_window_icon_path, progress_action_status_hint
 from gui.layout import (
     ACTION_BUTTON_WIDTH,
     HoverTooltip,
+    RowHoverTooltip,
     bind_wraplength,
     path_row,
     place_dialog_over_parent,
@@ -189,6 +190,9 @@ class ShellMixin:
 
         panes.add(left, weight=1)
         panes.add(right, weight=1)
+        self._tracklist_path_tooltip = RowHoverTooltip(
+            self.tracklist_tree, self._tracklist_hover_path
+        )
         self._refresh_tracklist_preview()
 
         _, self.wav_dir_entry, wav_btns = path_row(
@@ -209,7 +213,7 @@ class ShellMixin:
         bind_wraplength(self.wav_dir_error_label, frm, inset=24)
         # Row 3 is used only while validation has a message (grid_remove otherwise).
 
-        import_xml_label, self.import_xml_entry, _import_btns = path_row(
+        import_xml_label, self.import_xml_entry, import_btns = path_row(
             frm,
             row=4,
             label="Import XML",
@@ -224,6 +228,50 @@ class ShellMixin:
             "<Button-1>", self._copy_import_xml_path, add="+"
         )
         HoverTooltip(self.import_xml_entry, "Click to copy the Import XML path")
+        self.import_edit_btn = ttk.Button(
+            import_btns,
+            text="Edit",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._enter_import_edit_mode,
+        )
+        self.import_save_btn = ttk.Button(
+            import_btns,
+            text="Save",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._save_import_edit,
+        )
+        self.import_cancel_btn = ttk.Button(
+            import_btns,
+            text="Cancel",
+            width=ACTION_BUTTON_WIDTH,
+            command=self._cancel_import_edit,
+        )
+        self.import_edit_btn.pack(side=tk.LEFT)
+        self.import_save_btn.pack(side=tk.LEFT)
+        self.import_cancel_btn.pack(side=tk.LEFT, padx=(4, 0))
+        self.import_save_btn.pack_forget()
+        self.import_cancel_btn.pack_forget()
+        self.import_edit_btn.pack_forget()
+        self.playlist_tree.bind(
+            "<<Button-3>>", self._on_playlist_context_menu, add="+"
+        )
+        # macOS Ctrl-click and right-click.
+        self.playlist_tree.bind(
+            "<Button-2>", self._on_playlist_context_menu, add="+"
+        )
+        self.playlist_tree.bind(
+            "<Control-Button-1>", self._on_playlist_context_menu, add="+"
+        )
+        self.tracklist_tree.bind(
+            "<Button-2>", self._on_tracklist_context_menu, add="+"
+        )
+        self.tracklist_tree.bind(
+            "<Button-3>", self._on_tracklist_context_menu, add="+"
+        )
+        self.tracklist_tree.bind(
+            "<Control-Button-1>", self._on_tracklist_context_menu, add="+"
+        )
+        self._bind_import_edit_window_guards()
 
         (
             self.format_wav_radio,
@@ -416,7 +464,7 @@ class ShellMixin:
         return str(Path.home())
 
     def _browse_xml(self) -> None:
-        if self._busy:
+        if self._busy or self._import_edit_active():
             return
         current = self.xml_var.get().strip()
         preferred = Path(current).expanduser().parent if current else None
@@ -430,16 +478,18 @@ class ShellMixin:
             self._persist_output_preferences(include_source_xml=True)
 
     def _refresh_xml(self) -> None:
-        if self._busy:
+        if self._busy or self._import_edit_active():
             return
         xml_s = self.xml_var.get().strip()
         if not xml_s:
-            runtime.messagebox.showerror("Missing XML", "Choose a Rekordbox XML export.")
+            runtime.show_centered_message(
+                self.root, "Missing XML", "Choose a Rekordbox XML export."
+            )
             return
         self._load_playlists()
 
     def _browse_wav_dir(self) -> None:
-        if self._busy:
+        if self._busy or self._import_edit_active():
             return
         current = self.library_dir_var.get().strip()
         path = runtime.filedialog.askdirectory(
@@ -465,6 +515,8 @@ class ShellMixin:
         setattr(self, attr, self.root.after(constants.SEARCH_DEBOUNCE_MS, fire))
 
     def _set_busy(self, busy: bool) -> None:
+        if self._import_edit_active():
+            return
         self._busy = busy
         edit_state = tk.DISABLED if busy else tk.NORMAL
         combo_state = "disabled" if busy else "readonly"
@@ -491,18 +543,22 @@ class ShellMixin:
             self.cancel_btn.configure(state=tk.NORMAL)
             self.cancel_btn.grid()
             self._sync_scan_indicator()
+            self._update_import_edit_button()
         else:
             self.cancel_btn.grid_remove()
             self.cancel_btn.configure(state=tk.DISABLED)
-            self.convert_btn.grid()
+            if not self._import_edit_active():
+                self.convert_btn.grid()
             self._update_convert_enabled()
             self._sync_scan_indicator()
+            self._update_import_edit_button()
 
     def _update_convert_enabled(self) -> None:
-        if self._busy:
+        if self._busy or self._import_edit_active():
             return
         enabled = self._wav_dir_valid and not self._wav_dir_checking
         self.convert_btn.configure(state=tk.NORMAL if enabled else tk.DISABLED)
+        self._update_import_edit_button()
 
     def _set_wav_dir_error(self, message: str) -> None:
         self.wav_dir_error_var.set(message)
@@ -577,6 +633,14 @@ class ShellMixin:
 
     def _set_idle_status(self, unique_summary: str | None = None) -> None:
         if self._busy:
+            return
+        if self._import_edit_active():
+            if unique_summary:
+                self.status_var.set(unique_summary)
+            else:
+                self.status_var.set(
+                    "Editing Import XML — Save or Cancel when done."
+                )
             return
         if unique_summary:
             self.status_var.set(unique_summary)
@@ -680,14 +744,16 @@ class ShellMixin:
     ) -> None:
         if result.is_error:
             if manual:
-                runtime.messagebox.showerror(
+                runtime.show_centered_message(
+                    self.root,
                     "Update check failed",
                     f"Could not check for updates:\n\n{result.message}",
                 )
             return
         if result.is_up_to_date:
             if manual:
-                runtime.messagebox.showinfo(
+                runtime.show_centered_message(
+                    self.root,
                     "No updates",
                     f"Simple Rekordbox Converter {__version__} is up to date.",
                 )

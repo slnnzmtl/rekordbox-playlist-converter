@@ -18,11 +18,88 @@ from preview_bit_depth import (
 
 
 class PlaylistsMixin:
+    def _active_view_root(self):
+        root = getattr(self, "_view_root", None)
+        if root is not None:
+            return root
+        return self._source_root
+
+    def _paint_playlist_tree(
+        self, root, *, select: list[tuple[str, str]] | None = None
+    ) -> None:
+        """Populate playlist entries/tree from *root* without changing `_source_root`.
+
+        *select* is ``(folder, name)`` playlist rows to restore after rebuild.
+        """
+        keep = (
+            list(select)
+            if select is not None
+            else self._selected_playlists(unique_names=False)
+        )
+        self._playlist_entries = []
+        self._collection_indexes_cache = None
+        with self._preview_bit_depth_lock:
+            self._preview_bit_depth_cache.clear()
+        if root is None:
+            self.playlist_tree.delete(*self.playlist_tree.get_children())
+            self._playlist_iids = {}
+            self._refresh_tracklist_preview()
+            return
+        self._view_root = root
+        self._collection_indexes_cache = runtime.collection_indexes(root)
+        nodes = runtime.iter_playlist_nodes(root)
+        by_id, by_location = self._collection_indexes_cache
+        for kind, folder, name, node in nodes:
+            count = (
+                runtime.playlist_preview_track_count(
+                    node,
+                    by_id,
+                    by_location,
+                    supported_ext=runtime.SUPPORTED_LOSSLESS_EXT,
+                )
+                if kind == "playlist"
+                else 0
+            )
+            self._playlist_entries.append(
+                PlaylistEntry.from_walk(kind, folder, name, count, node)
+            )
+        existing_unknown = any(
+            kind == "playlist"
+            and folder == ""
+            and name == runtime.UNKNOWN_PLAYLIST_NAME
+            for kind, folder, name, _node in nodes
+        )
+        orphan_ids = runtime.unreferenced_collection_track_ids(root)
+        if orphan_ids and not existing_unknown:
+            unknown_node = runtime.unknown_playlist_node(orphan_ids)
+            unknown_count = runtime.playlist_preview_track_count(
+                unknown_node,
+                by_id,
+                by_location,
+                supported_ext=runtime.SUPPORTED_LOSSLESS_EXT,
+            )
+            self._playlist_entries.append(
+                PlaylistEntry.from_walk(
+                    "playlist",
+                    "",
+                    runtime.UNKNOWN_PLAYLIST_NAME,
+                    unknown_count,
+                    unknown_node,
+                    virtual=True,
+                )
+            )
+        self._apply_playlist_filter()
+        self._select_playlist_rows(keep)
+        self._refresh_tracklist_preview()
+
     def _load_playlists(self) -> None:
+        if self._import_edit_active():
+            return
         self.playlist_tree.delete(*self.playlist_tree.get_children())
         self._playlist_entries = []
         self._playlist_iids = {}
         self._source_root = None
+        self._view_root = None
         self._collection_indexes_cache = None
         # Clear under the same lock used by peek/fill so a probe worker cannot
         # race a load that resets the cache.
@@ -44,26 +121,9 @@ class PlaylistsMixin:
             self.status_var.set(str(exc))
             return
         self._source_root = root
-        self._collection_indexes_cache = runtime.collection_indexes(root)
-        nodes = runtime.iter_playlist_nodes(root)
-        by_id, by_location = self._collection_indexes_cache
-        for kind, folder, name, node in nodes:
-            count = (
-                runtime.playlist_preview_track_count(
-                    node,
-                    by_id,
-                    by_location,
-                    supported_ext=runtime.SUPPORTED_LOSSLESS_EXT,
-                )
-                if kind == "playlist"
-                else 0
-            )
-            self._playlist_entries.append(
-                PlaylistEntry.from_walk(kind, folder, name, count, node)
-            )
         self._playlist_search.show()
         self._track_search.show()
-        self._apply_playlist_filter()
+        self._paint_playlist_tree(root, select=[])
 
     @staticmethod
     def _playlist_iid(kind: str, folder: str, name: str) -> str:
@@ -76,6 +136,7 @@ class PlaylistsMixin:
         return gui_tracklist.playlist_row_text(kind, name, count)
 
     def _apply_playlist_filter(self) -> None:
+        keep_sel = self._selected_playlists(unique_names=False)
         query = self._playlist_search.query().casefold()
         self.playlist_tree.delete(*self.playlist_tree.get_children())
         self._playlist_iids = {}
@@ -124,7 +185,29 @@ class PlaylistsMixin:
                 if kind == "folder":
                     self.playlist_tree.item(iid, open=True)
 
+        self._select_playlist_rows(keep_sel)
         self._refresh_tracklist_preview()
+
+    def _select_playlist_rows(self, pairs: list[tuple[str, str]]) -> None:
+        wanted = set(pairs)
+        iids = [
+            iid
+            for iid, meta in self._playlist_iids.items()
+            if meta[0] == "playlist" and (meta[1], meta[2]) in wanted
+        ]
+        self._playlist_selecting = True
+        try:
+            if iids:
+                self.playlist_tree.selection_set(iids)
+                for iid in iids:
+                    parent = self.playlist_tree.parent(iid)
+                    while parent:
+                        self.playlist_tree.item(parent, open=True)
+                        parent = self.playlist_tree.parent(parent)
+            else:
+                self.playlist_tree.selection_set(())
+        finally:
+            self._playlist_selecting = False
 
     def _on_playlist_button1(self, event: object) -> str | None:
         """Folder row clicks only expand/collapse; playlists keep normal select."""
@@ -249,15 +332,29 @@ class PlaylistsMixin:
         playlist_word = "playlist" if painted == 1 else "playlists"
         return f"{len(unique_keys)} unique tracks from {painted} {playlist_word}"
 
-    def _playlist_node(self, folder: str, name: str):
+    def _tracklist_hover_path(self, iid: str) -> str | None:
+        path = self._tracklist_paths.get(iid)
+        if path is None:
+            return None
+        return str(path)
+
+    def _playlist_entry(self, folder: str, name: str):
         for entry in self._playlist_entries:
             if (
                 entry.kind == PlaylistNodeKind.PLAYLIST
                 and entry.folder == folder
                 and entry.name == name
             ):
-                return entry.node
+                return entry
         return None
+
+    def _playlist_node(self, folder: str, name: str):
+        entry = self._playlist_entry(folder, name)
+        return None if entry is None else entry.node
+
+    def _playlist_is_virtual(self, folder: str, name: str) -> bool:
+        entry = self._playlist_entry(folder, name)
+        return False if entry is None else entry.virtual
 
     @staticmethod
     def _track_preview_row(track) -> tuple[str, str, str, str]:
@@ -265,9 +362,7 @@ class PlaylistsMixin:
 
         Bit depth is always — here; file headers are filled asynchronously.
         """
-        return gui_tracklist.track_preview_row(
-            track, decode_location=runtime.decode_location
-        )
+        return gui_tracklist.track_preview_row(track)
 
     def _sync_scan_indicator(self) -> None:
         if self._busy or not self._preview_scan_active:
@@ -286,7 +381,8 @@ class PlaylistsMixin:
         self._tracklist_iids = {}
         self._tracklist_paths = {}
         self._tracklist_group_iids = {}
-        if self._source_root is None:
+        view_root = self._active_view_root()
+        if view_root is None:
             self._tracklist_group_open.clear()
             self._set_preview_scan_active(False)
             self._set_idle_status()
@@ -303,12 +399,13 @@ class PlaylistsMixin:
                 del self._tracklist_group_open[key]
         query = self._track_search.query().casefold()
         if self._collection_indexes_cache is None:
-            self._collection_indexes_cache = runtime.collection_indexes(self._source_root)
+            self._collection_indexes_cache = runtime.collection_indexes(view_root)
         by_id, by_location = self._collection_indexes_cache
         leaf_iids: list[str] = []
         painted = 0
         paths: list[Path] = []
         seen_paths: set[Path] = set()
+        editing = self._import_edit_active()
         for folder, name in selected:
             node = self._playlist_node(folder, name)
             if node is None:
@@ -324,10 +421,16 @@ class PlaylistsMixin:
                     else:
                         track = by_id.get(key)
                 label, fmt, depth, rate = self._track_preview_row(track)
-                if query and query not in label.casefold():
-                    continue
                 loc = (track.get("Location") or "") if track is not None else ""
                 path = runtime.decode_location(loc) if loc else None
+                if editing:
+                    missing = track is None or path is None or not path.is_file()
+                    if missing and not label.startswith("! "):
+                        label = f"! {label}"
+                if query and query not in gui_tracklist.track_search_haystack(
+                    label, fmt, path
+                ):
+                    continue
                 if not runtime.track_included_in_playlist_preview(
                     track, supported_ext=runtime.SUPPORTED_LOSSLESS_EXT
                 ):

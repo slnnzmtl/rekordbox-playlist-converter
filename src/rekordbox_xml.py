@@ -12,6 +12,8 @@ from urllib.parse import quote, unquote
 
 from cli_error import CliError
 
+UNKNOWN_PLAYLIST_NAME = "Unknown"
+
 XML_CANDIDATE_RELATIVE = (
     Path("rekordbox.xml"),
     Path("Rekordbox-collection.xml"),
@@ -275,6 +277,46 @@ def parse_playlist_selection(
     if dupe_error is not None:
         return [], [dupe_error]
     return unique_chosen, []
+
+
+def unreferenced_collection_track_ids(root: ET.Element) -> list[str]:
+    """COLLECTION TrackIDs that do not appear as a playlist Key."""
+    referenced: set[str] = set()
+    for kind, _folder, _name, node in iter_playlist_nodes(root):
+        if kind != "playlist":
+            continue
+        for entry in node.findall("TRACK"):
+            key = entry.get("Key") or ""
+            if key:
+                referenced.add(key)
+    collection = root.find("COLLECTION")
+    if collection is None:
+        return []
+    ids: list[str] = []
+    seen: set[str] = set()
+    for track in collection.findall("TRACK"):
+        tid = track.get("TrackID") or ""
+        if not tid or tid in referenced or tid in seen:
+            continue
+        seen.add(tid)
+        ids.append(tid)
+    return ids
+
+
+def unknown_playlist_node(track_ids: list[str]) -> ET.Element:
+    """Detached playlist NODE named Unknown listing *track_ids*."""
+    node = ET.Element(
+        "NODE",
+        {
+            "Name": UNKNOWN_PLAYLIST_NAME,
+            "Type": "1",
+            "KeyType": "0",
+            "Entries": str(len(track_ids)),
+        },
+    )
+    for tid in track_ids:
+        ET.SubElement(node, "TRACK", {"Key": tid})
+    return node
 
 
 def collection_indexes(root: ET.Element) -> tuple[dict[str, ET.Element], dict[str, ET.Element]]:

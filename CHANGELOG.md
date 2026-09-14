@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- GUI **Unknown** playlist lists collection tracks that are not in any playlist.
+- GUI tracklist shows artist and title without a file-extension suffix;
+  track search still matches format and filename.
+- GUI tracklist hover shows each track’s file path.
+- GUI **Edit** mode for a generated Import XML: multi-select tracks, remove
+  playlists or tracks from the draft, Save confirms pending actions then updates
+  XML/manifest and moves owned audio to Trash, Cancel discards. Source Rekordbox
+  XML stays read-only.
 - App display name is **Simple Rekordbox Converter**. Selectable WAV/AIFF output with
   quality ceiling (defaults WAV / **24** / **48000**); never upconvert. Format-flat
   layout under `WAV|AIFF/<artist> - <track>`; sticky manifest keeps per-source
@@ -10,7 +18,7 @@
   tracks refresh on rerun (same Location) while preserving TrackID / playlist keys.
 - Batch convert encodes each unique source once; Import XML is
   `<wav-dir>/rekordbox-import.xml` (CLI `--output` override). GUI preview before
-  write; CLI `--dry-run`. Success offers Reveal audio / import XML. Track failures
+  write; CLI `--dry-run`. Success offers Reveal output folder. Track failures
   and filename collisions skip with warnings; cancel after encode still writes
   Import XML for successes.
 - Unique-track and prepare (ffprobe) run up to **4** workers in parallel. Cancel

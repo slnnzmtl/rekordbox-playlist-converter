@@ -46,10 +46,10 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             with app_patches(
                 merge_patches(
                     startup_patches(),
-                    {"messagebox.showerror": None},
+                    {"show_centered_message": None},
                 )
             ) as mocks:
-                showerror = mocks["messagebox.showerror"]
+                showerror = mocks["show_centered_message"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -142,7 +142,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "save_preferences": None,
                         "prepare_batch": {"return_value": (mock_prepared_conversion(n_unique=2), [])},
                         "execute_prepared": {"create": True},
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
@@ -154,7 +154,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 ConverterApp, "_show_list_dialog", create=True
             ) as show_list:
                 execute = mocks["execute_prepared"]
-                showerror = mocks["messagebox.showerror"]
+                showerror = mocks["show_centered_message"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -223,7 +223,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                                 appended_by_plan=[1],
                             ),
                         },
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
@@ -237,7 +237,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 ConverterApp, "_show_done_dialog"
             ) as show_done:
                 execute = mocks["execute_prepared"]
-                showerror = mocks["messagebox.showerror"]
+                showerror = mocks["show_centered_message"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -297,7 +297,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "save_preferences": None,
                         "prepare_batch": {"side_effect": prepare_then_cancel},
                         "execute_prepared": {"create": True},
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
@@ -305,7 +305,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
             ):
                 execute = mocks["execute_prepared"]
-                showerror = mocks["messagebox.showerror"]
+                showerror = mocks["show_centered_message"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -361,7 +361,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                         "save_preferences": None,
                         "prepare_batch": {"side_effect": preview_then_cancel},
                         "execute_prepared": {"create": True},
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
@@ -369,7 +369,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
             ):
                 execute = mocks["execute_prepared"]
-                showerror = mocks["messagebox.showerror"]
+                showerror = mocks["show_centered_message"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -417,7 +417,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                             "return_value": (mock_prepared_conversion(n_unique=1), [])
                         },
                         "execute_prepared": {"create": True},
-                        "messagebox.showerror": None,
+                        "show_centered_message": None,
                         "threading.Thread": {"side_effect": run_inline_thread},
                     },
                 )
@@ -429,7 +429,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 ConverterApp, "_show_done_dialog"
             ) as show_done:
                 execute = mocks["execute_prepared"]
-                showerror = mocks["messagebox.showerror"]
+                showerror = mocks["show_centered_message"]
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -477,7 +477,7 @@ class MissingFilesDialogTests(unittest.TestCase):
             with app_patches(
                 merge_patches(
                     startup_patches(),
-                    {"messagebox.showwarning": None},
+                    {"show_centered_message": None},
                 )
             ), patch.object(tk.Toplevel, "wait_window"):
                 root = tk.Tk()
@@ -504,6 +504,38 @@ class MissingFilesDialogTests(unittest.TestCase):
         finally:
             if root is not None:
                 root.destroy()
+
+    def test_finish_no_conversions_skip_summary_uses_centered_message(self) -> None:
+        """Given skipped tracks and no missing-file list: When finish: Then
+        the summary is a centered app dialog, not a macOS system alert."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {"show_centered_message": None},
+                )
+            ) as mocks:
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app._finish_no_conversions(["48khz [AIFF]: 8 skipped"])
+                mocks["show_centered_message"].assert_called()
+                args = mocks["show_centered_message"].call_args.args
+                self.assertEqual(args[1], "No conversions")
+                self.assertIn("8 skipped", args[2])
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()

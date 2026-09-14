@@ -40,19 +40,43 @@ class ConvertFlowMixin:
     def _start_convert(self) -> None:
         if self._busy:
             return
+        if self._import_edit_active():
+            runtime.show_centered_message(
+                self.root,
+                "Editing Import XML",
+                "Finish or cancel Import XML editing before converting.",
+            )
+            return
         if not self._wav_dir_valid or self._wav_dir_checking:
             return
         xml_s = self.xml_var.get().strip()
         if not xml_s:
-            runtime.messagebox.showerror("Missing XML", "Choose a Rekordbox XML export.")
+            runtime.show_centered_message(
+                self.root, "Missing XML", "Choose a Rekordbox XML export."
+            )
             return
         try:
             selected = self._selected_playlists(unique_names=False)
         except runtime.CliError as exc:
-            runtime.messagebox.showerror("Selection", str(exc))
+            runtime.show_centered_message(self.root, "Selection", str(exc))
             return
         if not selected:
-            runtime.messagebox.showerror("Selection", "Select at least one playlist.")
+            runtime.show_centered_message(
+                self.root, "Selection", "Select at least one playlist."
+            )
+            return
+        selected = [
+            pair
+            for pair in selected
+            if not self._playlist_is_virtual(pair[0], pair[1])
+        ]
+        if not selected:
+            runtime.show_centered_message(
+                self.root,
+                "Selection",
+                "Unknown lists collection tracks that are not in a playlist. "
+                "Select another playlist to convert.",
+            )
             return
 
         keys_by_playlist: dict[tuple[str, str], list[str]] = {}
@@ -70,12 +94,14 @@ class ConvertFlowMixin:
             if keys_by_playlist.get((folder, name))
         ]
         if not selected:
-            runtime.messagebox.showerror("Selection", "Select at least one track.")
+            runtime.show_centered_message(
+                self.root, "Selection", "Select at least one track."
+            )
             return
         names = [name for _folder, name in selected]
         dupe_error = runtime.duplicate_playlist_name_error(names)
         if dupe_error is not None:
-            runtime.messagebox.showerror("Selection", dupe_error)
+            runtime.show_centered_message(self.root, "Selection", dupe_error)
             return
 
         wav_dir, output = self._resolved_output_paths()
@@ -232,7 +258,7 @@ class ConvertFlowMixin:
             runtime.preview_write_bytes(prepared.preview),
         )
         if space_issue:
-            runtime.messagebox.showerror("Not enough space", space_issue)
+            runtime.show_centered_message(self.root, "Not enough space", space_issue)
             return
         self._close_preview_dialog()
         self._prepared_conversion = None
@@ -319,7 +345,6 @@ class ConvertFlowMixin:
             if batch_stats.errors:
                 self._ui(lambda e=batch_stats.errors: self._finish_error(e))
                 return
-            open_dir = plans[0].media_dir
             out = str(output)
             if total_successful_conversions([batch_stats]) == 0:
                 self._ui(
@@ -327,8 +352,8 @@ class ConvertFlowMixin:
                 )
             else:
                 self._ui(
-                    lambda s=summaries, o=out, w=skipped, d=open_dir, x=output: self._finish_ok(
-                        s, o, w, d, x
+                    lambda s=summaries, o=out, w=skipped, folder=output.parent: self._finish_ok(
+                        s, o, w, folder
                     )
                 )
         except runtime.CliError as exc:
@@ -387,15 +412,16 @@ class ConvertFlowMixin:
                 summary="\n".join(summaries),
             )
             return
-        runtime.messagebox.showwarning("No conversions", "\n".join(summaries))
+        runtime.show_centered_message(
+            self.root, "No conversions", "\n".join(summaries)
+        )
 
     def _finish_ok(
         self,
         summaries: list[str],
         output: str,
         warnings: list[str] | None = None,
-        open_dir: Path | None = None,
-        import_xml: Path | None = None,
+        output_folder: Path | None = None,
     ) -> None:
         self._prepared_conversion = None
         self._confirm_prepared = None
@@ -422,7 +448,7 @@ class ConvertFlowMixin:
             "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
             f"   (or drag the {suffix} playlist into Playlists)"
         )
-        self._show_done_dialog(message, open_dir, import_xml)
+        self._show_done_dialog(message, output_folder)
 
     def _show_list_dialog(
         self,
@@ -446,14 +472,12 @@ class ConvertFlowMixin:
     def _show_done_dialog(
         self,
         message: str,
-        open_dir: Path | None,
-        import_xml: Path | None = None,
+        output_folder: Path | None = None,
     ) -> None:
         gui_dialogs.show_done_dialog(
             self.root,
             message,
-            open_dir=open_dir,
-            import_xml=import_xml,
+            output_folder=output_folder,
             reveal=runtime.open_in_finder,
             on_open_guide=self._show_usage_guide,
             place_over=self._place_dialog_over_app,

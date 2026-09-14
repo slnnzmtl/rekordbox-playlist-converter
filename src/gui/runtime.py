@@ -1,8 +1,8 @@
 """Patched GUI namespace: tests set gui_tk.GUI_MODULE to this module.
 
 Mixin / app code must look up patched names here (runtime.threading,
-runtime.prepare, runtime.messagebox, …). Local imports of those names
-make patches miss.
+runtime.prepare, runtime.show_centered_message, …). Local imports of
+those names make patches miss.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog
 
 import converter_manifest
 from cli_error import CancelledError, CliError
@@ -20,6 +20,7 @@ from convert import prepare, prepare_batch
 from convert.format_policy import SUPPORTED_LOSSLESS_EXT
 from convert.preview import insufficient_output_space_message, preview_write_bytes
 from convert.write import execute_prepared
+from gui.dialogs import ask_centered_yesno, show_centered_message
 from gui_prefs import (
     find_rekordbox_xml_via_child,
     import_xml_path,
@@ -28,6 +29,7 @@ from gui_prefs import (
     resolve_startup_paths,
     save_preferences,
 )
+from import_edit import load_import_edit_draft, save_import_edit_draft
 from rekordbox_xml import (
     collection_indexes,
     decode_location,
@@ -38,6 +40,9 @@ from rekordbox_xml import (
     playlist_label,
     playlist_preview_track_count,
     track_included_in_playlist_preview,
+    UNKNOWN_PLAYLIST_NAME,
+    unreferenced_collection_track_ids,
+    unknown_playlist_node,
 )
 from update_check import check_for_update
 
@@ -65,7 +70,8 @@ __all__ = [
     "time",
     "webbrowser",
     "filedialog",
-    "messagebox",
+    "show_centered_message",
+    "ask_centered_yesno",
     "prepare",
     "prepare_batch",
     "converter_manifest",
@@ -76,6 +82,8 @@ __all__ = [
     "find_rekordbox_xml_via_child",
     "probe_path_via_child",
     "import_xml_path",
+    "load_import_edit_draft",
+    "save_import_edit_draft",
     "check_for_update",
     "open_in_finder",
     "collection_indexes",
@@ -87,6 +95,9 @@ __all__ = [
     "playlist_label",
     "playlist_preview_track_count",
     "track_included_in_playlist_preview",
+    "UNKNOWN_PLAYLIST_NAME",
+    "unreferenced_collection_track_ids",
+    "unknown_playlist_node",
     "insufficient_output_space_message",
     "preview_write_bytes",
 ]
