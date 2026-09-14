@@ -43,7 +43,6 @@ def track_search_haystack(label: str, fmt: str, path: Path | None) -> str:
     parts = [label, fmt]
     if path is not None:
         parts.append(path.name)
-        parts.append(path.suffix)
     return " ".join(parts).casefold()
 
 

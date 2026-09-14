@@ -21,6 +21,7 @@ from rekordbox_xml import (
     decode_location,
     iter_playlist_nodes,
     load_dj_playlists,
+    playlist_label,
 )
 from xml_output import rewrite_counts, write_import_xml
 
@@ -37,15 +38,19 @@ class EditPreviewRow:
     playlist: str = ""
 
 
+def _find_collection_track(root: ET.Element, track_id: str) -> ET.Element | None:
+    collection = root.find("COLLECTION")
+    if collection is None:
+        return None
+    for track in collection.findall("TRACK"):
+        if track.get("TrackID") == track_id:
+            return track
+    return None
+
+
 def collection_track_label(root: ET.Element, track_id: str) -> str:
     """Artist - Name for a collection TrackID, or a missing-track fallback."""
-    collection = root.find("COLLECTION")
-    track = None
-    if collection is not None:
-        for candidate in collection.findall("TRACK"):
-            if candidate.get("TrackID") == track_id:
-                track = candidate
-                break
+    track = _find_collection_track(root, track_id)
     if track is None:
         return "! (missing track)"
     artist = (track.get("Artist") or "").strip()
@@ -221,7 +226,7 @@ def _validate_edit_consistency(
         path_key = (folder, name)
         if path_key in seen_playlist_paths:
             raise CliError(
-                f"duplicate playlist path: {folder + ' / ' if folder else ''}{name}"
+                f"duplicate playlist path: {playlist_label(folder, name)}"
             )
         seen_playlist_paths.add(path_key)
         if node.get("KeyType", "0") != "0":
@@ -259,10 +264,6 @@ def load_import_edit_draft(library_dir: Path) -> ImportEditDraft:
         manifest = cm.load_manifest(library)
     except cm.ManifestError as exc:
         raise CliError(str(exc)) from exc
-    # load_manifest returns empty when missing; we already require the file,
-    # but re-validate that we actually loaded from disk.
-    if not man_path.is_file():
-        raise CliError(f"Converter manifest not found: {man_path}")
 
     _validate_edit_consistency(root, library_dir=library, manifest=manifest)
 
@@ -289,11 +290,6 @@ class EditImpact:
     playlist_refs_removed: int = 0
 
 
-def iter_edit_playlists(draft: ImportEditDraft):
-    """Yield (kind, folder, name, node) for the draft tree."""
-    return iter_playlist_nodes(draft.root)
-
-
 def _find_playlist_node(
     draft: ImportEditDraft, *, folder: str, name: str
 ) -> ET.Element:
@@ -302,8 +298,7 @@ def _find_playlist_node(
             continue
         if folder_path == folder and node_name == name:
             return node
-    label = f"{folder} / {name}" if folder else name
-    raise CliError(f"playlist not found: {label}")
+    raise CliError(f"playlist not found: {playlist_label(folder, name)}")
 
 
 def _find_playlist_parent(
@@ -344,8 +339,7 @@ def _find_playlist_parent(
 
     found = walk(root_node, [])
     if found is None:
-        label = f"{folder} / {name}" if folder else name
-        raise CliError(f"playlist not found: {label}")
+        raise CliError(f"playlist not found: {playlist_label(folder, name)}")
     return found
 
 
@@ -403,107 +397,6 @@ def _schedule_orphan_collection_removal(
     impact.collection_removed += 1
 
 
-def _orphan_action_for_track(
-    draft: ImportEditDraft, track: ET.Element | None, *, owners: dict[str, DestOwner]
-) -> str:
-    if track is None:
-        return ACTION_REMOVE_FROM_PLAYLIST
-    owner = resolve_collection_owner(
-        track, library_dir=draft.library_dir, owners=owners
-    )
-    dest_path = cm.resolve_dest_under_wav_dir(
-        draft.library_dir, owner.relative_dest
-    )
-    if dest_path.is_file():
-        return ACTION_MOVE_TO_TRASH
-    return ACTION_REMOVE_FROM_PLAYLIST
-
-
-def preview_remove_track_from_playlist(
-    draft: ImportEditDraft,
-    *,
-    folder: str,
-    name: str,
-    track_id: str,
-) -> list[EditPreviewRow]:
-    node = _find_playlist_node(draft, folder=folder, name=name)
-    keys = [e.get("Key") or "" for e in node.findall("TRACK")]
-    if track_id not in keys:
-        raise CliError(
-            f"track {track_id!r} not in playlist "
-            f"{folder + ' / ' if folder else ''}{name}"
-        )
-    playlist_label = f"{folder} / {name}" if folder else name
-    return [
-        EditPreviewRow(
-            track=collection_track_label(draft.root, track_id),
-            action=ACTION_REMOVE_FROM_PLAYLIST,
-            playlist=playlist_label,
-        )
-    ]
-
-
-def preview_remove_track_from_collection(
-    draft: ImportEditDraft, *, track_id: str
-) -> list[EditPreviewRow]:
-    collection = draft.root.find("COLLECTION")
-    track = None
-    if collection is not None:
-        for candidate in collection.findall("TRACK"):
-            if candidate.get("TrackID") == track_id:
-                track = candidate
-                break
-    if track is None:
-        raise CliError(f"collection track not found: {track_id}")
-    owners = build_dest_owner_index(draft.manifest)
-    action = _orphan_action_for_track(draft, track, owners=owners)
-    playlists = [
-        (f"{folder} / {name}" if folder else name)
-        for kind, folder, name, node in iter_playlist_nodes(draft.root)
-        if kind == "playlist"
-        and any(e.get("Key") == track_id for e in node.findall("TRACK"))
-    ]
-    return [
-        EditPreviewRow(
-            track=collection_track_label(draft.root, track_id),
-            action=action,
-            playlist=", ".join(playlists),
-        )
-    ]
-
-
-def preview_remove_playlist(
-    draft: ImportEditDraft, *, folder: str, name: str
-) -> list[EditPreviewRow]:
-    node = _find_playlist_node(draft, folder=folder, name=name)
-    keys = [e.get("Key") or "" for e in node.findall("TRACK")]
-    refs = track_id_reference_counts(draft.root)
-    owners = build_dest_owner_index(draft.manifest)
-    collection = draft.root.find("COLLECTION")
-    by_id = {
-        (t.get("TrackID") or ""): t
-        for t in (collection.findall("TRACK") if collection is not None else [])
-    }
-    playlist_label = f"{folder} / {name}" if folder else name
-    rows: list[EditPreviewRow] = []
-    for key in keys:
-        if not key:
-            continue
-        track = by_id.get(key)
-        if refs.get(key, 0) > 1:
-            action = ACTION_REMOVE_FROM_PLAYLIST
-        else:
-            action = _orphan_action_for_track(draft, track, owners=owners)
-        rows.append(
-            EditPreviewRow(
-                track=collection_track_label(draft.root, key),
-                action=action,
-                playlist=playlist_label,
-            )
-        )
-    return rows
-
-
 def _playlist_key_map(root: ET.Element) -> dict[tuple[str, str], list[str]]:
     mapping: dict[tuple[str, str], list[str]] = {}
     for kind, folder, name, node in iter_playlist_nodes(root):
@@ -513,28 +406,17 @@ def _playlist_key_map(root: ET.Element) -> dict[tuple[str, str], list[str]]:
     return mapping
 
 
-def _collection_ids(root: ET.Element) -> set[str]:
-    collection = root.find("COLLECTION")
-    if collection is None:
-        return set()
-    return {(t.get("TrackID") or "") for t in collection.findall("TRACK")}
-
-
 def _original_relative_dest(draft: ImportEditDraft, track_id: str) -> str | None:
-    collection = draft.original_root.find("COLLECTION")
-    if collection is None:
+    track = _find_collection_track(draft.original_root, track_id)
+    if track is None:
         return None
-    for track in collection.findall("TRACK"):
-        if track.get("TrackID") != track_id:
-            continue
-        path = decode_location(track.get("Location") or "")
-        if path is None:
-            return None
-        try:
-            return _relative_dest_under_library(draft.library_dir, path)
-        except CliError:
-            return None
-    return None
+    path = decode_location(track.get("Location") or "")
+    if path is None:
+        return None
+    try:
+        return _relative_dest_under_library(draft.library_dir, path)
+    except CliError:
+        return None
 
 
 def preview_save(draft: ImportEditDraft) -> list[EditPreviewRow]:
@@ -543,7 +425,7 @@ def preview_save(draft: ImportEditDraft) -> list[EditPreviewRow]:
     curr_playlists = _playlist_key_map(draft.root)
     rows: list[EditPreviewRow] = []
     for (folder, name), orig_keys in orig_playlists.items():
-        playlist_label = f"{folder} / {name}" if folder else name
+        label = playlist_label(folder, name)
         remaining = set(curr_playlists.get((folder, name), []))
         for key in orig_keys:
             if not key or key in remaining:
@@ -558,7 +440,7 @@ def preview_save(draft: ImportEditDraft) -> list[EditPreviewRow]:
                 EditPreviewRow(
                     track=collection_track_label(draft.original_root, key),
                     action=action,
-                    playlist=playlist_label,
+                    playlist=label,
                 )
             )
     return rows
@@ -582,7 +464,7 @@ def remove_track_from_playlist(
     if not removed:
         raise CliError(
             f"track {track_id!r} not in playlist "
-            f"{folder + ' / ' if folder else ''}{name}"
+            f"{playlist_label(folder, name)}"
         )
     rewrite_counts(draft.root)
     draft.mark_dirty()
@@ -628,20 +510,12 @@ def remove_track_from_collection(
     collection = draft.root.find("COLLECTION")
     if collection is None:
         raise CliError("Import XML missing COLLECTION")
-    track = None
-    for candidate in collection.findall("TRACK"):
-        if candidate.get("TrackID") == track_id:
-            track = candidate
-            break
+    track = _find_collection_track(draft.root, track_id)
     if track is None:
         raise CliError(f"collection track not found: {track_id}")
 
     impact = EditImpact()
     owners = build_dest_owner_index(draft.manifest)
-    # Validate ownership before mutating.
-    resolve_collection_owner(
-        track, library_dir=draft.library_dir, owners=owners
-    )
 
     for kind, _folder, _name, node in iter_playlist_nodes(draft.root):
         if kind != "playlist":
@@ -754,7 +628,6 @@ def save_import_edit_draft(
     except CliError as exc:
         raise CliError(f"Save failed (validation): {exc}") from exc
 
-    owners = build_dest_owner_index(draft.manifest)
     existing_to_stage: list[str] = []
     for rel in scheduled:
         try:

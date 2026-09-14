@@ -515,30 +515,12 @@ class ShellMixin:
         setattr(self, attr, self.root.after(constants.SEARCH_DEBOUNCE_MS, fire))
 
     def _set_busy(self, busy: bool) -> None:
-        if busy and self._import_edit_active():
+        if self._import_edit_active():
             return
         self._busy = busy
         edit_state = tk.DISABLED if busy else tk.NORMAL
         combo_state = "disabled" if busy else "readonly"
         tree_state = ("disabled",) if busy else ("!disabled",)
-        if self._import_edit_active():
-            # Edit mode owns chrome locking; only toggle cancel/progress.
-            if busy:
-                self._cancel_cancelled_clear()
-                self._cancel_progress_anim()
-                self._progress_target = 0.0
-                self.progress["value"] = 0
-                self.convert_btn.grid_remove()
-                self.cancel_btn.configure(state=tk.NORMAL)
-                self.cancel_btn.grid()
-                self._sync_scan_indicator()
-            else:
-                self.cancel_btn.grid_remove()
-                self.cancel_btn.configure(state=tk.DISABLED)
-                self.convert_btn.grid()
-                self._sync_import_edit_chrome()
-                self._sync_scan_indicator()
-            return
         self.xml_entry.configure(state=edit_state)
         self.wav_dir_entry.configure(state=edit_state)
         self.xml_browse_btn.configure(state=edit_state)
@@ -568,6 +550,7 @@ class ShellMixin:
             self.convert_btn.grid()
             self._update_convert_enabled()
             self._sync_scan_indicator()
+            self._update_import_edit_button()
 
     def _update_convert_enabled(self) -> None:
         if self._busy:

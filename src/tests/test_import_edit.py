@@ -14,7 +14,7 @@ if str(_SRC) not in sys.path:
 
 import converter_manifest as cm
 from cli_error import CliError
-from rekordbox_xml import encode_location
+from rekordbox_xml import encode_location, iter_playlist_nodes
 import import_edit
 
 
@@ -334,7 +334,7 @@ class RemoveTrackFromPlaylistTests(unittest.TestCase):
         self.assertTrue(draft.dirty)
         alpha = None
         beta = None
-        for kind, folder, name, node in import_edit.iter_edit_playlists(draft):
+        for kind, folder, name, node in iter_playlist_nodes(draft.root):
             if name == "Alpha [WAV]":
                 alpha = node
             if name == "Beta [WAV]":
@@ -412,13 +412,13 @@ class RemovePlaylistTests(unittest.TestCase):
         self.assertEqual(impact.missing_files_cleaned, 0)
         playlists = [
             (folder, name)
-            for kind, folder, name, _ in import_edit.iter_edit_playlists(draft)
+            for kind, folder, name, _ in iter_playlist_nodes(draft.root)
             if kind == "playlist"
         ]
         self.assertEqual(playlists, [])
         folders = [
             name
-            for kind, folder, name, _ in import_edit.iter_edit_playlists(draft)
+            for kind, folder, name, _ in iter_playlist_nodes(draft.root)
             if kind == "folder"
         ]
         self.assertIn("Shows", folders)
@@ -467,7 +467,7 @@ class RemovePlaylistTests(unittest.TestCase):
         import_edit.remove_playlist(draft, folder="Folder A", name="Dup [WAV]")
         remaining = [
             (folder, name)
-            for kind, folder, name, _ in import_edit.iter_edit_playlists(draft)
+            for kind, folder, name, _ in iter_playlist_nodes(draft.root)
             if kind == "playlist"
         ]
         self.assertEqual(remaining, [("Folder B", "Dup [WAV]")])
@@ -546,7 +546,7 @@ class RemoveFromCollectionTests(unittest.TestCase):
         self.assertEqual(impact.playlist_refs_removed, 2)
         self.assertEqual(impact.collection_removed, 1)
         self.assertEqual(impact.files_to_trash, ["WAV/Artist - Track.wav"])
-        for kind, _f, _n, node in import_edit.iter_edit_playlists(draft):
+        for kind, _f, _n, node in iter_playlist_nodes(draft.root):
             if kind == "playlist":
                 self.assertEqual(node.findall("TRACK"), [])
         self.assertEqual(len(draft.root.find("COLLECTION").findall("TRACK")), 0)
@@ -684,26 +684,6 @@ class EditPreviewRowTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
-
-    def test_preview_remove_from_playlist_lists_remove_action(self) -> None:
-        library = _valid_library(self.root)
-        draft = import_edit.load_import_edit_draft(library)
-        rows = import_edit.preview_remove_track_from_playlist(
-            draft, folder="", name="Night Set [WAV]", track_id="1"
-        )
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].track, "Artist - Track")
-        self.assertEqual(rows[0].action, import_edit.ACTION_REMOVE_FROM_PLAYLIST)
-
-    def test_preview_remove_from_collection_lists_trash_action(self) -> None:
-        library = _valid_library(self.root)
-        draft = import_edit.load_import_edit_draft(library)
-        rows = import_edit.preview_remove_track_from_collection(
-            draft, track_id="1"
-        )
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].track, "Artist - Track")
-        self.assertEqual(rows[0].action, import_edit.ACTION_MOVE_TO_TRASH)
 
     def test_preview_save_after_playlist_remove_lists_remove_action(self) -> None:
         """Given a draft after removing a playlist ref: When previewing Save:
