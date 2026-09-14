@@ -133,6 +133,38 @@ class ManifestValidationTests(unittest.TestCase):
         loaded = cm.load_manifest(self.wav_dir)
         self.assertEqual(loaded.tracks["/music/a.flac"]["wav"], record)
 
+    def test_save_round_trip_is_deterministic(self) -> None:
+        """Given a complete v2 assignment: When save then load: Then JSON is
+        sorted and the record is unchanged."""
+        record = {
+            "dest": "WAV/Artist - Track.wav",
+            "state": "complete",
+            "source": {"size": 10, "mtime_ns": 1, "hash": None},
+            "metadata": {"signature": "sha256:" + ("ab" * 32)},
+            "output": {"size": 20, "mtime_ns": 2, "hash": None},
+            "recipe": {
+                "format": "wav",
+                "bit_depth": 24,
+                "sample_rate": 48000,
+                "channels": 2,
+                "revision": 1,
+            },
+        }
+        m = cm.empty_manifest()
+        m.tracks["/music/a.flac"] = {"wav": record}
+        cm.save_manifest(m, self.wav_dir)
+        path = self.wav_dir / cm.MANIFEST_NAME
+        text = path.read_text(encoding="utf-8")
+        canonical = (
+            json.dumps(m.to_dict(), indent=2, ensure_ascii=False, sort_keys=True)
+            + "\n"
+        )
+        self.assertEqual(text, canonical)
+        self.assertEqual(
+            cm.load_manifest(self.wav_dir).tracks["/music/a.flac"]["wav"],
+            record,
+        )
+
     def test_validate_rejects_unknown_keys(self) -> None:
         """Given extra keys on the record or nested freshness objects: When
         validate: Then unknown fields are reported."""
