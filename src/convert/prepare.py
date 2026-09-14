@@ -12,16 +12,14 @@ import converter_manifest
 import ffmpeg_tools
 from cli_error import CancelledError, CliError
 from convert.models import Plan, PreparedConversion
-from convert.paths import abs_path, source_key
+from convert.paths import abs_path
 from convert.plan import build_plan, collect_batch_unique, share_cover_caches
 from convert.preview import build_conversion_preview
 from convert.quality import (
-    coerce_output_format,
     require_bit_depth,
     require_output_format,
     require_sample_rate,
 )
-from convert.rerun import Decision
 from rekordbox_xml import (
     load_dj_playlists,
     resolve_playlist,
@@ -205,26 +203,6 @@ def prepare_batch(
     if cancel_event is not None and cancel_event.is_set():
         raise CancelledError("conversion cancelled")
 
-    decisions: dict[tuple[str, str], Decision] = {}
-    by_rel = {row.relative_dest: row for row in preview.items}
-    for item in items:
-        fmt = coerce_output_format(item.output_format)
-        key = (source_key(item.source_path), fmt)
-        try:
-            rel = item.dest_path.relative_to(wav_dir).as_posix()
-        except ValueError:
-            rel = item.dest_path.name
-        row = by_rel.get(rel)
-        if row is None:
-            continue
-        decisions[key] = Decision(
-            action=row.action,
-            reason=row.reason_code or "",
-            write_kind=row.write_kind or "none",
-            source_stat=row.source_stat,
-            dest_stat=row.dest_stat,
-        )
-
     return (
         PreparedConversion(
             plans=plans,
@@ -234,7 +212,7 @@ def prepare_batch(
             library_dir=wav_dir,
             output=output,
             skipped=skipped,
-            decisions=decisions,
+            decisions=dict(preview.decisions),
         ),
         [],
     )

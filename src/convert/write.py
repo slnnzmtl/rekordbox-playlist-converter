@@ -39,7 +39,7 @@ from convert.models import (
 from convert.progress import Progress
 from convert.paths import source_key
 from convert.quality import coerce_output_format
-from convert.rerun import Decision, classify_item, _file_stat, _stats_match
+from convert.rerun import Decision, classify_item, file_snapshot, snapshots_match
 
 _MUTATING_ACTIONS = frozenset(
     {
@@ -55,34 +55,15 @@ def _decisions_for_prepared(
     prepared: PreparedConversion, force: bool
 ) -> dict[tuple[str, str], Decision]:
     if prepared.decisions:
-        return {
-            key: value
-            for key, value in prepared.decisions.items()
-            if isinstance(value, Decision)
-        }
-    by_rel = {row.relative_dest: row for row in prepared.preview.items}
+        return prepared.decisions
+    out: dict[tuple[str, str], Decision] = {}
     plan_by_item: dict[int, Plan] = {}
     for plan in prepared.plans:
         for item in plan.unique:
             plan_by_item.setdefault(id(item), plan)
-    out: dict[tuple[str, str], Decision] = {}
     for item in prepared.items:
         fmt = coerce_output_format(item.output_format)
         key = (source_key(item.source_path), fmt)
-        try:
-            rel = item.dest_path.relative_to(prepared.library_dir).as_posix()
-        except ValueError:
-            rel = item.dest_path.name
-        row = by_rel.get(rel)
-        if row is not None and row.action:
-            out[key] = Decision(
-                action=row.action,
-                reason=row.reason_code or "",
-                write_kind=row.write_kind or "none",
-                source_stat=row.source_stat,
-                dest_stat=row.dest_stat,
-            )
-            continue
         plan = plan_by_item.get(id(item), prepared.plans[0])
         out[key] = classify_item(plan, item, force)
     return out
@@ -175,6 +156,57 @@ def _save_manifest_with_pending(
     converter_manifest.save_manifest(clone, library_dir)
 
 
+class ManifestCheckpoint:
+    """Persist complete in-memory records, overlaying incomplete on pending keys."""
+
+    def __init__(
+        self,
+        plan: Plan,
+        pending: set[tuple[str, str]],
+        *,
+        every: int | None,
+    ) -> None:
+        self.plan = plan
+        self.pending = pending
+        self.every = every
+        self._count = 0
+
+    def mark_item_complete(self, item: PlannedTrack) -> None:
+        if self.plan.manifest is None:
+            return
+        fmt = coerce_output_format(item.output_format)
+        record = self.plan.manifest.tracks.get(source_key(item.source_path), {}).get(
+            fmt
+        )
+        if record is None:
+            return
+        mark_complete(
+            record,
+            source=source_signature(item.source_path),
+            metadata=metadata_signature(item.source_el),
+            output=output_signature(item.dest_path),
+            recipe=recipe_from_item(item),
+        )
+        self.pending.discard((source_key(item.source_path), fmt))
+        if not self.every:
+            return
+        self._count += 1
+        if self._count % self.every == 0:
+            _save_manifest_with_pending(
+                self.plan.manifest, self.plan.library_dir, self.pending
+            )
+
+    def discard_pending_and_save(self, item: PlannedTrack) -> None:
+        """Conflict/state_changed recovery: always persist the complete record."""
+        fmt = coerce_output_format(item.output_format)
+        self.pending.discard((source_key(item.source_path), fmt))
+        if self.plan.manifest is None:
+            return
+        _save_manifest_with_pending(
+            self.plan.manifest, self.plan.library_dir, self.pending
+        )
+
+
 def _prebatch_incomplete_manifest(
     prepared: PreparedConversion,
     force: bool,
@@ -216,8 +248,8 @@ def convert_unique(
     completed = 0
     stats_lock = threading.Lock()
     cover_lock = threading.Lock()
-    checkpointed = 0
     pending = pending_assignments if pending_assignments is not None else set()
+    checkpoint = ManifestCheckpoint(plan, pending, every=checkpoint_every)
 
     def finish(action: str, name: str) -> None:
         nonlocal completed
@@ -232,36 +264,10 @@ def convert_unique(
             stats.succeeded.add((source_key(item.source_path), fmt))
 
     def complete_assignment(item: PlannedTrack) -> None:
-        nonlocal checkpointed
-        if plan.manifest is None:
-            return
-        fmt = coerce_output_format(item.output_format)
-        record = plan.manifest.tracks.get(source_key(item.source_path), {}).get(fmt)
-        if record is None:
-            return
-        mark_complete(
-            record,
-            source=source_signature(item.source_path),
-            metadata=metadata_signature(item.source_el),
-            output=output_signature(item.dest_path),
-            recipe=recipe_from_item(item),
-        )
-        pending.discard((source_key(item.source_path), fmt))
-        if not checkpoint_every:
-            return
-        checkpointed += 1
-        if checkpointed % checkpoint_every == 0:
-            _save_manifest_with_pending(plan.manifest, plan.library_dir, pending)
+        checkpoint.mark_item_complete(item)
 
     def clear_pending_checkpoint(item: PlannedTrack) -> None:
-        """Drop pending incomplete overlay and checkpoint complete in-memory record."""
-        nonlocal checkpointed
-        fmt = coerce_output_format(item.output_format)
-        pending.discard((source_key(item.source_path), fmt))
-        if plan.manifest is None or not checkpoint_every:
-            return
-        checkpointed += 1
-        _save_manifest_with_pending(plan.manifest, plan.library_dir, pending)
+        checkpoint.discard_pending_and_save(item)
 
     def snapshot_blocks_write(
         item: PlannedTrack, decision: Decision, name: str
@@ -269,17 +275,17 @@ def convert_unique(
         """Return True if frozen stats no longer match; records conflict/state_changed."""
         key_src = decision.source_stat
         if key_src is not None:
-            current_src = _file_stat(item.source_path)
-            if current_src is None or not _stats_match(key_src, current_src):
+            current_src = file_snapshot(item.source_path)
+            if current_src is None or not snapshots_match(key_src, current_src):
                 with stats_lock:
                     clear_pending_checkpoint(item)
                     stats.state_changed.append(name)
                 finish("state_changed", name)
                 return True
         frozen_dest = decision.dest_stat
-        current_dest = _file_stat(item.dest_path)
+        current_dest = file_snapshot(item.dest_path)
         dest_changed = (frozen_dest is None and current_dest is not None) or (
-            frozen_dest is not None and not _stats_match(frozen_dest, current_dest)
+            frozen_dest is not None and not snapshots_match(frozen_dest, current_dest)
         )
         if dest_changed:
             with stats_lock:
@@ -289,7 +295,7 @@ def convert_unique(
             return True
         return False
 
-    def process_one(item: PlannedTrack) -> None:
+    def execute_item(item: PlannedTrack) -> None:
         if cancel_event is not None and cancel_event.is_set():
             return
         name = item.dest_name
@@ -455,7 +461,7 @@ def convert_unique(
             len(items), workers=workers
         )
         with ThreadPoolExecutor(max_workers=effective_workers) as pool:
-            futures = [pool.submit(process_one, item) for item in items]
+            futures = [pool.submit(execute_item, item) for item in items]
             for fut in as_completed(futures):
                 fut.result()
     finally:
