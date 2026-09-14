@@ -8,7 +8,12 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
-from convert.models import ConvertStats, PreparedConversion, format_conversion_counts
+from convert.models import (
+    ConvertStats,
+    PreparedConversion,
+    conversion_report_title,
+    format_conversion_counts,
+)
 from convert.quality import (
     coerce_bit_depth,
     coerce_output_format,
@@ -18,9 +23,6 @@ from convert.rerun import ACTION_LABELS
 from gui import constants
 from gui import dialogs as gui_dialogs
 from gui import runtime
-from gui.helpers import (
-    total_successful_conversions,
-)
 
 
 @dataclass(frozen=True)
@@ -317,10 +319,14 @@ class ConvertFlowMixin:
                 return
 
             for i, plan in enumerate(plans):
-                counts = batch_stats if i == 0 else ConvertStats()
-                parts = format_conversion_counts(
-                    counts, missing=len(plan.warnings)
-                )
+                parts: list[str] = []
+                if i == 0:
+                    parts.extend(format_conversion_counts(batch_stats))
+                missing_n = len(plan.warnings)
+                if missing_n:
+                    parts.append(
+                        f"{missing_n} missing skipped"
+                    )
                 appended = (
                     batch_stats.appended_by_plan[i]
                     if i < len(batch_stats.appended_by_plan)
@@ -330,12 +336,18 @@ class ConvertFlowMixin:
                     parts.append(f"+{appended} playlist entries")
                 detail = ", ".join(parts) if parts else "done"
                 summaries.append(f"{plan.wav_playlist_name}: {detail}")
+            if batch_stats.state_changed:
+                summaries.append("State changed (refresh preview):")
+                summaries.extend(batch_stats.state_changed)
             if batch_stats.errors:
                 summaries.append("Failed:")
                 summaries.extend(batch_stats.errors)
             if batch_stats.conflicts:
                 summaries.append("Conflicts:")
                 summaries.extend(batch_stats.conflicts)
+            if skipped:
+                summaries.append("Missing skipped:")
+                summaries.extend(skipped)
 
             if self._cancel_event.is_set():
                 _finish_cancel_with_errors(batch_stats.errors or None)
@@ -345,20 +357,12 @@ class ConvertFlowMixin:
             else:
                 self._ui(lambda t=total: self._set_progress(t, t))
             out = str(output)
-            if (
-                total_successful_conversions([batch_stats]) == 0
-                and not batch_stats.errors
-                and not batch_stats.conflicts
-            ):
-                self._ui(
-                    lambda s=summaries, w=skipped: self._finish_no_conversions(s, w)
+            title = conversion_report_title(batch_stats)
+            self._ui(
+                lambda s=summaries, o=out, folder=output.parent, t=title: self._finish_report(
+                    s, o, folder, title=t
                 )
-            else:
-                self._ui(
-                    lambda s=summaries, o=out, w=skipped, folder=output.parent: self._finish_ok(
-                        s, o, w, folder
-                    )
-                )
+            )
         except runtime.CliError as exc:
             self._ui(lambda e=str(exc): self._finish_error(e))
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
@@ -402,21 +406,13 @@ class ConvertFlowMixin:
         summaries: list[str],
         warnings: list[str] | None = None,
     ) -> None:
-        self._prepared_conversion = None
-        self._confirm_prepared = None
-        self._set_busy(False)
-        self._animate_progress_to(0, snap=True)
-        self.status_var.set("Finished with no audio files converted or copied.")
+        """Compatibility wrapper: one report dialog titled No conversions."""
+        body = list(summaries)
         if warnings:
-            self._show_list_dialog(
-                "No conversions",
-                "These files were missing and were skipped:",
-                warnings,
-                summary="\n".join(summaries),
-            )
-            return
-        runtime.show_centered_message(
-            self.root, "No conversions", "\n".join(summaries)
+            body.append("Missing skipped:")
+            body.extend(warnings)
+        self._finish_report(
+            body, output="", output_folder=None, title="No conversions"
         )
 
     def _finish_ok(
@@ -426,32 +422,55 @@ class ConvertFlowMixin:
         warnings: list[str] | None = None,
         output_folder: Path | None = None,
     ) -> None:
+        """Compatibility wrapper: one Done report including optional missing."""
+        body = list(summaries)
+        if warnings:
+            body.append("Missing skipped:")
+            body.extend(warnings)
+        self._finish_report(body, output, output_folder, title="Done")
+
+    def _finish_report(
+        self,
+        summaries: list[str],
+        output: str,
+        output_folder: Path | None,
+        *,
+        title: str,
+    ) -> None:
         self._prepared_conversion = None
         self._confirm_prepared = None
         self._set_busy(False)
-        self._animate_progress_to(100, snap=True)
+        snap_progress = 0 if title in {"No conversions", "Failed"} else 100
+        self._animate_progress_to(snap_progress, snap=True)
         body = "\n".join(summaries)
-        self.status_var.set(
-            f"Done. Point Rekordbox Imported Library at:\n{output}"
-        )
-        if warnings:
-            self._show_list_dialog(
-                "Skipped missing tracks",
-                "These files were missing and were skipped:",
-                warnings,
+        if title == "No conversions":
+            self.status_var.set("Finished with no audio files converted or copied.")
+            self._show_done_dialog(body, output_folder, title=title)
+            return
+        if title == "Failed":
+            self.status_var.set("Failed.")
+            self._show_done_dialog(body, output_folder, title=title)
+            return
+        if output:
+            self.status_var.set(
+                f"Done. Point Rekordbox Imported Library at:\n{output}"
             )
-        fmt = self.format_var.get().strip().lower()
-        suffix = "[AIFF]" if fmt == "aiff" else "[WAV]"
-        message = (
-            f"{body}\n\n"
-            "Import into Rekordbox:\n"
-            "1. Preferences → View → Layout → enable rekordbox xml\n"
-            "2. Preferences → Advanced → Database → Imported Library →\n"
-            f"   {output}\n"
-            "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
-            f"   (or drag the {suffix} playlist into Playlists)"
-        )
-        self._show_done_dialog(message, output_folder)
+        else:
+            self.status_var.set(f"{title}.")
+        message = body
+        if output:
+            fmt = self.format_var.get().strip().lower()
+            suffix = "[AIFF]" if fmt == "aiff" else "[WAV]"
+            message = (
+                f"{body}\n\n"
+                "Import into Rekordbox:\n"
+                "1. Preferences → View → Layout → enable rekordbox xml\n"
+                "2. Preferences → Advanced → Database → Imported Library →\n"
+                f"   {output}\n"
+                "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
+                f"   (or drag the {suffix} playlist into Playlists)"
+            )
+        self._show_done_dialog(message, output_folder, title=title)
 
     def _show_list_dialog(
         self,
@@ -476,6 +495,8 @@ class ConvertFlowMixin:
         self,
         message: str,
         output_folder: Path | None = None,
+        *,
+        title: str = "Done",
     ) -> None:
         gui_dialogs.show_done_dialog(
             self.root,
@@ -484,6 +505,7 @@ class ConvertFlowMixin:
             reveal=runtime.open_in_finder,
             on_open_guide=self._show_usage_guide,
             place_over=self._place_dialog_over_app,
+            title=title,
         )
 
 

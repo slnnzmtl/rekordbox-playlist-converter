@@ -413,9 +413,10 @@ def show_done_dialog(
     reveal: Callable[[Path], None],
     on_open_guide: Callable[[], None],
     place_over: Callable[[tk.Toplevel], None],
+    title: str = "Done",
 ) -> None:
-    """Success dialog with optional Reveal / usage-guide actions."""
-    dlg, frm = make_dialog(parent, "Done", grab=True, resizable=False)
+    """Finish report dialog with optional Reveal / usage-guide actions."""
+    dlg, frm = make_dialog(parent, title, grab=True, resizable=False)
     msg_label = ttk.Label(frm, text=message, justify=tk.LEFT)
     msg_label.grid(row=0, column=0, columnspan=2, sticky="w")
     bind_wraplength(msg_label, frm, inset=32)

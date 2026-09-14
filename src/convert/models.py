@@ -99,10 +99,36 @@ class ConvertStats:
     errors: list[str] = field(default_factory=list)
     conflicts: list[str] = field(default_factory=list)
     state_changed: list[str] = field(default_factory=list)
+    item_results: list[ItemResult] = field(default_factory=list)
     # (source_key, format) that skipped, copied, or converted successfully.
     succeeded: set[tuple[str, str]] = field(default_factory=set)
     # Entries appended per plan by apply_xml during execute_prepared.
     appended_by_plan: list[int] = field(default_factory=list)
+
+
+def conversion_report_title(
+    stats: ConvertStats,
+    *,
+    cancelled: bool = False,
+) -> str:
+    """Done-dialog / finish title from batch outcomes."""
+    if cancelled:
+        return "Cancelled"
+    successes = (
+        stats.converted
+        + stats.copied
+        + stats.pcm_rebuilt
+        + stats.metadata_refreshed
+        + stats.reused
+    )
+    has_problems = bool(stats.errors or stats.conflicts or stats.state_changed)
+    if successes == 0:
+        if stats.errors:
+            return "Failed"
+        return "No conversions"
+    if has_problems:
+        return "Partial"
+    return "Done"
 
 
 def format_conversion_counts(

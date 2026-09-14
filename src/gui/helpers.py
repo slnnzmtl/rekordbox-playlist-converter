@@ -34,7 +34,12 @@ def app_window_icon_path() -> Path:
 
 def total_successful_conversions(stats_list: list) -> int:
     return sum(
-        s.converted + s.copied + s.metadata_refreshed + s.reused for s in stats_list
+        s.converted
+        + s.copied
+        + s.pcm_rebuilt
+        + s.metadata_refreshed
+        + s.reused
+        for s in stats_list
     )
 
 

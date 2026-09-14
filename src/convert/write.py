@@ -266,18 +266,23 @@ def _item_result(
     )
 
 
+def _track_ref(item: PlannedTrack) -> str:
+    return f"{item.source_path.name} → {item.dest_name}"
+
+
 def _snapshot_blocks_write(
     item: PlannedTrack, decision: Decision, ctx: ExecuteContext
 ) -> ItemResult | None:
     """Return a blocking result if frozen stats no longer match."""
     name = item.dest_name
+    ref = _track_ref(item)
     key_src = decision.source_stat
     if key_src is not None:
         current_src = file_snapshot(item.source_path)
         if current_src is None or not snapshots_match(key_src, current_src):
             with ctx.stats_lock:
                 ctx.checkpoint.discard_pending_and_save(item)
-                ctx.stats.state_changed.append(name)
+                ctx.stats.state_changed.append(ref)
             ctx.finish("state_changed", name)
             return _item_result(item, decision.action, "state_changed")
     frozen_dest = decision.dest_stat
@@ -288,7 +293,7 @@ def _snapshot_blocks_write(
     if dest_changed:
         with ctx.stats_lock:
             ctx.checkpoint.discard_pending_and_save(item)
-            ctx.stats.conflicts.append(name)
+            ctx.stats.conflicts.append(ref)
         ctx.finish("conflict", name)
         return _item_result(item, decision.action, "conflict")
     return None
@@ -333,7 +338,7 @@ def execute_item(
     if action == "external_modification_conflict":
         with ctx.stats_lock:
             ctx.checkpoint.discard_pending_and_save(item)
-            ctx.stats.conflicts.append(name)
+            ctx.stats.conflicts.append(_track_ref(item))
         ctx.finish("conflict", name)
         return _item_result(item, action, "conflict")
     try:
@@ -490,10 +495,11 @@ def execute_item(
     except CancelledError:
         return _item_result(item, action, "cancelled")
     except Exception as exc:  # noqa: BLE001 — collect all; report after pool
+        message = f"{_track_ref(item)}: {exc}"
         with ctx.stats_lock:
-            ctx.stats.errors.append(str(exc))
+            ctx.stats.errors.append(message)
         ctx.finish("error", name)
-        return _item_result(item, action, "failed", error=str(exc))
+        return _item_result(item, action, "failed", error=message)
 
 
 def convert_unique(
@@ -542,7 +548,10 @@ def convert_unique(
         fmt = coerce_output_format(item.output_format)
         key = (source_key(item.source_path), fmt)
         frozen = decisions.get(key) if decisions else None
-        return execute_item(item, frozen, ctx)
+        result = execute_item(item, frozen, ctx)
+        with stats_lock:
+            stats.item_results.append(result)
+        return result
 
     try:
         if not items:
@@ -594,6 +603,25 @@ def execute_prepared(
         pending_assignments=pending,
         decisions=decisions,
     )
+    playlists_by_dest: dict[Path, list[str]] = {}
+    for one_plan in plans:
+        for track in one_plan.tracks:
+            names = playlists_by_dest.setdefault(track.dest_path, [])
+            if one_plan.wav_playlist_name not in names:
+                names.append(one_plan.wav_playlist_name)
+    if playlists_by_dest and stats.item_results:
+        stats.item_results = [
+            ItemResult(
+                source=result.source,
+                destination=result.destination,
+                action=result.action,
+                outcome=result.outcome,
+                playlists=tuple(playlists_by_dest.get(result.destination, ())),
+                error=result.error,
+                write=result.write,
+            )
+            for result in stats.item_results
+        ]
     _save_manifest_with_pending(prepared.manifest, prepared.library_dir, pending)
     appended_by_plan: list[int] = []
     for one_plan in plans:

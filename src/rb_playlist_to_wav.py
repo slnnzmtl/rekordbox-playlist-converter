@@ -420,6 +420,11 @@ def print_summary(
         print("Conflicts:")
         for name in stats.conflicts:
             print(name)
+    if stats.state_changed:
+        print()
+        print("State changed (refresh preview):")
+        for name in stats.state_changed:
+            print(name)
     if stats.errors:
         print()
         print("Failed:")
