@@ -57,3 +57,65 @@ def recipe_from_item(item: Any) -> dict[str, Any]:
         "revision": RECIPE_REVISION,
     }
 
+
+def output_signature(path: Path) -> dict[str, Any]:
+    return source_signature(path)
+
+
+def mark_incomplete(record: dict[str, Any]) -> None:
+    record["state"] = "incomplete"
+
+
+def mark_complete(
+    record: dict[str, Any],
+    *,
+    source: dict[str, Any],
+    metadata: str,
+    output: dict[str, Any],
+    recipe: dict[str, Any],
+) -> None:
+    record["state"] = "complete"
+    record["source"] = source
+    record["metadata"] = {"signature": metadata}
+    record["output"] = output
+    record["recipe"] = recipe
+
+
+def _has_stat(obj: object) -> bool:
+    return (
+        isinstance(obj, dict)
+        and _is_nonneg_int(obj.get("size"))
+        and _is_nonneg_int(obj.get("mtime_ns"))
+    )
+
+
+def _is_nonneg_int(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _has_recipe(obj: object) -> bool:
+    if not isinstance(obj, dict):
+        return False
+    return all(
+        key in obj
+        for key in ("format", "bit_depth", "sample_rate", "channels", "revision")
+    )
+
+
+def assignment_state(record: dict[str, Any]) -> str:
+    if record.get("state") == "incomplete":
+        return "incomplete"
+    metadata = record.get("metadata")
+    has_metadata = isinstance(metadata, dict) and isinstance(
+        metadata.get("signature"), str
+    ) and metadata.get("signature")
+    if (
+        record.get("state") == "complete"
+        and _has_stat(record.get("source"))
+        and _has_stat(record.get("output"))
+        and has_metadata
+        and _has_recipe(record.get("recipe"))
+    ):
+        return "complete"
+    return "unverified"
+
