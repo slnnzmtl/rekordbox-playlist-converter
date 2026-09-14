@@ -21,6 +21,7 @@ from convert import encode
 import ffmpeg_tools
 from convert.freshness import bind_complete_assignment
 from convert.models import Plan, PlannedTrack
+from convert.paths import source_key
 import converter_manifest
 from convert.prepare import prepare
 from convert.write import convert_unique
@@ -597,6 +598,79 @@ class NoopUnsafeInPlaceTests(unittest.TestCase):
                 any("refusing to convert in place" in e for e in errors),
                 errors,
             )
+
+
+class RewriteContainerTests(unittest.TestCase):
+    def test_rewrite_container_keeps_wav_pcm_without_ffmpeg(self) -> None:
+        """Given a complete WAV dest whose recipe revision differs: When convert:
+        Then dest PCM is unchanged, extra chunks are dropped, and ffmpeg is not
+        called."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            pcm = b"\x11\x22" * 16
+            write_pcm_wav(
+                dest,
+                extra_chunks=[(b"LIST", b"INFO" + b"\x00" * 12)],
+                frames=8,
+            )
+            # Overwrite the data payload with a recognizable pattern.
+            raw = bytearray(dest.read_bytes())
+            data_at = raw.find(b"data")
+            size = struct.unpack_from("<I", raw, data_at + 4)[0]
+            raw[data_at + 8 : data_at + 8 + size] = (pcm * 8)[:size]
+            dest.write_bytes(raw)
+            before_pcm = (pcm * 8)[:size]
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            plan.manifest.tracks[source_key(src)]["wav"]["recipe"]["revision"] = 2
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"OVERWRITTEN")
+
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+                stats = convert_unique(plan, force=False)
+            self.assertEqual(encoded, [])
+            self.assertEqual(stats.errors, [])
+            info = cdj_wav.parse_wav_info(dest)
+            self.assertEqual(info.chunk_ids, ("fmt ", "data"))
+            out_raw = dest.read_bytes()
+            out_at = out_raw.find(b"data")
+            out_size = struct.unpack_from("<I", out_raw, out_at + 4)[0]
+            self.assertEqual(out_raw[out_at + 8 : out_at + 8 + out_size], before_pcm)
 
 
 if __name__ == "__main__":

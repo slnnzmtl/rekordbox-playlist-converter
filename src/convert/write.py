@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Callable
@@ -9,6 +10,7 @@ from typing import Callable
 import converter_manifest
 import xml_output
 from cdj_aiff import write_aiff_id3
+from cdj_wav import rewrite_wav_pcm
 from cli_error import CancelledError, CliError
 from convert.encode import copy_wav_atomic
 from convert import format_policy
@@ -86,6 +88,22 @@ def convert_unique(
                     cancel_event=cancel_event,
                 )
                 write_aiff_id3(item.dest_path, item.source_el, cover)
+                mark_succeeded(item)
+                finish("copy", name)
+                return
+            if action == "rewrite_container" and not is_aiff:
+                sidecar = item.dest_path.with_name(item.dest_path.name + "~")
+                try:
+                    rewrite_wav_pcm(item.dest_path, sidecar)
+                    os.replace(sidecar, item.dest_path)
+                except Exception:
+                    try:
+                        sidecar.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                    raise
+                with stats_lock:
+                    stats.copied += 1
                 mark_succeeded(item)
                 finish("copy", name)
                 return
