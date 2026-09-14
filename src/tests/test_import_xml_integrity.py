@@ -65,12 +65,18 @@ RB6_FIXTURE = """\
            Album="Hits 100%" Grouping="" Genre="Electronic" Kind="FLAC File"
            Size="1" TotalTime="100" DiscNumber="0" TrackNumber="1" Year="2023"
            AverageBpm="128.00" DateAdded="2024-01-01" BitRate="0"
-           SampleRate="44100" Comments="" PlayCount="0" Rating="51"
+           SampleRate="44100" Comments="prep notes" PlayCount="0" Rating="51"
            Location="{loc_a}" Remixer="" Tonality="Am" Label="" Mix=""
-           Colour="0xFF0000">
+           Colour="0xFF0000" UnknownAttr="keep-me">
       <TEMPO Inizio="0.000" Bpm="128.00" Metro="4/4" Battito="1"/>
+      <TEMPO Inizio="32.000" Bpm="129.00" Metro="4/4" Battito="1"/>
       <POSITION_MARK Name="cue" Type="0" Start="0.000" Num="-1"
                      Red="255" Green="0" Blue="0"/>
+      <POSITION_MARK Name="hot" Type="0" Start="4.000" Num="0"
+                     Red="0" Green="255" Blue="0"/>
+      <POSITION_MARK Name="loop" Type="4" Start="8.000" End="16.000" Num="-1"
+                     Red="0" Green="0" Blue="255"/>
+      <EXTRA Foo="bar"/>
     </TRACK>
     <TRACK TrackID="101" Name="Space Track" Artist="ABSL" Album="Album"
            Grouping="" Genre="Electronic" Kind="FLAC File" Size="1"
@@ -146,6 +152,7 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
         playlist: str,
         playlist_folder: str | None = None,
         product_version_prefix: str,
+        output_format: str = "wav",
     ) -> ET.Element:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -159,7 +166,7 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
             text = text.replace("{loc_a}", encode_location(a))
             text = text.replace("{loc_b}", encode_location(b))
             xml_path.write_text(text, encoding="utf-8")
-            wav_dir = root / "WAV"
+            wav_dir = root / output_format.upper()
             output = root / "rekordbox-import.xml"
 
             def fake_ffmpeg(
@@ -168,9 +175,15 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(b"RIFF")
 
+            def fake_aiff(source, dest, *args, **_kwargs) -> None:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(b"FORM")
+
             with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
                 ffmpeg_tools, "run_ffprobe", side_effect=self._probe
             ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+                convert.plan, "write_aiff_output", side_effect=fake_aiff
+            ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("100", "2116", "44100")
             ):
                 rc = rb.run_convert_batch(
@@ -180,6 +193,7 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
                     output,
                     force=False,
                     dry_run=False,
+                    output_format=output_format,
                 )
             self.assertEqual(rc, 0)
             self.assertTrue(output.is_file())
@@ -220,6 +234,49 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
         self.assertEqual(len(pl), 1)
         # Repeated source Key in playlist → one Key after dedup on new node.
         self.assertEqual(len(pl[0].findall("TRACK")), 2)
+        cafe = next(t for t in tracks if t.get("Name") == "Café & Dreams")
+        self.assertEqual(cafe.get("Rating"), "51")
+        self.assertEqual(cafe.get("AverageBpm"), "128.00")
+        self.assertEqual(cafe.get("Tonality"), "Am")
+        self.assertEqual(cafe.get("Comments"), "prep notes")
+        self.assertEqual(cafe.get("Colour"), "0xFF0000")
+        self.assertEqual(cafe.get("UnknownAttr"), "keep-me")
+        extra = cafe.find("EXTRA")
+        assert extra is not None
+        self.assertEqual(extra.get("Foo"), "bar")
+        tempos = cafe.findall("TEMPO")
+        self.assertEqual(len(tempos), 2)
+        self.assertEqual(tempos[0].get("Bpm"), "128.00")
+        self.assertEqual(tempos[1].get("Bpm"), "129.00")
+        marks = cafe.findall("POSITION_MARK")
+        self.assertEqual(len(marks), 3)
+        by_num = {(m.get("Type"), m.get("Num"), m.get("Name")): m for m in marks}
+        self.assertEqual(by_num[("0", "-1", "cue")].get("Start"), "0.000")
+        self.assertEqual(by_num[("0", "0", "hot")].get("Start"), "4.000")
+        loop = by_num[("4", "-1", "loop")]
+        self.assertEqual(loop.get("End"), "16.000")
+        self.assertEqual(cafe.get("Kind"), "WAV File")
+        coll = out.find("COLLECTION")
+        assert coll is not None
+        self.assertEqual(coll.get("Entries"), "2")
+        self.assertEqual(pl[0].get("Entries"), "2")
+
+    def test_rb6_style_aiff_preserves_kind_and_cues(self) -> None:
+        out = self._convert_and_validate(
+            fixture=RB6_FIXTURE,
+            playlist="Night Set",
+            playlist_folder="Nested Folder",
+            product_version_prefix="6.",
+            output_format="aiff",
+        )
+        tracks = out.findall("COLLECTION/TRACK")
+        self.assertEqual({t.get("Kind") for t in tracks}, {"AIFF File"})
+        cafe = next(t for t in tracks if t.get("Name") == "Café & Dreams")
+        self.assertEqual(len(cafe.findall("TEMPO")), 2)
+        self.assertEqual(len(cafe.findall("POSITION_MARK")), 3)
+        pl = find_playlists_by_name(out, "Night Set [AIFF]")
+        self.assertEqual(len(pl), 1)
+        self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2"])
 
     def test_shared_track_across_playlists_one_collection_row(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
