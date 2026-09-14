@@ -457,7 +457,7 @@ class PlaylistsMixin:
                 tk.END,
                 text=group_text,
                 open=is_open,
-                values=("", "", "", ""),
+                values=("",) * len(self.tracklist_tree.cget("columns")),
                 tags=(constants.TRACKLIST_HEADER_TAG,),
             )
             self._tracklist_group_iids[group_iid] = group_key

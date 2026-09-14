@@ -674,6 +674,17 @@ class GuiTracklistTests(unittest.TestCase):
                     [preview.item(r, "values")[3] for r in crate_leaves],
                     ["☆☆☆☆☆", "★☆☆☆☆", "★★★★☆"],
                 )
+
+                preview.tk.call(preview.heading("rating", "command"))
+                crate_leaves = list(preview.get_children(groups[0]))
+                self.assertEqual(
+                    [preview.item(r, "text") for r in crate_leaves],
+                    [
+                        "A - Alpha",
+                        "Z - Zebra",
+                        "M - Mid",
+                    ],
+                )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
