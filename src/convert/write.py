@@ -16,6 +16,7 @@ from cdj_wav import rewrite_wav_pcm
 from cli_error import CancelledError, CliError
 from convert.encode import copy_wav_atomic
 from convert.freshness import (
+    assignment_state,
     mark_complete,
     mark_incomplete,
     metadata_signature,
@@ -56,6 +57,28 @@ def _replace_via_sidecar(dest: Path, write: Callable[[Path], None]) -> None:
         except OSError:
             pass
         raise
+
+
+def _pcm_origin_for_container_rewrite(
+    plan: Plan, item: PlannedTrack, force: bool
+) -> Path:
+    """Dest PCM only for a complete, unforced, source-matching revision rewrite."""
+    if force:
+        return item.source_path
+    if plan.manifest is None:
+        return item.source_path
+    fmt = coerce_output_format(item.output_format)
+    record = plan.manifest.tracks.get(source_key(item.source_path), {}).get(fmt) or {}
+    if assignment_state(record) != "complete":
+        return item.source_path
+    stored = record.get("source") or {}
+    try:
+        st = item.source_path.stat()
+    except OSError:
+        return item.source_path
+    if stored.get("size") != st.st_size or stored.get("mtime_ns") != st.st_mtime_ns:
+        return item.source_path
+    return item.dest_path
 
 
 def _prebatch_incomplete_manifest(
@@ -178,10 +201,11 @@ def convert_unique(
                 finish("copy", name)
                 return
             if action == "rewrite_container" and not is_aiff:
+                pcm_src = _pcm_origin_for_container_rewrite(plan, item, force)
                 try:
                     _replace_via_sidecar(
                         item.dest_path,
-                        lambda sidecar: rewrite_wav_pcm(item.dest_path, sidecar),
+                        lambda sidecar, src=pcm_src: rewrite_wav_pcm(src, sidecar),
                     )
                 except CliError:
                     action = "transcode"
@@ -201,7 +225,8 @@ def convert_unique(
                 )
 
                 def write_aiff_sidecar(sidecar: Path) -> None:
-                    normalize_aiff_audio_chunks(item.dest_path, sidecar)
+                    pcm_src = _pcm_origin_for_container_rewrite(plan, item, force)
+                    normalize_aiff_audio_chunks(pcm_src, sidecar)
                     write_aiff_id3(sidecar, item.source_el, cover)
 
                 try:

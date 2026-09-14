@@ -672,6 +672,136 @@ class RewriteContainerTests(unittest.TestCase):
             out_size = struct.unpack_from("<I", out_raw, out_at + 4)[0]
             self.assertEqual(out_raw[out_at + 8 : out_at + 8 + out_size], before_pcm)
 
+    def test_force_passthrough_rewrites_wav_from_source(self) -> None:
+        """Given a complete passthrough dest: When convert with force: Then dest
+        PCM matches the current source, not the previous dest."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.wav"
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(src, frames=8)
+            write_pcm_wav(dest, frames=8)
+            src_raw = bytearray(src.read_bytes())
+            dest_raw = bytearray(dest.read_bytes())
+            src_at = src_raw.find(b"data")
+            dest_at = dest_raw.find(b"data")
+            src_size = struct.unpack_from("<I", src_raw, src_at + 4)[0]
+            dest_size = struct.unpack_from("<I", dest_raw, dest_at + 4)[0]
+            src_raw[src_at + 8 : src_at + 8 + src_size] = b"\x11" * src_size
+            dest_raw[dest_at + 8 : dest_at + 8 + dest_size] = b"\x22" * dest_size
+            src.write_bytes(src_raw)
+            dest.write_bytes(dest_raw)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                passthrough=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"OVERWRITTEN")
+
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+                stats = convert_unique(plan, force=True)
+            self.assertEqual(encoded, [])
+            self.assertEqual(stats.errors, [])
+            out = dest.read_bytes()
+            out_at = out.find(b"data")
+            out_size = struct.unpack_from("<I", out, out_at + 4)[0]
+            self.assertEqual(out[out_at + 8 : out_at + 8 + out_size], b"\x11" * src_size)
+
+    def test_source_change_passthrough_rewrites_wav_from_source(self) -> None:
+        """Given a complete passthrough dest: When the source stats change: Then
+        dest PCM matches the new source, not the previous dest."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.wav"
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(src, frames=8)
+            write_pcm_wav(dest, frames=8)
+            dest_raw = bytearray(dest.read_bytes())
+            dest_at = dest_raw.find(b"data")
+            dest_size = struct.unpack_from("<I", dest_raw, dest_at + 4)[0]
+            dest_raw[dest_at + 8 : dest_at + 8 + dest_size] = b"\x22" * dest_size
+            dest.write_bytes(dest_raw)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                passthrough=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            src_raw = bytearray(src.read_bytes())
+            src_at = src_raw.find(b"data")
+            src_size = struct.unpack_from("<I", src_raw, src_at + 4)[0]
+            src_raw[src_at + 8 : src_at + 8 + src_size] = b"\x11" * src_size
+            src.write_bytes(src_raw)
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"OVERWRITTEN")
+
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+                stats = convert_unique(plan, force=False)
+            self.assertEqual(encoded, [])
+            self.assertEqual(stats.errors, [])
+            out = dest.read_bytes()
+            out_at = out.find(b"data")
+            out_size = struct.unpack_from("<I", out, out_at + 4)[0]
+            self.assertEqual(out[out_at + 8 : out_at + 8 + out_size], b"\x11" * src_size)
+
     def test_unsafe_dest_rewrite_falls_back_to_transcode(self) -> None:
         """Given rewrite_container but dest is not a valid WAV: When convert:
         Then ffmpeg transcodes from the source and dest is not left as garbage."""
