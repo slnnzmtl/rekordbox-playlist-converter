@@ -11,7 +11,8 @@ _SRC = Path(__file__).resolve().parents[1]
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from convert.freshness import metadata_signature, source_signature
+from convert.freshness import metadata_signature, recipe_from_item, source_signature
+from convert.models import PlannedTrack
 
 
 class SourceSignatureTests(unittest.TestCase):
@@ -71,6 +72,52 @@ class MetadataSignatureTests(unittest.TestCase):
         sig = metadata_signature(a)
         self.assertTrue(sig.startswith("sha256:"))
         self.assertEqual(len(sig), len("sha256:") + 64)
+
+
+def _item(*, output_format: str, bit_depth: int, sample_rate: int) -> PlannedTrack:
+    el = ET.Element("TRACK", {"Name": "Song"})
+    dest = Path(f"/tmp/{output_format}/out.{output_format}")
+    return PlannedTrack(
+        source_el=el,
+        source_path=Path("/tmp/src.flac"),
+        dest_path=dest,
+        dest_location="file://localhost/out",
+        dest_name=dest.name,
+        codec=None,
+        passthrough=False,
+        noop=False,
+        bit_depth=bit_depth,
+        sample_rate=sample_rate,
+        output_format=output_format,
+    )
+
+
+class RecipeTests(unittest.TestCase):
+    def test_recipe_from_item_uses_effective_quality_without_passthrough(self) -> None:
+        """Given planned tracks: When recipe_from_item runs: Then format, depth,
+        rate, channels, and revision are stored and passthrough is omitted."""
+        wav = recipe_from_item(
+            _item(output_format="wav", bit_depth=16, sample_rate=44100)
+        )
+        self.assertEqual(
+            wav,
+            {
+                "format": "wav",
+                "bit_depth": 16,
+                "sample_rate": 44100,
+                "channels": 2,
+                "revision": 1,
+            },
+        )
+        self.assertNotIn("passthrough", wav)
+        aiff = recipe_from_item(
+            _item(output_format="aiff", bit_depth=24, sample_rate=48000)
+        )
+        self.assertEqual(aiff["format"], "aiff")
+        self.assertEqual(aiff["bit_depth"], 24)
+        self.assertEqual(aiff["sample_rate"], 48000)
+        self.assertEqual(aiff["channels"], 2)
+        self.assertEqual(aiff["revision"], 1)
 
 
 if __name__ == "__main__":

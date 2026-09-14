@@ -8,6 +8,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
+from convert.quality import coerce_bit_depth, coerce_output_format, coerce_sample_rate
+
+RECIPE_REVISION = 1
+RECIPE_CHANNELS = 2
 OUTPUT_ONLY_ATTRS = frozenset(
     {"TrackID", "Location", "Kind", "Size", "BitRate", "SampleRate"}
 )
@@ -42,4 +46,14 @@ def metadata_signature(track_el: ET.Element) -> str:
     )
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     return f"sha256:{digest}"
+
+
+def recipe_from_item(item: Any) -> dict[str, Any]:
+    return {
+        "format": coerce_output_format(item.output_format),
+        "bit_depth": coerce_bit_depth(item.bit_depth),
+        "sample_rate": coerce_sample_rate(item.sample_rate),
+        "channels": RECIPE_CHANNELS,
+        "revision": RECIPE_REVISION,
+    }
 
