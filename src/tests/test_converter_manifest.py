@@ -27,7 +27,7 @@ class ManifestValidationTests(unittest.TestCase):
         """Given two sources claiming the same dest after collision_key: When
         validate: Then duplicate ownership is rejected."""
         data = {
-            "version": 1,
+            "version": 2,
             "layout": "format-flat",
             "tracks": {
                 "/a": {"wav": {"dest": "WAV/Same - Intro.wav"}},
@@ -40,17 +40,17 @@ class ManifestValidationTests(unittest.TestCase):
     def test_validate_rejects_bad_version_and_layout(self) -> None:
         """Given wrong version or layout: When validate: Then each is reported."""
         bad_version = {
-            "version": 2,
+            "version": 3,
             "layout": "format-flat",
             "tracks": {},
         }
         bad_layout = {
-            "version": 1,
+            "version": 2,
             "layout": "nested",
             "tracks": {},
         }
         missing_layout = {
-            "version": 1,
+            "version": 2,
             "tracks": {},
         }
         v_errs = cm.validate_manifest_data(bad_version, self.wav_dir)
@@ -78,7 +78,7 @@ class ManifestValidationTests(unittest.TestCase):
         for dest, fmt in cases:
             with self.subTest(dest=dest, fmt=fmt):
                 data = {
-                    "version": 1,
+                    "version": 2,
                     "layout": "format-flat",
                     "tracks": {"/src": {fmt: {"dest": dest}}},
                 }
@@ -96,7 +96,7 @@ class ManifestValidationTests(unittest.TestCase):
         self.assertTrue(path.is_file())
         data = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(data["layout"], "format-flat")
-        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["version"], 2)
         self.assertEqual(
             data["tracks"]["/music/a.flac"]["wav"]["dest"],
             "WAV/Artist - Track.wav",
@@ -149,7 +149,7 @@ class LibraryFolderValidationTests(unittest.TestCase):
             (wav_dir / cm.MANIFEST_NAME).write_text(
                 json.dumps(
                     {
-                        "version": 1,
+                        "version": 2,
                         "layout": "format-flat",
                         "tracks": {
                             "/music/a.flac": {

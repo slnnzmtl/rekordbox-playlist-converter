@@ -206,7 +206,7 @@ class XmlFixtureTests(XmlFixtureBase):
         preferred.write_bytes(b"UNRELATED-OCCUPANT")
         # Managed library (valid empty manifest) so orphan audio is allowed.
         (self.wav_dir / converter_manifest.MANIFEST_NAME).write_text(
-            json.dumps({"version": 1, "layout": "format-flat", "tracks": {}}),
+            json.dumps({"version": 2, "layout": "format-flat", "tracks": {}}),
             encoding="utf-8",
         )
 

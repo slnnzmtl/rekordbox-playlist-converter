@@ -66,7 +66,7 @@ def _seed_library(tmp: Path) -> Path:
     (library / cm.MANIFEST_NAME).write_text(
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "layout": "format-flat",
                 "tracks": {
                     "/source/a.flac": {"wav": {"dest": "WAV/Artist - Track.wav"}}
@@ -113,7 +113,7 @@ def _seed_two_track_library(tmp: Path) -> Path:
     (library / cm.MANIFEST_NAME).write_text(
         json.dumps(
             {
-                "version": 1,
+                "version": 2,
                 "layout": "format-flat",
                 "tracks": {
                     "/source/a.flac": {"wav": {"dest": "WAV/Artist - One.wav"}},
