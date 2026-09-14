@@ -409,8 +409,7 @@ def show_done_dialog(
     parent: tk.Tk,
     message: str,
     *,
-    open_dir: Path | None,
-    import_xml: Path | None,
+    output_folder: Path | None,
     reveal: Callable[[Path], None],
     on_open_guide: Callable[[], None],
     place_over: Callable[[tk.Toplevel], None],
@@ -426,27 +425,18 @@ def show_done_dialog(
     def close() -> None:
         dlg.destroy()
 
-    def reveal_library() -> None:
-        if open_dir is not None:
-            reveal(open_dir)
-        close()
-
-    def reveal_import_xml() -> None:
-        if import_xml is not None:
-            reveal(import_xml)
+    def reveal_output() -> None:
+        if output_folder is not None:
+            reveal(output_folder)
         close()
 
     def open_guide() -> None:
         close()
         on_open_guide()
 
-    if open_dir is not None:
+    if output_folder is not None:
         ttk.Button(
-            btns, text="Reveal audio folder", command=reveal_library
-        ).pack(side=tk.LEFT, padx=(0, 8))
-    if import_xml is not None:
-        ttk.Button(
-            btns, text="Reveal import XML", command=reveal_import_xml
+            btns, text="Reveal output folder", command=reveal_output
         ).pack(side=tk.LEFT, padx=(0, 8))
     ttk.Button(btns, text="Open usage guide", command=open_guide).pack(
         side=tk.LEFT, padx=(0, 8)

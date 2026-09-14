@@ -18,7 +18,7 @@
   tracks refresh on rerun (same Location) while preserving TrackID / playlist keys.
 - Batch convert encodes each unique source once; Import XML is
   `<wav-dir>/rekordbox-import.xml` (CLI `--output` override). GUI preview before
-  write; CLI `--dry-run`. Success offers Reveal audio / import XML. Track failures
+  write; CLI `--dry-run`. Success offers Reveal output folder. Track failures
   and filename collisions skip with warnings; cancel after encode still writes
   Import XML for successes.
 - Unique-track and prepare (ffprobe) run up to **4** workers in parallel. Cancel

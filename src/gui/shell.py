@@ -547,16 +547,14 @@ class ShellMixin:
         else:
             self.cancel_btn.grid_remove()
             self.cancel_btn.configure(state=tk.DISABLED)
-            self.convert_btn.grid()
+            if not self._import_edit_active():
+                self.convert_btn.grid()
             self._update_convert_enabled()
             self._sync_scan_indicator()
             self._update_import_edit_button()
 
     def _update_convert_enabled(self) -> None:
-        if self._busy:
-            return
-        if self._import_edit_active():
-            self.convert_btn.configure(state=tk.DISABLED)
+        if self._busy or self._import_edit_active():
             return
         enabled = self._wav_dir_valid and not self._wav_dir_checking
         self.convert_btn.configure(state=tk.NORMAL if enabled else tk.DISABLED)

@@ -7,6 +7,7 @@ import tkinter as tk
 from gui import dialogs as gui_dialogs
 from gui import runtime
 from import_edit import (
+    ACTION_MOVE_TO_TRASH,
     ImportEditDraft,
     preview_save,
     remove_playlist,
@@ -62,7 +63,7 @@ class ImportEditMixin:
             self.format_aiff_radio.configure(state=lock)
             self.bit_depth_combo.configure(state=combo_state)
             self.sample_rate_combo.configure(state=combo_state)
-            self.convert_btn.configure(state=tk.DISABLED)
+            self.convert_btn.grid_remove()
             self.status_var.set("Editing Import XML — Save or Cancel when done.")
         else:
             self.import_save_btn.pack_forget()
@@ -79,6 +80,7 @@ class ImportEditMixin:
                 self.format_aiff_radio.configure(state=edit_state)
                 self.bit_depth_combo.configure(state="readonly")
                 self.sample_rate_combo.configure(state="readonly")
+                self.convert_btn.grid()
                 self._update_convert_enabled()
 
     def _enter_import_edit_mode(self) -> None:
@@ -97,11 +99,9 @@ class ImportEditMixin:
         self._view_root = draft.root
         self._paint_playlist_tree(draft.root, select=[])
         self._sync_import_edit_chrome()
-        self.root.title(
-            self.root.title() + " — Editing Import XML"
-            if "Editing Import XML" not in self.root.title()
-            else self.root.title()
-        )
+        title = self.root.title()
+        if "Editing Import XML" not in title:
+            self.root.title(title + " — Editing Import XML")
 
     def _leave_import_edit_mode(self, *, discard: bool) -> None:
         if not self._import_edit_active():
@@ -150,10 +150,15 @@ class ImportEditMixin:
         if draft is None or not draft.dirty:
             return
         rows = preview_save(draft)
-        summary = (
-            f"{len(rows)} file(s) scheduled for Trash. "
-            "Import XML and the converter manifest will be updated."
-        )
+        trash_count = sum(1 for row in rows if row.action == ACTION_MOVE_TO_TRASH)
+        if trash_count:
+            noun = "file" if trash_count == 1 else "files"
+            summary = (
+                f"{trash_count} {noun} scheduled for Trash. "
+                "Import XML will be updated."
+            )
+        else:
+            summary = "Import XML will be updated."
         if not self._confirm_edit_preview(
             title="Save Import XML edits?",
             summary=summary,
@@ -169,7 +174,7 @@ class ImportEditMixin:
         runtime.show_centered_message(
             self.root,
             "Saved",
-            "Import XML and converter manifest were updated.",
+            "Import XML was updated.",
         )
         self._leave_import_edit_mode(discard=False)
 
@@ -226,14 +231,25 @@ class ImportEditMixin:
         if row not in set(self.tracklist_tree.selection()):
             self.tracklist_tree.selection_set(row)
         menu = tk.Menu(self.root, tearoff=0)
-        refs = self._selected_track_leaf_refs()
-        if any(not self._playlist_is_virtual(ref.folder, ref.name) for ref in refs):
+        path = self._tracklist_paths.get(row)
+        if path is not None:
             menu.add_command(
-                label="Remove track from playlist",
+                label="Reveal in Finder",
+                command=lambda p=path: runtime.open_in_finder(p),
+            )
+        refs = self._selected_track_leaf_refs()
+        can_remove_from_playlist = any(
+            not self._playlist_is_virtual(ref.folder, ref.name) for ref in refs
+        )
+        if path is not None:
+            menu.add_separator()
+        if can_remove_from_playlist:
+            menu.add_command(
+                label="Remove from playlist",
                 command=self._edit_remove_selected_tracks_from_playlist,
             )
         menu.add_command(
-            label="Remove track from collection and move to Trash",
+            label="Move to Trash",
             command=self._edit_remove_selected_tracks_from_collection,
         )
         try:

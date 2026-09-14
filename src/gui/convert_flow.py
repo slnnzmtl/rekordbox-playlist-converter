@@ -345,7 +345,6 @@ class ConvertFlowMixin:
             if batch_stats.errors:
                 self._ui(lambda e=batch_stats.errors: self._finish_error(e))
                 return
-            open_dir = plans[0].media_dir
             out = str(output)
             if total_successful_conversions([batch_stats]) == 0:
                 self._ui(
@@ -353,8 +352,8 @@ class ConvertFlowMixin:
                 )
             else:
                 self._ui(
-                    lambda s=summaries, o=out, w=skipped, d=open_dir, x=output: self._finish_ok(
-                        s, o, w, d, x
+                    lambda s=summaries, o=out, w=skipped, folder=output.parent: self._finish_ok(
+                        s, o, w, folder
                     )
                 )
         except runtime.CliError as exc:
@@ -422,8 +421,7 @@ class ConvertFlowMixin:
         summaries: list[str],
         output: str,
         warnings: list[str] | None = None,
-        open_dir: Path | None = None,
-        import_xml: Path | None = None,
+        output_folder: Path | None = None,
     ) -> None:
         self._prepared_conversion = None
         self._confirm_prepared = None
@@ -450,7 +448,7 @@ class ConvertFlowMixin:
             "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
             f"   (or drag the {suffix} playlist into Playlists)"
         )
-        self._show_done_dialog(message, open_dir, import_xml)
+        self._show_done_dialog(message, output_folder)
 
     def _show_list_dialog(
         self,
@@ -474,14 +472,12 @@ class ConvertFlowMixin:
     def _show_done_dialog(
         self,
         message: str,
-        open_dir: Path | None,
-        import_xml: Path | None = None,
+        output_folder: Path | None = None,
     ) -> None:
         gui_dialogs.show_done_dialog(
             self.root,
             message,
-            open_dir=open_dir,
-            import_xml=import_xml,
+            output_folder=output_folder,
             reveal=runtime.open_in_finder,
             on_open_guide=self._show_usage_guide,
             place_over=self._place_dialog_over_app,

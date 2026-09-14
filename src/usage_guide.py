@@ -66,8 +66,8 @@ export.
    encodes (up to 4 at once); files already written are kept and Import XML
    includes tracks already in the success set (re-run Convert to finish the
    rest). If some tracks fail, convertible tracks still finish and all errors
-   are reported together. After success, Reveal audio folder opens the selected
-   format directory (WAV/ or AIFF/).
+   are reported together. After success, Reveal output folder opens the chosen
+   output folder.
 
 What you get:
 • Audio files in <output folder>/WAV/ or …/AIFF/ as <artist> - <track>
@@ -92,12 +92,12 @@ Editing a generated library (GUI):
 • When the output folder already has rekordbox-import.xml and the hidden
   converter manifest, an Edit button appears beside Import XML.
 • Edit mode loads that Import XML (not your Rekordbox source export). Remove
-  playlists or tracks from the right-click menus. Shift/Command-click to select
-  several tracks, then right-click to remove them together. Tracks left in the
-  collection with no playlist appear under Unknown. Missing tracks show
-  a ! prefix.
+  playlists or tracks from the right-click menus, or Reveal in Finder for a
+  track file. Shift/Command-click to select several tracks, then right-click to
+  remove them together. Tracks left in the collection with no playlist appear
+  under Unknown. Missing tracks show a ! prefix.
 • Changes stay in a draft until Save. Save shows a preview of pending removals
-  (remove from playlist vs move to Trash), then updates the Import XML and
+  (move to Trash), then updates the Import XML and
   manifest and moves deleted managed audio to the Trash. Cancel discards the
   draft.
 • Conversion, Refresh, and folder browsing stay locked while you edit.

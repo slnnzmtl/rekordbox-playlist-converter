@@ -182,7 +182,7 @@ class GuiImportEditModeTests(unittest.TestCase):
 
     def test_edit_mode_preserves_source_and_locks_convert(self) -> None:
         """Given source XML loaded: When enter edit mode: Then source root stays,
-        view shows import playlists, Convert disabled, Save disabled until dirty."""
+        view shows import playlists, Convert is hidden, Save disabled until dirty."""
         if not tk_available():
             self.skipTest("_tkinter not available")
         import tkinter as tk
@@ -212,7 +212,7 @@ class GuiImportEditModeTests(unittest.TestCase):
                     if e.kind.value == "playlist"
                 ]
                 self.assertEqual(names, ["Night Set [WAV]"])
-                self.assertEqual(str(app.convert_btn.cget("state")), "disabled")
+                self.assertEqual(app.convert_btn.winfo_manager(), "")
                 self.assertEqual(str(app.import_save_btn.cget("state")), "disabled")
                 self.assertEqual(str(app.xml_browse_btn.cget("state")), "disabled")
                 # Dirty then Save enables.
