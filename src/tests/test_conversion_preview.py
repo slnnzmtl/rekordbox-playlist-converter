@@ -23,6 +23,7 @@ import converter_manifest
 import ffmpeg_tools
 from convert_fixtures import write_flac, write_pcm_wav
 from test_cdj_safe_aiff import write_pcm_aiff
+from convert.freshness import bind_complete_assignment
 from convert.format_policy import planned_action
 from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PlannedTrack
 from convert.plan import collect_batch_unique
@@ -84,8 +85,8 @@ class ConversionPreviewTests(unittest.TestCase):
                 sample_rate=44100,
             )
             plan = self._plan_with(noop)
-            self.assertEqual(planned_action(plan, noop, force=False), "reuse")
-            self.assertEqual(planned_action(plan, noop, force=True), "reuse")
+            self.assertEqual(planned_action(plan, noop, force=False), "in_place_noop")
+            self.assertEqual(planned_action(plan, noop, force=True), "in_place_noop")
 
             # canonical WAV dest + not force → reuse; force → rebuild
             wav_dest = root / "WAV" / "safe.wav"
@@ -103,6 +104,8 @@ class ConversionPreviewTests(unittest.TestCase):
                 sample_rate=44100,
             )
             plan = self._plan_with(wav_item)
+            plan.manifest = converter_manifest.empty_manifest()
+            bind_complete_assignment(plan.manifest, wav_item, "WAV/safe.wav")
             self.assertEqual(planned_action(plan, wav_item, force=False), "reuse")
             self.assertEqual(
                 planned_action(plan, wav_item, force=True), "transcode"
@@ -128,6 +131,8 @@ class ConversionPreviewTests(unittest.TestCase):
                 sample_rate=44100,
             )
             plan = self._plan_with(aiff_item, output_format="aiff")
+            plan.manifest = converter_manifest.empty_manifest()
+            bind_complete_assignment(plan.manifest, aiff_item, "AIFF/out.aiff")
             self.assertEqual(
                 planned_action(plan, aiff_item, force=False), "reuse"
             )
@@ -147,7 +152,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 sample_rate=44100,
             )
             plan = self._plan_with(copy_item)
-            self.assertEqual(planned_action(plan, copy_item, force=False), "copy")
+            self.assertEqual(planned_action(plan, copy_item, force=False), "recreate_missing")
 
             # else → transcode
             tx_dest = root / "WAV" / "tx.wav"
@@ -165,7 +170,7 @@ class ConversionPreviewTests(unittest.TestCase):
             )
             plan = self._plan_with(tx_item)
             self.assertEqual(
-                planned_action(plan, tx_item, force=False), "transcode"
+                planned_action(plan, tx_item, force=False), "recreate_missing"
             )
 
     def test_planned_action_aiff_missing_dest_skips_cover_extract(self) -> None:
@@ -195,7 +200,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 cdj_aiff, "extract_cover_jpeg", return_value=None
             ) as extract:
                 action = planned_action(plan, item, force=False)
-            self.assertEqual(action, "copy")
+            self.assertEqual(action, "recreate_missing")
             extract.assert_not_called()
 
             tx_item = PlannedTrack(
@@ -215,7 +220,7 @@ class ConversionPreviewTests(unittest.TestCase):
                 cdj_aiff, "extract_cover_jpeg", return_value=None
             ) as extract:
                 action = planned_action(plan, tx_item, force=False)
-            self.assertEqual(action, "transcode")
+            self.assertEqual(action, "recreate_missing")
             extract.assert_not_called()
 
     def test_build_conversion_preview_stops_when_cancel_event_set(self) -> None:
@@ -490,7 +495,7 @@ class ConversionPreviewTests(unittest.TestCase):
             self.assertIn("WAV/Same - Song.wav", by_dest)
             self.assertIn("WAV/Same - Song (2).wav", by_dest)
             for it in preview.items:
-                self.assertEqual(it.action, "transcode")
+                self.assertEqual(it.action, "recreate_missing")
                 self.assertEqual(it.bit_depth, 16)
                 self.assertEqual(it.sample_rate, 44100)
                 self.assertTrue(it.size_display.startswith("≈ "))

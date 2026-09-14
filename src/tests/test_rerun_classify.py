@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[1]
-if str(_SRC) not in sys.path:
-    sys.path.insert(0, str(_SRC))
+_TESTS = Path(__file__).resolve().parent
+for _p in (_SRC, _TESTS):
+    if str(_p) not in sys.path:
+        sys.path.insert(0, str(_p))
 
-from convert.freshness import metadata_signature, recipe_from_item
-from convert.models import PlannedTrack
-from convert.rerun import classify_assignment
+import converter_manifest
+from convert.freshness import bind_complete_assignment, metadata_signature, recipe_from_item
+from convert.models import Plan, PlannedTrack
+from convert.rerun import classify_assignment, classify_item
+from convert_fixtures import write_pcm_wav
 
 
 def _item(
@@ -266,6 +272,54 @@ class ClassifyAssignmentTests(unittest.TestCase):
             ),
             "reuse",
         )
+
+
+class ClassifyItemTests(unittest.TestCase):
+    def test_fresh_dest_mtime_flips_reuse_to_conflict(self) -> None:
+        """Given a complete matching dest: When dest mtime changes: Then
+        classify_item returns external_modification_conflict."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(dest)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location="file://localhost/A",
+                dest_name=dest.name,
+                codec=None,
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            self.assertEqual(classify_item(plan, item, False), "reuse")
+            st = dest.stat()
+            os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+            self.assertEqual(
+                classify_item(plan, item, False),
+                "external_modification_conflict",
+            )
 
 
 if __name__ == "__main__":

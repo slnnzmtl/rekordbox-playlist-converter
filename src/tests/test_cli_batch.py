@@ -547,7 +547,7 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertNotIn(str(self.a), stdout)
         self.assertNotIn(self.c.name, stdout)
         self.assertNotIn("WAV/ABSL - Bestial.wav", stdout)
-        self.assertIn("transcode", stdout)
+        self.assertIn("recreate_missing", stdout)
         self.assertIn("24-bit / 44100 Hz", stdout)
         self.assertIn("≈ 2.5 MB", stdout)
         # missing-source warning

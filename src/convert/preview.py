@@ -18,7 +18,7 @@ from convert.paths import _format_size_mb
 
 def _preview_size(item: PlannedTrack, action: str) -> tuple[int | None, str]:
     """Return (bytes, display). Reuse uses dest size; else estimate PCM."""
-    if action == "reuse":
+    if action in {"reuse", "in_place_noop"}:
         try:
             if item.dest_path.is_file():
                 size = item.dest_path.stat().st_size
@@ -150,7 +150,12 @@ def preview_write_bytes(preview: ConversionPreview) -> int:
     """Bytes that copy/transcode will write; reuse needs no extra space."""
     total = 0
     for item in preview.items:
-        if item.action == "reuse":
+        if item.action in {
+            "reuse",
+            "in_place_noop",
+            "refresh_xml",
+            "external_modification_conflict",
+        }:
             continue
         if item.size_bytes is None:
             continue

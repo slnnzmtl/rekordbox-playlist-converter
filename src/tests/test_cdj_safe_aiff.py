@@ -21,7 +21,9 @@ from convert import encode
 import cdj_aiff
 import xml_output
 import ffmpeg_tools
+from convert.freshness import bind_complete_assignment
 from convert.models import Plan, PlannedTrack
+import converter_manifest
 from convert.prepare import prepare
 from convert.write import convert_unique
 from rekordbox_xml import encode_location
@@ -474,6 +476,8 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 output_existed=False,
                 output_format="aiff",
             )
+            plan.manifest = converter_manifest.empty_manifest()
+            bind_complete_assignment(plan.manifest, plan_item, "AIFF/out.aiff")
             stats = convert_unique(plan, force=False)
             self.assertEqual(stats.skipped, 1)
 

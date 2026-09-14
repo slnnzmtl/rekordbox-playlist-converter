@@ -5,14 +5,6 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 
-from cdj_aiff import (
-    info_is_cdj_safe_aiff,
-    is_canonical_aiff_from_info,
-    is_canonical_aiff_output,
-    is_cdj_safe_aiff,
-    parse_aiff_audio,
-)
-from cdj_wav import is_cdj_safe_wav
 from cli_error import CliError
 from convert.models import Plan, PlannedTrack
 from convert.paths import same_file, target_from_stream
@@ -52,6 +44,8 @@ def classify_source(
     if ext in ALAC_EXT and codec_name != "alac":
         raise CliError(f"unsupported format: {path} (expected ALAC)")
     if output_format == "aiff":
+        from cdj_aiff import is_cdj_safe_aiff
+
         if ext in AIFF_EXT and is_cdj_safe_aiff(
             path, bit_depth=bits, sample_rate=rate
         ):
@@ -62,6 +56,8 @@ def classify_source(
         codec = pcm_codec_for_depth(bits, output_format="wav")
         return codec, False, bits, rate
     if ext in WAV_EXT:
+        from cdj_wav import is_cdj_safe_wav
+
         if is_cdj_safe_wav(path, bit_depth=bits, sample_rate=rate):
             return "copy", True, bits, rate
         codec = pcm_codec_for_depth(bits, output_format="wav")
@@ -87,6 +83,8 @@ def inplace_noop_and_error(
     if output_format == "aiff":
         if not in_place:
             return False, None
+        from cdj_aiff import is_canonical_aiff_output
+
         if is_canonical_aiff_output(
             item.dest_path,
             item.source_el,
@@ -117,48 +115,8 @@ def planned_action(
     cover_lock: threading.Lock | None = None,
     cancel_event: threading.Event | None = None,
 ) -> str:
-    """Classify read-only action: reuse, copy, or transcode."""
-    if item.noop:
-        return "reuse"
-    is_aiff = coerce_output_format(item.output_format) == "aiff"
-    if not force:
-        if is_aiff:
-            try:
-                dest_info = (
-                    parse_aiff_audio(item.dest_path)
-                    if item.dest_path.is_file()
-                    else None
-                )
-            except CliError:
-                dest_info = None
-            if dest_info is not None and info_is_cdj_safe_aiff(
-                dest_info,
-                bit_depth=item.bit_depth,
-                sample_rate=item.sample_rate,
-            ):
-                from convert.plan import cached_cover_jpeg
+    """Classify read-only action from a fresh filesystem snapshot."""
+    del cover_lock, cancel_event
+    from convert.rerun import classify_item
 
-                cover = cached_cover_jpeg(
-                    item.source_path,
-                    plan.cover_cache,
-                    lock=cover_lock,
-                    cancel_event=cancel_event,
-                )
-                if is_canonical_aiff_from_info(
-                    item.dest_path,
-                    dest_info,
-                    item.source_el,
-                    cover,
-                    bit_depth=item.bit_depth,
-                    sample_rate=item.sample_rate,
-                ):
-                    return "reuse"
-        elif is_cdj_safe_wav(
-            item.dest_path,
-            bit_depth=item.bit_depth,
-            sample_rate=item.sample_rate,
-        ):
-            return "reuse"
-    if item.passthrough:
-        return "copy"
-    return "transcode"
+    return classify_item(plan, item, force)

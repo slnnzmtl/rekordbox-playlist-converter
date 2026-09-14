@@ -62,11 +62,16 @@ def convert_unique(
         action = format_policy.planned_action(
             plan, item, force, cover_lock=cover_lock, cancel_event=cancel_event
         )
-        if action == "reuse":
+        if action in {"reuse", "in_place_noop", "refresh_xml"}:
             with stats_lock:
                 stats.skipped += 1
             mark_succeeded(item)
             finish("skip", name)
+            return
+        if action == "external_modification_conflict":
+            with stats_lock:
+                stats.conflicts.append(name)
+            finish("conflict", name)
             return
         try:
             converter_manifest.ensure_dest_path_under_wav_dir(
