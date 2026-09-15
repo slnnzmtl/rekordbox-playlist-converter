@@ -590,6 +590,128 @@ class ExecutePreparedTests(XmlFixtureBase):
             plan.manifest = loaded
             self.assertEqual(classify_item(plan, item, False).action, "refresh_xml")
 
+    def test_failed_import_xml_does_not_advance_aiff_update_metadata(self) -> None:
+        """Given update_metadata: When Import XML writing fails: Then dest
+        output stats are stored, the old metadata signature remains, and the
+        next classify is still update_metadata."""
+        import cdj_aiff
+        from test_cdj_safe_aiff import write_pcm_aiff
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "AIFF" / "A.aiff"
+            dest.parent.mkdir()
+            write_pcm_aiff(dest)
+            el = ET.Element("TRACK", {"Name": "Old", "Artist": "DJ"})
+            cdj_aiff.write_aiff_id3(dest, el, None, bit_depth=16, sample_rate=44100)
+            loc = encode_location(dest)
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=loc,
+                dest_name=dest.name,
+                codec="pcm_s16be",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="aiff",
+            )
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {"Name": "rekordbox", "Version": "6.8.5", "Company": "AlphaTheta"},
+            )
+            output_root = skeleton_from(source_root)
+            collection = output_root.find("COLLECTION")
+            assert collection is not None
+            ET.SubElement(
+                collection,
+                "TRACK",
+                {
+                    "TrackID": "99",
+                    "Name": "Old",
+                    "Artist": "DJ",
+                    "Location": loc,
+                    "Kind": "AIFF File",
+                },
+            )
+            playlists = output_root.find("PLAYLISTS")
+            assert playlists is not None
+            root_node = playlists.find("NODE")
+            assert root_node is not None
+            playlist = ET.SubElement(
+                root_node,
+                "NODE",
+                {
+                    "Name": "P [AIFF]",
+                    "Type": "1",
+                    "KeyType": "0",
+                    "Entries": "1",
+                },
+            )
+            ET.SubElement(playlist, "TRACK", {"Key": "99"})
+            manifest = converter_manifest.empty_manifest()
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [AIFF]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=True,
+                output_format="aiff",
+                manifest=manifest,
+            )
+            bind_complete_assignment(manifest, item, "AIFF/A.aiff")
+            previous_sig = manifest.tracks[source_key(src)]["aiff"]["metadata"][
+                "signature"
+            ]
+            previous_output = dict(manifest.tracks[source_key(src)]["aiff"]["output"])
+            el.set("Name", "New")
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=[item],
+                manifest=manifest,
+                preview=ConversionPreview(
+                    selected=1,
+                    resolved=1,
+                    unique_outputs=1,
+                    duplicates=0,
+                    missing=0,
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+            )
+
+            def fail_xml(_root, _path) -> None:
+                raise CliError("import xml write failed")
+
+            with patch.object(
+                xml_output, "probe_dest_tech", return_value=("100", "1411", "44100")
+            ), patch.object(xml_output, "write_import_xml", side_effect=fail_xml):
+                with self.assertRaises(CliError):
+                    execute_prepared(prepared, force=False)
+            self.assertFalse(plan.output.exists())
+            loaded = converter_manifest.load_manifest(root)
+            record = loaded.tracks[source_key(src)]["aiff"]
+            self.assertEqual(record["metadata"]["signature"], previous_sig)
+            self.assertNotEqual(previous_sig, metadata_signature(el))
+            self.assertNotEqual(record["output"], previous_output)
+            self.assertEqual(record["output"], output_signature(dest))
+            plan.manifest = loaded
+            self.assertEqual(
+                classify_item(plan, item, False).action, "update_metadata"
+            )
+
     def test_conflict_skips_xml_refresh_and_keeps_playlist_key(self) -> None:
         """Given a complete dest that was modified on disk: When execute:
         Then dest is not overwritten, Import XML Name is unchanged, and the
@@ -939,6 +1061,128 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertEqual(assignment_state(rec_b), "incomplete")
             plan.manifest = loaded
             self.assertEqual(classify_item(plan, items[1], False).action, "transcode")
+
+    def test_partial_failure_then_rerun_converges_complete(self) -> None:
+        """Given a batch that leaves one assignment incomplete: When a second
+        execute_prepared run finishes: Then both records are complete, dests
+        exist, and Import XML is written."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            items: list[PlannedTrack] = []
+            for name, pcm in (("A", b"\x11"), ("B", b"\x22")):
+                src = root / f"{name}.flac"
+                src.write_bytes(b"fLaC" + pcm)
+                dest = root / "WAV" / f"{name}.wav"
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                write_pcm_wav(dest)
+                el = ET.Element("TRACK", {"Name": name, "Artist": "DJ"})
+                item = PlannedTrack(
+                    source_el=el,
+                    source_path=src,
+                    dest_path=dest,
+                    dest_location=encode_location(dest),
+                    dest_name=dest.name,
+                    codec="pcm_s16le",
+                    passthrough=False,
+                    noop=False,
+                    bit_depth=16,
+                    sample_rate=44100,
+                    output_format="wav",
+                )
+                items.append(item)
+            manifest = converter_manifest.empty_manifest()
+            bind_complete_assignment(manifest, items[0], "WAV/A.wav")
+            bind_complete_assignment(manifest, items[1], "WAV/B.wav")
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {"Name": "rekordbox", "Version": "6.8.5", "Company": "AlphaTheta"},
+            )
+            output_root = skeleton_from(source_root)
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=root / "WAV",
+                output=root / "o.xml",
+                tracks=list(items),
+                unique=list(items),
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=False,
+                manifest=manifest,
+            )
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=list(items),
+                manifest=manifest,
+                preview=ConversionPreview(
+                    selected=2,
+                    resolved=2,
+                    unique_outputs=2,
+                    duplicates=0,
+                    missing=0,
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+            )
+            crash = {"on": True, "n": 0}
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                dest_path.write_bytes(b"NEW-" + source.name.encode())
+                crash["n"] += 1
+                if crash["on"] and crash["n"] >= 2:
+                    raise RuntimeError("crash after replace")
+
+            with patch.object(
+                convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg
+            ), patch.object(
+                xml_output, "probe_dest_tech", return_value=("4", "1411", "44100")
+            ), patch.object(
+                convert.plan, "default_convert_workers", return_value=1
+            ):
+                first = execute_prepared(
+                    prepared,
+                    force=True,
+                    progress=False,
+                    workers=1,
+                    checkpoint_every=1,
+                )
+                self.assertTrue(first.errors)
+                loaded = converter_manifest.load_manifest(root)
+                self.assertEqual(
+                    assignment_state(
+                        loaded.tracks[source_key(items[1].source_path)]["wav"]
+                    ),
+                    "incomplete",
+                )
+                crash["on"] = False
+                crash["n"] = 0
+                plan.manifest = loaded
+                prepared.manifest = loaded
+                prepared.decisions = {}
+                second = execute_prepared(
+                    prepared,
+                    force=False,
+                    progress=False,
+                    workers=1,
+                    checkpoint_every=1,
+                )
+            self.assertEqual(second.errors, [])
+            final = converter_manifest.load_manifest(root)
+            for item in items:
+                rec = final.tracks[source_key(item.source_path)]["wav"]
+                self.assertEqual(assignment_state(rec), "complete")
+                self.assertTrue(item.dest_path.is_file())
+                self.assertEqual(classify_item(plan, item, False).action, "reuse")
+            self.assertTrue(plan.output.is_file())
+            written = ET.parse(plan.output).getroot()
+            self.assertEqual(len(written.findall("COLLECTION/TRACK")), 2)
 
 
 if __name__ == "__main__":

@@ -252,8 +252,19 @@ class ClassifyAssignmentTests(unittest.TestCase):
             dest_stat={"size": 20, "mtime_ns": 2},
             source_stat={"size": 10, "mtime_ns": 1},
         )
-        self.assertEqual(revision.action, "rewrite_container")
+        self.assertEqual(revision.action, "transcode")
         self.assertEqual(revision.reason, "revision_changed")
+
+        passthrough_rev = classify_assignment(
+            item=_item(passthrough=True),
+            record=_complete_record(_item(passthrough=True), revision=2),
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 10, "mtime_ns": 1},
+        )
+        self.assertEqual(passthrough_rev.action, "rewrite_container")
+        self.assertEqual(passthrough_rev.reason, "revision_changed")
 
         wav = _item()
         wav.source_el.set("Name", "New")
@@ -380,9 +391,10 @@ class ClassifyItemTests(unittest.TestCase):
                 "external_modification_conflict",
             )
 
-    def test_revision_on_unrewriteable_dest_is_transcode(self) -> None:
+    def test_revision_on_unrewriteable_dest_rewrites_from_safe_source(self) -> None:
         """Given a complete passthrough dest that is not a valid WAV: When the
-        recipe revision changes: Then classify_item chooses transcode."""
+        recipe revision changes: Then classify_item chooses rewrite_container
+        so PCM is taken from the safe source."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             src = root / "src.wav"
@@ -419,7 +431,9 @@ class ClassifyItemTests(unittest.TestCase):
             )
             bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
             plan.manifest.tracks[source_key(src)]["wav"]["recipe"]["revision"] = 2
-            self.assertEqual(classify_item(plan, item, False).action, "transcode")
+            self.assertEqual(
+                classify_item(plan, item, False).action, "rewrite_container"
+            )
 
 
 class FileSnapshotTests(unittest.TestCase):

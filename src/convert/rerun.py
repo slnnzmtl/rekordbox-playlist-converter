@@ -99,15 +99,9 @@ def container_rewrite_supported(path: Path, output_format: str) -> bool | None:
     fmt = coerce_output_format(output_format)
     try:
         if fmt == "wav":
-            from cdj_wav import WAVE_FORMAT_PCM, parse_wav_info
+            from cdj_wav import parse_wav_info, pcm_rewrite_supported
 
-            info = parse_wav_info(path)
-            return (
-                info.format_tag in (WAVE_FORMAT_PCM, 0xFFFE)
-                and info.channels == 2
-                and info.bits_per_sample in (16, 24)
-                and info.sample_rate in (44100, 48000)
-            )
+            return pcm_rewrite_supported(parse_wav_info(path))
         from cdj_aiff import info_is_cdj_safe_aiff, parse_aiff_audio
 
         info = parse_aiff_audio(path)
@@ -131,8 +125,14 @@ def _aiff_rate_hz(info: object) -> int:
 def _rebuild_action(item: PlannedTrack) -> str:
     if not item.passthrough:
         return "transcode"
-    origin = item.dest_path if item.dest_path.is_file() else item.source_path
-    if container_rewrite_supported(origin, item.output_format) is False:
+    dest_ok = (
+        container_rewrite_supported(item.dest_path, item.output_format)
+        if item.dest_path.is_file()
+        else None
+    )
+    if dest_ok is True:
+        return "rewrite_container"
+    if container_rewrite_supported(item.source_path, item.output_format) is False:
         return "transcode"
     return "rewrite_container"
 
@@ -232,14 +232,8 @@ def classify_assignment(
             dest_stat=dest_stat,
         )
     if stored_recipe.get("revision") != current_recipe.get("revision"):
-        action = (
-            "transcode"
-            if container_rewrite_supported(item.dest_path, item.output_format)
-            is False
-            else "rewrite_container"
-        )
         return _decision(
-            action,
+            _rebuild_action(item),
             "revision_changed",
             source_stat=source_stat,
             dest_stat=dest_stat,
