@@ -59,9 +59,11 @@ def copy_wav_atomic(
     source: Path,
     dest: Path,
     *,
+    bit_depth: int = 24,
+    sample_rate: int = 48000,
     cancel_event: threading.Event | None = None,
 ) -> None:
-    """Copy WAV to dest via temp + os.replace; poll cancel between chunks."""
+    """Copy WAV to dest via temp, validate CDJ-safe, then os.replace."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(
         dir=dest.parent, prefix=".wav-", suffix=".tmp.wav"
@@ -78,6 +80,8 @@ def copy_wav_atomic(
                 dst_f.write(chunk)
         if cancel_event is not None and cancel_event.is_set():
             raise CancelledError(f"conversion cancelled for {source}")
+        if not is_cdj_safe_wav(tmp, bit_depth=bit_depth, sample_rate=sample_rate):
+            raise CliError(f"copied WAV failed validation for {dest}")
         os.replace(tmp, dest)
     except Exception:
         _unlink_quiet(tmp)

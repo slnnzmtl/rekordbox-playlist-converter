@@ -229,6 +229,39 @@ def _prebatch_incomplete_manifest(
     return clone
 
 
+def _commit_refresh_xml_freshness(
+    prepared: PreparedConversion,
+    decisions: dict[tuple[str, str], Decision],
+    succeeded: set[tuple[str, str]],
+    pending: set[tuple[str, str]],
+) -> None:
+    """Advance metadata signatures only after Import XML has been written."""
+    changed = False
+    for item in prepared.items:
+        fmt = coerce_output_format(item.output_format)
+        key = (source_key(item.source_path), fmt)
+        decision = decisions.get(key)
+        if decision is None or decision.action != "refresh_xml":
+            continue
+        if key not in succeeded:
+            continue
+        record = prepared.manifest.tracks.get(key[0], {}).get(fmt)
+        if record is None:
+            continue
+        mark_complete(
+            record,
+            source=source_signature(item.source_path),
+            metadata=metadata_signature(item.source_el),
+            output=output_signature(item.dest_path),
+            recipe=recipe_from_item(item),
+        )
+        changed = True
+    if changed:
+        _save_manifest_with_pending(
+            prepared.manifest, prepared.library_dir, pending
+        )
+
+
 @dataclass
 class ExecuteContext:
     """Shared convert_unique state for one item execution."""
@@ -318,9 +351,6 @@ def execute_item(
             cancel_event=ctx.cancel_event,
         )
     if action in {"reuse", "in_place_noop", "refresh_xml"}:
-        if action == "refresh_xml":
-            with ctx.stats_lock:
-                ctx.checkpoint.mark_item_complete(item)
         with ctx.stats_lock:
             ctx.stats.skipped += 1
         ctx.mark_succeeded(item)
@@ -368,7 +398,11 @@ def execute_item(
                     ),
                 )
             except CliError:
-                action = "transcode"
+                with ctx.stats_lock:
+                    ctx.checkpoint.discard_pending_and_save(item)
+                    ctx.stats.state_changed.append(name)
+                ctx.finish("state_changed", name)
+                return _item_result(item, "rewrite_container", "state_changed")
             else:
                 with ctx.stats_lock:
                     ctx.stats.copied += 1
@@ -412,7 +446,11 @@ def execute_item(
                     ),
                 )
             except CliError:
-                action = "transcode"
+                with ctx.stats_lock:
+                    ctx.checkpoint.discard_pending_and_save(item)
+                    ctx.stats.state_changed.append(name)
+                ctx.finish("state_changed", name)
+                return _item_result(item, "rewrite_container", "state_changed")
             else:
                 with ctx.stats_lock:
                     ctx.stats.copied += 1
@@ -447,7 +485,11 @@ def execute_item(
             return _item_result(item, action, "succeeded", write=write)
         if item.passthrough:
             copy_wav_atomic(
-                item.source_path, item.dest_path, cancel_event=ctx.cancel_event
+                item.source_path,
+                item.dest_path,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+                cancel_event=ctx.cancel_event,
             )
             with ctx.stats_lock:
                 ctx.stats.copied += 1
@@ -585,6 +627,9 @@ def execute_prepared(
     for one_plan in plans:
         appended_by_plan.append(xml_output.apply_xml(one_plan, stats.succeeded))
     xml_output.write_import_xml(plans[0].output_root, plans[0].output)
+    _commit_refresh_xml_freshness(
+        prepared, decisions, stats.succeeded, pending
+    )
     stats.appended_by_plan = appended_by_plan
     stats.appended = sum(appended_by_plan)
     return stats

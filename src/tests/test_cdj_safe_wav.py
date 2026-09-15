@@ -161,6 +161,23 @@ class CdjSafeWavTests(unittest.TestCase):
     def test_missing_file_is_not_safe(self) -> None:
         self.assertFalse(cdj_wav.is_cdj_safe_wav(Path("/no/such/file.wav")))
 
+    def test_copy_wav_atomic_rejects_unsafe_temp_and_leaves_dest(self) -> None:
+        """Given a non-CDJ-safe source: When copy_wav_atomic runs: Then dest
+        is unchanged and the temp copy is deleted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.wav"
+            dest = root / "out.wav"
+            src.write_bytes(b"not-a-wav")
+            write_pcm_wav(dest, frames=4)
+            prior = dest.read_bytes()
+            with self.assertRaises(CliError):
+                encode.copy_wav_atomic(src, dest)
+            self.assertEqual(dest.read_bytes(), prior)
+            self.assertFalse(cdj_wav.is_cdj_safe_wav(src, bit_depth=16, sample_rate=44100))
+            leftovers = list(root.glob(".wav-*.tmp.wav"))
+            self.assertEqual(leftovers, [])
+
     def test_parse_wav_info_does_not_read_data_payload(self) -> None:
         """Given a multi-MB CDJ-safe WAV: When parse_wav_info / is_cdj_safe_wav
         run: Then only headers and fmt are read (not the PCM data chunk)."""
@@ -862,7 +879,7 @@ class RewriteContainerTests(unittest.TestCase):
 
     def test_invalid_sidecar_is_not_replaced_onto_dest(self) -> None:
         """Given rewrite_container writes an invalid sidecar: When convert:
-        Then dest is not os.replace'd with garbage; conversion falls through."""
+        Then dest is left unchanged and the batch reports state_changed."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             src = root / "src.wav"
@@ -871,7 +888,6 @@ class RewriteContainerTests(unittest.TestCase):
             write_pcm_wav(src, frames=8)
             write_pcm_wav(dest, frames=4)
             prior = dest.read_bytes()
-            source_bytes = src.read_bytes()
             el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
             item = PlannedTrack(
                 source_el=el,
@@ -913,16 +929,26 @@ class RewriteContainerTests(unittest.TestCase):
             def bad_rewrite(_src: Path, sidecar: Path) -> None:
                 sidecar.write_bytes(b"not-a-valid-wav-sidecar")
 
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"RIFF-FROM-SOURCE")
+
             with mock.patch.object(
                 convert.write, "rewrite_wav_pcm", side_effect=bad_rewrite
-            ), mock.patch.object(os, "replace", side_effect=watch_replace):
+            ), mock.patch.object(os, "replace", side_effect=watch_replace), mock.patch.object(
+                convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg
+            ):
                 stats = convert_unique(plan, force=False)
             self.assertNotIn(b"not-a-valid-wav-sidecar", replaced_payloads)
             self.assertFalse(dest.with_name(dest.name + "~").exists())
-            self.assertEqual(stats.errors, [])
-            self.assertNotEqual(dest.read_bytes(), prior)
-            self.assertEqual(dest.read_bytes(), source_bytes)
-            self.assertGreaterEqual(stats.copied + stats.converted, 1)
+            self.assertEqual(encoded, [])
+            self.assertEqual(dest.read_bytes(), prior)
+            self.assertTrue(stats.state_changed)
+            self.assertEqual(stats.copied + stats.converted, 0)
 
     def test_missing_dest_cdj_safe_wav_passthrough_succeeds(self) -> None:
         """Given a CDJ-safe WAV source and missing dest: When convert_unique
