@@ -263,8 +263,8 @@ class ClassifyAssignmentTests(unittest.TestCase):
             dest_stat={"size": 20, "mtime_ns": 2},
             source_stat={"size": 10, "mtime_ns": 1},
         )
-        self.assertEqual(passthrough_rev.action, "rewrite_container")
         self.assertEqual(passthrough_rev.reason, "revision_changed")
+        self.assertEqual(passthrough_rev.action, "transcode")
 
         wav = _item()
         wav.source_el.set("Name", "New")

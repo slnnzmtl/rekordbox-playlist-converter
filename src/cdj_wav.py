@@ -78,11 +78,17 @@ def parse_wav_info(path: Path) -> WavInfo:
                             extra = fp.read(size - 16)
                             if len(extra) < size - 16:
                                 raise CliError(f"fmt chunk too small in {path}")
-                        if format_tag == WAVE_FORMAT_EXTENSIBLE and len(extra) >= 24:
-                            _cb, valid_bits_per_sample, _mask = struct.unpack_from(
+                        if (
+                            format_tag == WAVE_FORMAT_EXTENSIBLE
+                            and size >= 40
+                            and len(extra) >= 24
+                        ):
+                            cb_size, valid_bits, _mask = struct.unpack_from(
                                 "<HHI", extra, 0
                             )
-                            sub_format = extra[8:24]
+                            if cb_size == 22:
+                                valid_bits_per_sample = valid_bits
+                                sub_format = extra[8:24]
                     offset = payload_start + size + (size % 2)
             except ValueError as exc:
                 raise CliError(f"truncated WAV chunk in {path}: {exc}") from exc
@@ -141,6 +147,7 @@ def pcm_rewrite_supported(info: WavInfo) -> bool:
         return True
     return (
         info.format_tag == WAVE_FORMAT_EXTENSIBLE
+        and info.fmt_chunk_size >= 40
         and info.sub_format == KSDATAFORMAT_SUBTYPE_PCM
         and info.valid_bits_per_sample == info.bits_per_sample
     )

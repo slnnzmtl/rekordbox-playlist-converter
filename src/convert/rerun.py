@@ -137,6 +137,18 @@ def _rebuild_action(item: PlannedTrack) -> str:
     return "rewrite_container"
 
 
+def _revision_action(item: PlannedTrack) -> str:
+    """PCM-preserving rewrite when dest (or a passthrough source) is rewriteable."""
+    if container_rewrite_supported(item.dest_path, item.output_format) is True:
+        return "rewrite_container"
+    if (
+        item.passthrough
+        and container_rewrite_supported(item.source_path, item.output_format) is True
+    ):
+        return "rewrite_container"
+    return "transcode"
+
+
 def snapshots_match(
     stored: dict[str, Any] | None, current: dict[str, Any] | None
 ) -> bool:
@@ -233,7 +245,7 @@ def classify_assignment(
         )
     if stored_recipe.get("revision") != current_recipe.get("revision"):
         return _decision(
-            _rebuild_action(item),
+            _revision_action(item),
             "revision_changed",
             source_stat=source_stat,
             dest_stat=dest_stat,
