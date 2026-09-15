@@ -140,4 +140,3 @@ def bind_complete_assignment(
     )
     fmt = coerce_output_format(item.output_format)
     manifest.tracks.setdefault(source_key(item.source_path), {})[fmt] = record
-

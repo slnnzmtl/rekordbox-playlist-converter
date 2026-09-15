@@ -463,6 +463,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 )
                 show_done.assert_called()
                 self.assertEqual(show_done.call_args.kwargs.get("title"), "Cancelled")
+                done_message = show_done.call_args.args[0]
+                self.assertIn("Import into Rekordbox", done_message)
+                self.assertIn("Imported Library", done_message)
                 self.assertFalse(app._busy)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")

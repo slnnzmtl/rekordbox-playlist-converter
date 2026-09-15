@@ -13,8 +13,10 @@ from convert.models import (
     PreparedConversion,
     conversion_report_title,
     format_conversion_counts,
+    format_playlist_report,
     stats_for_playlist,
 )
+from convert.preview import format_preview_summary
 from convert.quality import (
     coerce_bit_depth,
     coerce_output_format,
@@ -204,16 +206,10 @@ class ConvertFlowMixin:
         """Modal unique-output preview; Convert continues, Back/Escape discard."""
         self._close_preview_dialog()
         preview = prepared.preview
-        summary = (
-            f"{preview.unique_outputs} unique output file(s) · "
-            f"{preview.selected} selected · "
-            f"{preview.resolved} resolved · "
-            f"{preview.duplicates} duplicate(s) · "
-            f"{preview.missing} missing"
-        )
-        space_issue = runtime.insufficient_output_space_message(
+        summary = format_preview_summary(preview)
+        space_issue = runtime.preview_block_message(
+            preview,
             prepared.library_dir,
-            runtime.preview_write_bytes(preview),
         )
         self._preview_dialog = gui_dialogs.show_conversion_preview_dialog(
             self.root,
@@ -257,12 +253,12 @@ class ConvertFlowMixin:
         prepared = self._prepared_conversion
         if prepared is None:
             return
-        space_issue = runtime.insufficient_output_space_message(
+        space_issue = runtime.preview_block_message(
+            prepared.preview,
             prepared.library_dir,
-            runtime.preview_write_bytes(prepared.preview),
         )
         if space_issue:
-            runtime.show_centered_message(self.root, "Not enough space", space_issue)
+            runtime.show_centered_message(self.root, "Cannot convert", space_issue)
             return
         self._close_preview_dialog()
         self._prepared_conversion = None
@@ -325,18 +321,25 @@ class ConvertFlowMixin:
                     if i < len(batch_stats.appended_by_plan)
                     else 0
                 )
+                playlist_result = (
+                    batch_stats.playlist_results[i]
+                    if i < len(batch_stats.playlist_results)
+                    else None
+                )
                 plan_stats = stats_for_playlist(
                     batch_stats,
                     plan.wav_playlist_name,
                     appended=appended,
                 )
-                parts = format_conversion_counts(
-                    plan_stats, missing=len(plan.warnings)
+                parts = format_conversion_counts(plan_stats, missing=0)
+                summaries.extend(
+                    format_playlist_report(
+                        plan.wav_playlist_name,
+                        playlist_result,
+                        count_parts=parts,
+                        missing=list(plan.warnings),
+                    )
                 )
-                if appended:
-                    parts.append(f"+{appended} playlist entries")
-                detail = ", ".join(parts) if parts else "done"
-                summaries.append(f"{plan.wav_playlist_name}: {detail}")
                 if plan_stats.state_changed:
                     summaries.append("State changed (refresh preview):")
                     summaries.extend(plan_stats.state_changed)
@@ -346,9 +349,14 @@ class ConvertFlowMixin:
                 if plan_stats.conflicts:
                     summaries.append("Conflicts:")
                     summaries.extend(plan_stats.conflicts)
+            # Batch-level skipped (deduped across plans) only when not already
+            # listed under a playlist via plan.warnings.
             if skipped:
-                summaries.append("Missing skipped:")
-                summaries.extend(skipped)
+                already = {w for plan in plans for w in plan.warnings}
+                extra = [s for s in skipped if s not in already]
+                if extra:
+                    summaries.append("Missing skipped:")
+                    summaries.extend(extra)
 
             if total == 0:
                 self._ui(lambda: self._set_progress(0, 0))
@@ -429,6 +437,19 @@ class ConvertFlowMixin:
             body.extend(warnings)
         self._finish_report(body, output, output_folder, title="Done")
 
+    def _import_xml_instructions(self, body: str, output: str) -> str:
+        fmt = self.format_var.get().strip().lower()
+        suffix = "[AIFF]" if fmt == "aiff" else "[WAV]"
+        return (
+            f"{body}\n\n"
+            "Import into Rekordbox:\n"
+            "1. Preferences → View → Layout → enable rekordbox xml\n"
+            "2. Preferences → Advanced → Database → Imported Library →\n"
+            f"   {output}\n"
+            "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
+            f"   (or drag the {suffix} playlist into Playlists)"
+        )
+
     def _finish_report(
         self,
         summaries: list[str],
@@ -457,7 +478,10 @@ class ConvertFlowMixin:
             self._cancelled_clear_id = self.root.after(
                 constants.CANCELLED_STATUS_CLEAR_MS, self._clear_cancelled_status
             )
-            self._show_done_dialog(body, output_folder, title=title)
+            message = (
+                self._import_xml_instructions(body, output) if output else body
+            )
+            self._show_done_dialog(message, output_folder, title=title)
             return
         if title == "Partial":
             if output:
@@ -472,19 +496,9 @@ class ConvertFlowMixin:
             )
         else:
             self.status_var.set(f"{title}.")
-        message = body
-        if output:
-            fmt = self.format_var.get().strip().lower()
-            suffix = "[AIFF]" if fmt == "aiff" else "[WAV]"
-            message = (
-                f"{body}\n\n"
-                "Import into Rekordbox:\n"
-                "1. Preferences → View → Layout → enable rekordbox xml\n"
-                "2. Preferences → Advanced → Database → Imported Library →\n"
-                f"   {output}\n"
-                "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
-                f"   (or drag the {suffix} playlist into Playlists)"
-            )
+        message = (
+            self._import_xml_instructions(body, output) if output else body
+        )
         self._show_done_dialog(message, output_folder, title=title)
 
     def _show_list_dialog(

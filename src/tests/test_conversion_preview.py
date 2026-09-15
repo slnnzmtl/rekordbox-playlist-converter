@@ -18,7 +18,14 @@ import cdj_aiff
 import convert.format_policy
 import convert.plan
 from cli_error import CancelledError
-from convert.preview import build_conversion_preview, insufficient_output_space_message, preview_write_bytes
+from convert.preview import (
+    build_conversion_preview,
+    format_preview_row,
+    format_preview_summary,
+    insufficient_output_space_message,
+    preview_block_message,
+    preview_write_bytes,
+)
 import converter_manifest
 import ffmpeg_tools
 from convert_fixtures import write_flac, write_pcm_wav
@@ -650,6 +657,82 @@ class ConversionPreviewTests(unittest.TestCase):
                 disk_usage=lambda _p: (_ for _ in ()).throw(OSError("boom")),
             )
         )
+
+    def test_format_preview_summary_and_row_include_dest_reason_write_kind(
+        self,
+    ) -> None:
+        """Given a preview item: When formatting: Then summary counts and row
+        expose input, reserved dest, format, action label, reason, write kind,
+        quality labels, and size."""
+        preview = ConversionPreview(
+            selected=3,
+            resolved=2,
+            unique_outputs=2,
+            duplicates=0,
+            missing=1,
+            items=[
+                ConversionPreviewItem(
+                    relative_dest="WAV/ABSL - Bestial.wav",
+                    action="recreate_missing",
+                    bit_depth=24,
+                    sample_rate=44100,
+                    size_bytes=2_646_000,
+                    size_display="≈ 2.5 MB",
+                    source_display="Bestial.flac",
+                    reason="Destination file is missing (writes audio)",
+                    write_kind="audio",
+                    output_format="wav",
+                ),
+            ],
+        )
+        self.assertEqual(
+            format_preview_summary(preview),
+            "2 unique output file(s) · 3 selected · 2 resolved · "
+            "0 duplicate(s) · 1 missing",
+        )
+        row = format_preview_row(preview.items[0])
+        self.assertEqual(row.source_display, "Bestial.flac")
+        self.assertEqual(row.relative_dest, "WAV/ABSL - Bestial.wav")
+        self.assertEqual(row.output_format, "WAV")
+        self.assertEqual(row.action_label, "Recreate missing")
+        self.assertEqual(row.reason, "Destination file is missing (writes audio)")
+        self.assertEqual(row.write_kind_label, "writes audio")
+        self.assertEqual(row.quality, "24-bit / 44.1 kHz")
+        self.assertEqual(row.size_display, "≈ 2.5 MB")
+
+    def test_preview_block_message_reports_conflicts_before_space(self) -> None:
+        """Given unresolved conflicts: When preview_block_message runs: Then
+        it reports conflicts and does not check disk space."""
+        from types import SimpleNamespace
+
+        preview = ConversionPreview(
+            selected=1,
+            resolved=1,
+            unique_outputs=1,
+            duplicates=0,
+            missing=0,
+            items=[
+                ConversionPreviewItem(
+                    relative_dest="WAV/A.wav",
+                    action="external_modification_conflict",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=50_000_000,
+                    size_display="≈ 47.7 MB",
+                    write_kind="none",
+                ),
+            ],
+        )
+        msg = preview_block_message(
+            preview,
+            Path("/tmp"),
+            disk_usage=lambda _p: SimpleNamespace(free=1),
+        )
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertIn("unresolved conflict", msg)
+        self.assertIn("changed outside this app", msg)
+        self.assertNotIn("free space", msg)
 
 
 if __name__ == "__main__":

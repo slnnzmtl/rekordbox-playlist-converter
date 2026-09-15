@@ -149,6 +149,9 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     size_bytes=1000,
                     size_display="0.0 MB",
                     source_display="one.flac",
+                    reason="Output is already current (writes nothing)",
+                    write_kind="none",
+                    output_format="wav",
                 ),
                 ConversionPreviewItem(
                     relative_dest="WAV/B - Two.wav",
@@ -158,6 +161,9 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     size_bytes=288000,
                     size_display="≈ 0.3 MB",
                     source_display="two.wav",
+                    reason="Destination file is missing (writes audio)",
+                    write_kind="audio",
+                    output_format="wav",
                 ),
                 ConversionPreviewItem(
                     relative_dest="WAV/C - Three.wav",
@@ -167,6 +173,9 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     size_bytes=None,
                     size_display="—",
                     source_display="three.flac",
+                    reason="Source file changed (writes audio)",
+                    write_kind="audio",
+                    output_format="wav",
                 ),
             ],
         )
@@ -223,40 +232,58 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                 table = find_treeview(dlg)
                 self.assertIsNotNone(table)
                 self.assertEqual(table.heading("#0", "text"), "Input file")
+                self.assertEqual(table.heading("destination", "text"), "Destination")
+                self.assertEqual(table.heading("format", "text"), "Format")
+                self.assertEqual(table.heading("action", "text"), "Action")
+                self.assertEqual(table.heading("reason", "text"), "Reason")
+                self.assertEqual(table.heading("write_kind", "text"), "Write")
+                self.assertEqual(table.heading("quality", "text"), "Quality")
+                self.assertEqual(table.heading("size", "text"), "Size")
                 rows = [
                     (
-                        table.item(iid, "text") or table.item(iid, "values")[0],
-                        table.item(iid, "values"),
+                        table.item(iid, "text"),
+                        list(table.item(iid, "values")),
                     )
                     for iid in table.get_children("")
                 ]
-                normalized = []
-                for text, values in rows:
-                    vals = list(values)
-                    if text and (not vals or vals[0] != text):
-                        normalized.append((text, *vals[:3]))
-                    else:
-                        normalized.append(tuple(vals[:4]))
                 self.assertEqual(
-                    normalized,
+                    rows,
                     [
                         (
                             "one.flac",
-                            "Reuse existing",
-                            "16-bit / 44.1 kHz",
-                            "0.0 MB",
+                            [
+                                "WAV/A - One.wav",
+                                "WAV",
+                                "Reuse existing",
+                                "Output is already current (writes nothing)",
+                                "writes nothing",
+                                "16-bit / 44.1 kHz",
+                                "0.0 MB",
+                            ],
                         ),
                         (
                             "two.wav",
-                            "Recreate missing",
-                            "24-bit / 48 kHz",
-                            "≈ 0.3 MB",
+                            [
+                                "WAV/B - Two.wav",
+                                "WAV",
+                                "Recreate missing",
+                                "Destination file is missing (writes audio)",
+                                "writes audio",
+                                "24-bit / 48 kHz",
+                                "≈ 0.3 MB",
+                            ],
                         ),
                         (
                             "three.flac",
-                            "Transcode",
-                            "24-bit / 48 kHz",
-                            "—",
+                            [
+                                "WAV/C - Three.wav",
+                                "WAV",
+                                "Transcode",
+                                "Source file changed (writes audio)",
+                                "writes audio",
+                                "24-bit / 48 kHz",
+                                "—",
+                            ],
                         ),
                     ],
                 )
@@ -361,6 +388,8 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     size_bytes=50_000_000,
                     size_display="≈ 47.7 MB",
                     source_display="one.flac",
+                    write_kind="audio",
+                    output_format="wav",
                 ),
             ],
         )
@@ -445,6 +474,115 @@ class ConversionPreviewDialogTests(unittest.TestCase):
         finally:
             if root is not None:
                 root.destroy()
+
+    def test_preview_disables_convert_when_conflicts_remain(self) -> None:
+        """Given an unresolved destination conflict: When the preview opens:
+        Then preview_block_message is shown and Convert is disabled."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import tkinter.ttk as ttk
+        from rb_converter_gui import ConverterApp
+
+        preview = ConversionPreview(
+            selected=1,
+            resolved=1,
+            unique_outputs=1,
+            duplicates=0,
+            missing=0,
+            items=[
+                ConversionPreviewItem(
+                    relative_dest="WAV/A - One.wav",
+                    action="external_modification_conflict",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=1000,
+                    size_display="0.0 MB",
+                    source_display="one.flac",
+                    reason="Destination was changed outside this app (writes nothing)",
+                    write_kind="none",
+                    output_format="wav",
+                ),
+            ],
+        )
+        prepared = replace(mock_prepared_conversion(n_unique=1), preview=preview)
+
+        def find_toplevel(parent, title: str):
+            for child in parent.winfo_children():
+                if isinstance(child, tk.Toplevel):
+                    try:
+                        if child.title() == title:
+                            return child
+                    except tk.TclError:
+                        continue
+            return None
+
+        def find_label_with_text(widget, needle: str):
+            try:
+                if isinstance(widget, ttk.Label) and needle in str(widget.cget("text")):
+                    return widget
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                found = find_label_with_text(child, needle)
+                if found is not None:
+                    return found
+            return None
+
+        def find_convert_btn(widget):
+            try:
+                if (
+                    isinstance(widget, ttk.Button)
+                    and str(widget.cget("text")) == "Convert"
+                ):
+                    return widget
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                found = find_convert_btn(child)
+                if found is not None:
+                    return found
+            return None
+
+        root = None
+        try:
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "save_preferences": None,
+                        "prepare_batch": {"return_value": (prepared, [])},
+                        "threading.Thread": {"side_effect": run_inline_thread},
+                    },
+                )
+            ), patch.object(
+                ConverterApp,
+                "_selected_playlists",
+                return_value=[("ROOT", "Test")],
+            ):
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app.xml_var.set("/tmp/test.xml")
+                seed_track_selection(app)
+                mark_output_folder_valid(app)
+                app._start_convert()
+                pump_ui(root)
+
+                dlg = find_toplevel(root, "Conversion preview")
+                self.assertIsNotNone(dlg)
+                issue = find_label_with_text(dlg, "unresolved conflict")
+                self.assertIsNotNone(issue)
+                convert_btn = find_convert_btn(dlg)
+                self.assertIsNotNone(convert_btn)
+                self.assertEqual(str(convert_btn.cget("state")), "disabled")
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()

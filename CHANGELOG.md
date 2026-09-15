@@ -16,6 +16,10 @@ new folder).
   metadata only / nothing), quality, and size. Convert is blocked on unresolved
   destination conflicts or insufficient disk space. GUI and CLI `--dry-run`
   share the same labels.
+- On a complete success rerun, generated `[WAV]`/`[AIFF]` playlist Keys are
+  rewritten to the current source order (reorder, remove, insert, repeats).
+  Incomplete runs leave existing playlist Keys unchanged and report that the
+  playlist was not fully refreshed.
 - The conversion report counts converted, copied, PCM-rebuilt,
   metadata-refreshed, reused, recreated, missing, conflicting, and failed
   outputs; mixed batches keep successes visible.

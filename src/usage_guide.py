@@ -86,7 +86,9 @@ What you get:
 Your original files stay where they are. Re-running with the same output folder
 classifies each reserved destination (reuse, refresh XML, update AIFF tags,
 rebuild container, transcode, recreate missing, in-place skip, or conflict).
-Conflicts are not overwritten; Convert is blocked until they are resolved.
+When every resolved track succeeds, the generated playlist is rewritten to the
+current source order. Conflicts are not overwritten; Convert is blocked until
+they are resolved.
 Cancel stops in-flight encodes; already-written files and Import XML for
 successes are kept. Each unique source converts once per batch even if it
 appears in several playlists. Assignments are sticky per source and format.

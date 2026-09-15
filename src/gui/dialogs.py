@@ -132,10 +132,12 @@ def show_conversion_preview_dialog(
     place_over: Callable[[tk.Toplevel], None],
 ) -> tk.Toplevel:
     """Conversion preview table; caller owns Back/Convert semantics."""
+    from convert.preview import format_preview_row
+
     dlg = tk.Toplevel(parent)
     dlg.title("Conversion preview")
-    dlg.geometry("960x540")
-    dlg.minsize(960, 540)
+    dlg.geometry("1280x540")
+    dlg.minsize(1100, 540)
     dlg.resizable(True, True)
     dlg.transient(parent)
 
@@ -155,7 +157,7 @@ def show_conversion_preview_dialog(
     table_frame.columnconfigure(0, weight=1)
     table_frame.rowconfigure(0, weight=1)
 
-    columns = ("action", "quality", "size")
+    columns = ("destination", "format", "action", "reason", "write_kind", "quality", "size")
     table, yscroll = tree_with_yscroll(
         table_frame,
         columns=columns,
@@ -164,28 +166,39 @@ def show_conversion_preview_dialog(
         height=18,
     )
     table.heading("#0", text="Input file", anchor="w")
+    table.heading("destination", text="Destination", anchor="w")
+    table.heading("format", text="Format", anchor="w")
     table.heading("action", text="Action", anchor="w")
+    table.heading("reason", text="Reason", anchor="w")
+    table.heading("write_kind", text="Write", anchor="w")
     table.heading("quality", text="Quality", anchor="w")
     table.heading("size", text="Size", anchor="e")
-    table.column("#0", width=400, stretch=True, minwidth=160)
-    table.column("action", width=110, stretch=False, anchor="w")
-    table.column("quality", width=150, stretch=False, anchor="w")
-    table.column("size", width=130, stretch=False, minwidth=120, anchor="e")
+    table.column("#0", width=160, stretch=True, minwidth=100)
+    table.column("destination", width=220, stretch=True, minwidth=120)
+    table.column("format", width=60, stretch=False, anchor="w")
+    table.column("action", width=130, stretch=False, anchor="w")
+    table.column("reason", width=240, stretch=True, minwidth=120)
+    table.column("write_kind", width=130, stretch=False, anchor="w")
+    table.column("quality", width=130, stretch=False, anchor="w")
+    table.column("size", width=100, stretch=False, minwidth=80, anchor="e")
     table.grid(row=0, column=0, sticky="nsew")
     yscroll.grid(row=0, column=1, sticky="ns")
 
     for item in items:
-        action = action_labels.get(item.action, item.action)
-        depth = bit_depth_labels.get(str(item.bit_depth), f"{item.bit_depth}-bit")
-        rate = sample_rate_labels.get(
-            str(item.sample_rate), f"{item.sample_rate} Hz"
-        )
-        quality = f"{depth} / {rate}"
+        row = format_preview_row(item)
         table.insert(
             "",
             tk.END,
-            text=item.source_display,
-            values=(action, quality, item.size_display),
+            text=row.source_display,
+            values=(
+                row.relative_dest,
+                row.output_format,
+                row.action_label,
+                row.reason,
+                row.write_kind_label,
+                row.quality,
+                row.size_display,
+            ),
         )
 
     btn_row = 2

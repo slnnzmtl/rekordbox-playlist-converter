@@ -22,12 +22,16 @@ from convert import (
 from convert.models import (
     conversion_exit_code,
     format_conversion_counts,
+    format_playlist_report,
     stats_for_playlist,
 )
 from convert.plan import DEFAULT_OUTPUT, DEFAULT_WAV_DIR
 from convert.preview import (
     build_conversion_preview,
+    format_preview_row,
+    format_preview_summary,
     insufficient_output_space_message,
+    preview_block_message,
     preview_write_bytes,
 )
 from gui_prefs import import_xml_path
@@ -294,14 +298,14 @@ def run_convert_batch(
 
     if dry_run:
         print_conversion_preview(plans, preview)
+        block = preview_block_message(preview, wav_dir)
+        if block is not None:
+            print(block, file=sys.stderr)
         return 0
 
-    space_issue = insufficient_output_space_message(
-        wav_dir,
-        preview_write_bytes(preview),
-    )
-    if space_issue is not None:
-        print(space_issue, file=sys.stderr)
+    block = preview_block_message(preview, wav_dir)
+    if block is not None:
+        print(block, file=sys.stderr)
         return 1
 
     try:
@@ -319,12 +323,17 @@ def run_convert_batch(
             appended = (
                 stats.appended_by_plan[i] if i < len(stats.appended_by_plan) else 0
             )
+            playlist_result = (
+                stats.playlist_results[i] if i < len(stats.playlist_results) else None
+            )
             plan_stats = stats_for_playlist(
                 stats,
                 plan.wav_playlist_name,
                 appended=appended,
             )
-            print_summary(plan, plan_stats, dry_run=False)
+            print_summary(
+                plan, plan_stats, dry_run=False, playlist_result=playlist_result
+            )
     except OSError as exc:
         print(f"cannot write converter manifest: {exc}", file=sys.stderr)
         return 1
@@ -346,13 +355,7 @@ def print_warnings(warnings: list[str]) -> None:
 
 def print_conversion_preview(plans: list[Plan], preview) -> None:
     """Print shared ConversionPreview for CLI --dry-run (read-only)."""
-    print(
-        f"{preview.unique_outputs} unique output file(s) · "
-        f"{preview.selected} selected · "
-        f"{preview.resolved} resolved · "
-        f"{preview.duplicates} duplicate(s) · "
-        f"{preview.missing} missing"
-    )
+    print(format_preview_summary(preview))
     print()
     print("Format directory:")
     print(plans[0].media_dir)
@@ -360,9 +363,11 @@ def print_conversion_preview(plans: list[Plan], preview) -> None:
     if preview.items:
         print("Inputs:")
         for item in preview.items:
-            quality = f"{item.bit_depth}-bit / {item.sample_rate} Hz"
+            row = format_preview_row(item)
             print(
-                f"{item.source_display}  {item.action}  {quality}  {item.size_display}"
+                f"{row.source_display}  {row.relative_dest}  {row.output_format}  "
+                f"{row.action_label}  {row.reason}  {row.write_kind_label}  "
+                f"{row.quality}  {row.size_display}"
             )
         print()
     print("New playlist:")
@@ -377,6 +382,8 @@ def print_summary(
     plan: Plan,
     stats: ConvertStats | None,
     dry_run: bool,
+    *,
+    playlist_result: object | None = None,
 ) -> None:
     unique_n = len(plan.unique)
     print("Source playlist:")
@@ -404,10 +411,13 @@ def print_summary(
     print(plan.output)
     print()
     print("New playlist:")
-    if stats.appended:
-        print(f"{plan.wav_playlist_name} (+{stats.appended} entries)")
-    else:
-        print(plan.wav_playlist_name)
+    for line in format_playlist_report(
+        plan.wav_playlist_name,
+        playlist_result,
+        count_parts=[],
+        missing=list(plan.warnings) if plan.warnings else None,
+    ):
+        print(line)
     if stats.conflicts:
         print()
         print("Conflicts:")

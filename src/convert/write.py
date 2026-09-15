@@ -626,9 +626,13 @@ def execute_prepared(
         ]
     _save_manifest_with_pending(prepared.manifest, prepared.library_dir, pending)
     appended_by_plan: list[int] = []
+    playlist_results: list = []
     for one_plan in plans:
-        appended_by_plan.append(xml_output.apply_xml(one_plan, stats.succeeded))
+        result = xml_output.apply_xml(one_plan, stats.succeeded)
+        playlist_results.append(result)
+        appended_by_plan.append(result.appended)
     xml_output.write_import_xml(plans[0].output_root, plans[0].output)
     stats.appended_by_plan = appended_by_plan
     stats.appended = sum(appended_by_plan)
+    stats.playlist_results = playlist_results
     return stats

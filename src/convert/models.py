@@ -42,6 +42,7 @@ class ConversionPreviewItem:
     reason_code: str = ""
     source_stat: dict | None = None
     dest_stat: dict | None = None
+    output_format: str = "wav"
 
 
 @dataclass
@@ -104,22 +105,44 @@ class ConvertStats:
     succeeded: set[tuple[str, str]] = field(default_factory=set)
     # Entries appended per plan by apply_xml during execute_prepared.
     appended_by_plan: list[int] = field(default_factory=list)
+    # Full PlaylistApplyResult per plan (same order as plans / appended_by_plan).
+    playlist_results: list = field(default_factory=list)
 
 
 def _item_ref(result: ItemResult) -> str:
     return f"{result.source.name} → {result.destination.name}"
 
 
-def apply_item_result_aggregates(stats: ConvertStats) -> ConvertStats:
-    """Fill ConvertStats counters from item_results. Keep succeeded/appended."""
-    results = stats.item_results
-    if not results:
-        return stats
+@dataclass(frozen=True)
+class ItemResultSummary:
+    """Pure counts derived from ItemResult rows."""
+
+    converted: int = 0
+    copied: int = 0
+    skipped: int = 0
+    pcm_rebuilt: int = 0
+    metadata_refreshed: int = 0
+    reused: int = 0
+    recreated: int = 0
+    recreated_transcoded: int = 0
+    recreated_copied: int = 0
+    cancelled: int = 0
+    errors: tuple[str, ...] = ()
+    conflicts: tuple[str, ...] = ()
+    state_changed: tuple[str, ...] = ()
+    successes: int = 0
+    has_problems: bool = False
+    has_failed: bool = False
+
+
+def summarize_item_results(results: list[ItemResult]) -> ItemResultSummary:
+    """Derive report counts from ItemResult without mutating ConvertStats."""
     converted = copied = pcm = meta = reused = skipped = 0
-    rec_tx = rec_copy = 0
+    rec_tx = rec_copy = cancelled = 0
     errors: list[str] = []
     conflicts: list[str] = []
     state_changed: list[str] = []
+    successes = 0
     for result in results:
         if result.outcome == "failed":
             errors.append(result.error or _item_ref(result))
@@ -130,8 +153,12 @@ def apply_item_result_aggregates(stats: ConvertStats) -> ConvertStats:
         if result.outcome == "state_changed":
             state_changed.append(_item_ref(result))
             continue
+        if result.outcome == "cancelled":
+            cancelled += 1
+            continue
         if result.outcome != "succeeded":
             continue
+        successes += 1
         if result.action == "recreate_missing":
             if result.write == "copy":
                 rec_copy += 1
@@ -149,16 +176,42 @@ def apply_item_result_aggregates(stats: ConvertStats) -> ConvertStats:
             copied += 1
         else:
             converted += 1
-    stats.converted = converted
-    stats.copied = copied
-    stats.pcm_rebuilt = pcm
-    stats.metadata_refreshed = meta
-    stats.reused = reused
-    stats.recreated = rec_tx + rec_copy
-    stats.skipped = skipped
-    stats.errors = errors
-    stats.conflicts = conflicts
-    stats.state_changed = state_changed
+    return ItemResultSummary(
+        converted=converted,
+        copied=copied,
+        skipped=skipped,
+        pcm_rebuilt=pcm,
+        metadata_refreshed=meta,
+        reused=reused,
+        recreated=rec_tx + rec_copy,
+        recreated_transcoded=rec_tx,
+        recreated_copied=rec_copy,
+        cancelled=cancelled,
+        errors=tuple(errors),
+        conflicts=tuple(conflicts),
+        state_changed=tuple(state_changed),
+        successes=successes,
+        has_problems=bool(errors or conflicts or state_changed),
+        has_failed=bool(errors),
+    )
+
+
+def apply_item_result_aggregates(stats: ConvertStats) -> ConvertStats:
+    """Fill ConvertStats counters from item_results. Keep succeeded/appended."""
+    results = stats.item_results
+    if not results:
+        return stats
+    summary = summarize_item_results(results)
+    stats.converted = summary.converted
+    stats.copied = summary.copied
+    stats.pcm_rebuilt = summary.pcm_rebuilt
+    stats.metadata_refreshed = summary.metadata_refreshed
+    stats.reused = summary.reused
+    stats.recreated = summary.recreated
+    stats.skipped = summary.skipped
+    stats.errors = list(summary.errors)
+    stats.conflicts = list(summary.conflicts)
+    stats.state_changed = list(summary.state_changed)
     return stats
 
 
@@ -199,12 +252,8 @@ def stats_for_playlist(
 def conversion_exit_code(stats: ConvertStats) -> int:
     """Nonzero when any item failed, conflicted, or saw a state change."""
     if stats.item_results:
-        if any(
-            result.outcome in {"failed", "conflict", "state_changed"}
-            for result in stats.item_results
-        ):
-            return 1
-        return 0
+        summary = summarize_item_results(stats.item_results)
+        return 1 if summary.has_problems else 0
     if stats.errors or stats.conflicts or stats.state_changed:
         return 1
     return 0
@@ -219,12 +268,10 @@ def conversion_report_title(
     if cancelled or any(r.outcome == "cancelled" for r in stats.item_results):
         return "Cancelled"
     if stats.item_results:
-        successes = sum(1 for r in stats.item_results if r.outcome == "succeeded")
-        has_problems = any(
-            r.outcome in {"failed", "conflict", "state_changed"}
-            for r in stats.item_results
-        )
-        has_failed = any(r.outcome == "failed" for r in stats.item_results)
+        summary = summarize_item_results(stats.item_results)
+        successes = summary.successes
+        has_problems = summary.has_problems
+        has_failed = summary.has_failed
     else:
         successes = (
             stats.converted
@@ -245,26 +292,22 @@ def conversion_report_title(
     return "Done"
 
 
-def _recreated_count_part(results: list[ItemResult]) -> str | None:
-    rec_tx = rec_copy = 0
-    for result in results:
-        if result.outcome != "succeeded" or result.action != "recreate_missing":
-            continue
-        if result.write == "copy":
-            rec_copy += 1
-        else:
-            rec_tx += 1
-    total = rec_tx + rec_copy
+def _recreated_count_part_from_summary(summary: ItemResultSummary) -> str | None:
+    total = summary.recreated
     if not total:
         return None
     bits: list[str] = []
-    if rec_tx:
-        bits.append(f"{rec_tx} transcoded")
-    if rec_copy:
-        bits.append(f"{rec_copy} copied")
+    if summary.recreated_transcoded:
+        bits.append(f"{summary.recreated_transcoded} transcoded")
+    if summary.recreated_copied:
+        bits.append(f"{summary.recreated_copied} copied")
     if bits:
         return f"{total} recreated ({', '.join(bits)})"
     return f"{total} recreated"
+
+
+def _recreated_count_part(results: list[ItemResult]) -> str | None:
+    return _recreated_count_part_from_summary(summarize_item_results(results))
 
 
 def format_conversion_counts(
@@ -275,36 +318,36 @@ def format_conversion_counts(
     """User-facing count fragments shared by CLI summary and GUI finish."""
     results = stats.item_results
     if results:
+        summary = summarize_item_results(results)
         apply_item_result_aggregates(stats)
         parts: list[str] = []
-        recreated = _recreated_count_part(results)
-        if stats.converted:
-            parts.append(f"{stats.converted} converted")
-        if stats.copied:
-            parts.append(f"{stats.copied} copied")
-        if stats.pcm_rebuilt:
-            parts.append(f"{stats.pcm_rebuilt} PCM-rebuilt")
-        if stats.metadata_refreshed:
-            parts.append(f"{stats.metadata_refreshed} metadata-refreshed")
-        if stats.reused:
-            parts.append(f"{stats.reused} reused")
+        recreated = _recreated_count_part_from_summary(summary)
+        if summary.converted:
+            parts.append(f"{summary.converted} converted")
+        if summary.copied:
+            parts.append(f"{summary.copied} copied")
+        if summary.pcm_rebuilt:
+            parts.append(f"{summary.pcm_rebuilt} PCM-rebuilt")
+        if summary.metadata_refreshed:
+            parts.append(f"{summary.metadata_refreshed} metadata-refreshed")
+        if summary.reused:
+            parts.append(f"{summary.reused} reused")
         if recreated:
             parts.append(recreated)
-        cancelled_n = sum(1 for r in results if r.outcome == "cancelled")
-        if stats.skipped and not (stats.reused or stats.metadata_refreshed):
-            parts.append(f"{stats.skipped} skipped")
-        if cancelled_n:
-            parts.append(f"{cancelled_n} cancelled")
-        if stats.conflicts:
-            n = len(stats.conflicts)
+        if summary.skipped and not (summary.reused or summary.metadata_refreshed):
+            parts.append(f"{summary.skipped} skipped")
+        if summary.cancelled:
+            parts.append(f"{summary.cancelled} cancelled")
+        if summary.conflicts:
+            n = len(summary.conflicts)
             parts.append(f"{n} conflict{'s' if n != 1 else ''}")
-        if stats.state_changed:
-            n = len(stats.state_changed)
+        if summary.state_changed:
+            n = len(summary.state_changed)
             parts.append(f"{n} state-changed")
         if missing:
             parts.append(f"{missing} missing skipped")
-        if stats.errors:
-            n = len(stats.errors)
+        if summary.errors:
+            n = len(summary.errors)
             parts.append(f"{n} failed")
         return parts
     parts = []
@@ -334,6 +377,39 @@ def format_conversion_counts(
         n = len(stats.errors)
         parts.append(f"{n} failed")
     return parts
+
+
+def format_playlist_report(
+    playlist_name: str,
+    playlist_result: object | None,
+    *,
+    count_parts: list[str],
+    missing: list[str] | None = None,
+) -> list[str]:
+    """One playlist's finish lines (counts + sync status + missing paths)."""
+    parts = list(count_parts)
+    appended = int(getattr(playlist_result, "appended", 0) or 0) if playlist_result else 0
+    removed = int(getattr(playlist_result, "removed", 0) or 0) if playlist_result else 0
+    reordered = bool(getattr(playlist_result, "reordered", False)) if playlist_result else False
+    fully_synced = (
+        bool(getattr(playlist_result, "fully_synced", True))
+        if playlist_result is not None
+        else True
+    )
+    if playlist_result is not None and not fully_synced:
+        parts.append("playlist not fully refreshed")
+    elif removed or reordered:
+        parts.append("playlist refreshed")
+    elif appended:
+        parts.append(f"+{appended} playlist entries")
+    if parts:
+        lines = [f"{playlist_name}: {', '.join(parts)}"]
+    else:
+        lines = [playlist_name]
+    if missing:
+        lines.append("Missing skipped:")
+        lines.extend(missing)
+    return lines
 
 
 @dataclass

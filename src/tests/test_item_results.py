@@ -28,8 +28,10 @@ from convert.models import (
     conversion_exit_code,
     conversion_report_title,
     format_conversion_counts,
+    format_playlist_report,
     stats_for_playlist,
 )
+from xml_output import PlaylistApplyResult
 from convert.paths import source_key
 from convert.write import convert_unique
 from convert_fixtures import write_pcm_wav
@@ -230,6 +232,39 @@ class ItemResultDeriveTests(unittest.TestCase):
             ]
         )
         self.assertEqual(conversion_exit_code(failed), 1)
+
+    def test_format_playlist_report_refreshed_incomplete_and_missing(self) -> None:
+        """Given apply results and missing paths: When formatting: Then
+        refreshed / not fully refreshed / per-playlist missing lines appear."""
+        refreshed = format_playlist_report(
+            "Night [WAV]",
+            PlaylistApplyResult(removed=1, reordered=False, fully_synced=True),
+            count_parts=["2 reused"],
+            missing=[],
+        )
+        self.assertEqual(refreshed[0], "Night [WAV]: 2 reused, playlist refreshed")
+
+        appended_only = format_playlist_report(
+            "Night [WAV]",
+            PlaylistApplyResult(appended=2, fully_synced=True),
+            count_parts=["2 converted"],
+            missing=[],
+        )
+        self.assertEqual(
+            appended_only[0], "Night [WAV]: 2 converted, +2 playlist entries"
+        )
+
+        incomplete = format_playlist_report(
+            "Night [WAV]",
+            PlaylistApplyResult(fully_synced=False),
+            count_parts=["1 conflict"],
+            missing=["/missing/a.flac"],
+        )
+        self.assertEqual(
+            incomplete[0], "Night [WAV]: 1 conflict, playlist not fully refreshed"
+        )
+        self.assertEqual(incomplete[1], "Missing skipped:")
+        self.assertEqual(incomplete[2], "/missing/a.flac")
 
 
 if __name__ == "__main__":
