@@ -408,7 +408,12 @@ def _commit_refresh_xml_freshness(
         )
         changed = True
     if changed:
-        persister.save_urgent(_overlay_tracks(prepared.manifest, pending))
+        try:
+            persister.save_urgent(_overlay_tracks(prepared.manifest, pending))
+        except ManifestPersistError:
+            raise
+        except Exception as exc:
+            raise ManifestPersistError(str(exc)) from exc
 
 
 @dataclass
@@ -773,10 +778,11 @@ def convert_unique(
             done = completed
         bar.update(done, action, name)
 
+    stop = cancel_event if cancel_event is not None else threading.Event()
     ctx = ExecuteContext(
         plan=plan,
         force=force,
-        cancel_event=cancel_event,
+        cancel_event=stop,
         cover_lock=cover_lock,
         stats=stats,
         stats_lock=stats_lock,
@@ -785,13 +791,18 @@ def convert_unique(
     )
 
     def run_item(item: PlannedTrack) -> ItemResult:
-        fmt = coerce_output_format(item.output_format)
-        key = (source_key(item.source_path), fmt)
-        frozen = decisions.get(key) if decisions else None
-        result = execute_item(item, frozen, ctx)
-        with stats_lock:
-            stats.item_results.append(result)
-        return result
+        try:
+            fmt = coerce_output_format(item.output_format)
+            key = (source_key(item.source_path), fmt)
+            frozen = decisions.get(key) if decisions else None
+            result = execute_item(item, frozen, ctx)
+            with stats_lock:
+                stats.item_results.append(result)
+            return result
+        except ManifestPersistError:
+            # Set before the worker returns so the next queued item sees halt.
+            stop.set()
+            raise
 
     try:
         if not items:
@@ -802,7 +813,11 @@ def convert_unique(
         with ThreadPoolExecutor(max_workers=effective_workers) as pool:
             futures = [pool.submit(run_item, item) for item in items]
             for fut in as_completed(futures):
-                fut.result()
+                try:
+                    fut.result()
+                except ManifestPersistError:
+                    stop.set()
+                    raise
     finally:
         bar.close()
         if owns_persister:

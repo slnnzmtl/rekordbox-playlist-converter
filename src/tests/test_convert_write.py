@@ -35,7 +35,7 @@ from convert.models import ConversionPreview, Plan, PlannedTrack, PreparedConver
 from convert.paths import source_key
 from convert.prepare import prepare_batch
 from convert.rerun import classify_item
-from convert.write import convert_unique, execute_prepared
+from convert.write import ManifestPersistError, convert_unique, execute_prepared
 from convert_fixtures import XmlFixtureTests as XmlFixtureBase, write_pcm_wav
 from rekordbox_xml import encode_location, iter_playlists, skeleton_from
 
@@ -596,6 +596,118 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertNotEqual(previous_sig, metadata_signature(el))
             plan.manifest = loaded
             self.assertEqual(classify_item(plan, item, False).action, "refresh_xml")
+
+    def test_post_xml_metadata_persist_failure_is_manifest_persist_error(self) -> None:
+        """Given refresh_xml: When the post-Import-XML urgent save fails: Then
+        ManifestPersistError is raised and Import XML remains on disk."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(dest)
+            el = ET.Element("TRACK", {"Name": "Old", "Artist": "DJ"})
+            loc = encode_location(dest)
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=loc,
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {"Name": "rekordbox", "Version": "6.8.5", "Company": "AlphaTheta"},
+            )
+            output_root = skeleton_from(source_root)
+            collection = output_root.find("COLLECTION")
+            assert collection is not None
+            ET.SubElement(
+                collection,
+                "TRACK",
+                {
+                    "TrackID": "99",
+                    "Name": "Old",
+                    "Artist": "DJ",
+                    "Location": loc,
+                    "Kind": "WAV File",
+                },
+            )
+            playlists = output_root.find("PLAYLISTS")
+            assert playlists is not None
+            root_node = playlists.find("NODE")
+            assert root_node is not None
+            playlist = ET.SubElement(
+                root_node,
+                "NODE",
+                {
+                    "Name": "P [WAV]",
+                    "Type": "1",
+                    "KeyType": "0",
+                    "Entries": "1",
+                },
+            )
+            ET.SubElement(playlist, "TRACK", {"Key": "99"})
+            manifest = converter_manifest.empty_manifest()
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=True,
+                manifest=manifest,
+            )
+            bind_complete_assignment(manifest, item, "WAV/A.wav")
+            el.set("Name", "New")
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=[item],
+                manifest=manifest,
+                preview=ConversionPreview(
+                    selected=1,
+                    resolved=1,
+                    unique_outputs=1,
+                    duplicates=0,
+                    missing=0,
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+            )
+
+            real_save = converter_manifest.save_manifest_tracks
+            saves = {"n": 0}
+
+            def tracking_save(tracks, wav_dir):
+                saves["n"] += 1
+                # prebatch + final succeed; post-XML urgent fails
+                if saves["n"] >= 3:
+                    raise OSError("post-xml metadata save failed")
+                real_save(tracks, wav_dir)
+
+            with patch.object(
+                xml_output, "probe_dest_tech", return_value=("100", "1411", "44100")
+            ), patch.object(
+                converter_manifest, "save_manifest_tracks", side_effect=tracking_save
+            ):
+                with self.assertRaises(ManifestPersistError):
+                    execute_prepared(prepared, force=False)
+
+            self.assertTrue(plan.output.is_file())
 
     def test_failed_import_xml_does_not_advance_aiff_update_metadata(self) -> None:
         """Given update_metadata: When Import XML writing fails: Then dest
