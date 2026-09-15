@@ -23,9 +23,11 @@ import ffmpeg_tools
 import cdj_wav
 import convert.plan
 import xml_output
+from cli_error import CliError
 from convert.freshness import (
     assignment_state,
     bind_complete_assignment,
+    metadata_signature,
     output_signature,
     source_signature,
 )
@@ -467,6 +469,126 @@ class ExecutePreparedTests(XmlFixtureBase):
                 for node in written.findall("PLAYLISTS/NODE/NODE/TRACK")
             ]
             self.assertEqual(keys, ["99"])
+            record = converter_manifest.load_manifest(root).tracks[
+                source_key(src)
+            ]["wav"]
+            self.assertEqual(
+                record["metadata"]["signature"],
+                metadata_signature(el),
+            )
+            self.assertEqual(classify_item(plan, item, False).action, "reuse")
+
+    def test_failed_import_xml_does_not_advance_refresh_xml_metadata(self) -> None:
+        """Given refresh_xml: When Import XML writing fails: Then the stored
+        metadata signature stays the previous one and the next classify is
+        still refresh_xml."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(dest)
+            el = ET.Element("TRACK", {"Name": "Old", "Artist": "DJ"})
+            loc = encode_location(dest)
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=loc,
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {"Name": "rekordbox", "Version": "6.8.5", "Company": "AlphaTheta"},
+            )
+            output_root = skeleton_from(source_root)
+            collection = output_root.find("COLLECTION")
+            assert collection is not None
+            ET.SubElement(
+                collection,
+                "TRACK",
+                {
+                    "TrackID": "99",
+                    "Name": "Old",
+                    "Artist": "DJ",
+                    "Location": loc,
+                    "Kind": "WAV File",
+                },
+            )
+            playlists = output_root.find("PLAYLISTS")
+            assert playlists is not None
+            root_node = playlists.find("NODE")
+            assert root_node is not None
+            playlist = ET.SubElement(
+                root_node,
+                "NODE",
+                {
+                    "Name": "P [WAV]",
+                    "Type": "1",
+                    "KeyType": "0",
+                    "Entries": "1",
+                },
+            )
+            ET.SubElement(playlist, "TRACK", {"Key": "99"})
+            manifest = converter_manifest.empty_manifest()
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=True,
+                manifest=manifest,
+            )
+            bind_complete_assignment(manifest, item, "WAV/A.wav")
+            previous_sig = manifest.tracks[source_key(src)]["wav"]["metadata"][
+                "signature"
+            ]
+            el.set("Name", "New")
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=[item],
+                manifest=manifest,
+                preview=ConversionPreview(
+                    selected=1,
+                    resolved=1,
+                    unique_outputs=1,
+                    duplicates=0,
+                    missing=0,
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+            )
+
+            def fail_xml(_root, _path) -> None:
+                raise CliError("import xml write failed")
+
+            with patch.object(
+                xml_output, "probe_dest_tech", return_value=("100", "1411", "44100")
+            ), patch.object(xml_output, "write_import_xml", side_effect=fail_xml):
+                with self.assertRaises(CliError):
+                    execute_prepared(prepared, force=False)
+            self.assertFalse(plan.output.exists())
+            loaded = converter_manifest.load_manifest(root)
+            record = loaded.tracks[source_key(src)]["wav"]
+            self.assertEqual(record["metadata"]["signature"], previous_sig)
+            self.assertNotEqual(previous_sig, metadata_signature(el))
+            plan.manifest = loaded
+            self.assertEqual(classify_item(plan, item, False).action, "refresh_xml")
 
     def test_conflict_skips_xml_refresh_and_keeps_playlist_key(self) -> None:
         """Given a complete dest that was modified on disk: When execute:

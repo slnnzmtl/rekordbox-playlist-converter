@@ -324,6 +324,27 @@ class ManifestValidationTests(unittest.TestCase):
                     f"expected {needle!r} in {errors}",
                 )
 
+    def test_validate_rejects_recipe_format_mismatching_assignment(self) -> None:
+        """Given a wav assignment whose recipe.format is aiff: When validate:
+        Then the contradictory recipe is rejected."""
+        data = {
+            "version": 2,
+            "layout": "format-flat",
+            "tracks": {
+                "/music/a.flac": {
+                    "wav": {
+                        "dest": "WAV/Artist - Track.wav",
+                        "recipe": {"format": "aiff"},
+                    }
+                }
+            },
+        }
+        errors = cm.validate_manifest_data(data, self.wav_dir)
+        self.assertTrue(
+            any("recipe format" in e and "wav" in e for e in errors),
+            errors,
+        )
+
     def test_validate_rejects_unknown_root_keys(self) -> None:
         """Given extra root fields: When validate: Then unknown root keys are
         rejected."""
