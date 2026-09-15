@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 import converter_manifest
 import xml_output
@@ -152,35 +153,144 @@ def _mutating_assignment_keys(
     return keys
 
 
-def _save_manifest_with_pending(
+def _overlay_tracks(
     manifest: converter_manifest.ConverterManifest,
-    library_dir: Path,
     pending: set[tuple[str, str]],
-) -> None:
-    """Persist in-memory records, overlaying incomplete on unfinished mutations."""
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Deepcopy tracks with incomplete overlay on unfinished mutation keys."""
     tracks = deepcopy(manifest.tracks)
     for key, fmt in pending:
         record = tracks.get(key, {}).get(fmt)
         if record is None:
             continue
         mark_incomplete(record)
-    converter_manifest.save_manifest_tracks(tracks, library_dir)
+    return tracks
+
+
+class ManifestPersister:
+    """Serialize manifest saves with sequenced periodics and urgent/final syncs."""
+
+    def __init__(
+        self,
+        library_dir: Path,
+        *,
+        checkpoint_interval_s: float | None = 10.0,
+        clock: Callable[[], float] | None = None,
+        save_tracks: Callable | None = None,
+        before_persist: Callable[[], None] | None = None,
+    ) -> None:
+        self._library_dir = library_dir
+        self._clock = clock if clock is not None else time.monotonic
+        self._save_tracks = (
+            save_tracks
+            if save_tracks is not None
+            else converter_manifest.save_manifest_tracks
+        )
+        self._before_persist = before_persist
+        if checkpoint_interval_s is None or checkpoint_interval_s <= 0:
+            self._interval: float | None = None
+        else:
+            self._interval = float(checkpoint_interval_s)
+        self._save_lock = threading.Lock()
+        self._meta_lock = threading.Lock()
+        self._next_seq = 1
+        self._durable_seq = 0
+        self._inflight: Future | None = None
+        self._last_periodic_at = self._clock()
+        self._executor = ThreadPoolExecutor(max_workers=1)
+        self._closed = False
+
+    def periodic_enabled(self) -> bool:
+        return self._interval is not None
+
+    def should_schedule_periodic(self) -> bool:
+        if not self.periodic_enabled():
+            return False
+        with self._meta_lock:
+            if self._inflight is not None and not self._inflight.done():
+                return False
+        assert self._interval is not None
+        return self._clock() - self._last_periodic_at >= self._interval
+
+    def request_periodic(self, tracks: dict) -> None:
+        with self._meta_lock:
+            if not self.periodic_enabled():
+                return
+            if self._inflight is not None and not self._inflight.done():
+                return
+            seq = self._next_seq
+            self._next_seq += 1
+            self._inflight = self._executor.submit(self._run_periodic, seq, tracks)
+
+    def _run_periodic(self, seq: int, tracks: dict) -> None:
+        try:
+            self._persist_seq(seq, tracks)
+        except Exception:
+            return
+
+    def _persist_seq(self, seq: int, tracks: dict) -> None:
+        if self._before_persist is not None:
+            self._before_persist()
+        with self._save_lock:
+            if seq <= self._durable_seq:
+                return
+            self._persist_locked(seq, tracks)
+
+    def _persist_locked(self, seq: int, tracks: dict) -> None:
+        t0 = self._clock()
+        self._save_tracks(tracks, self._library_dir)
+        duration = self._clock() - t0
+        self._durable_seq = seq
+        if self._interval is not None:
+            self._interval = max(10.0, 10.0 * duration)
+        self._last_periodic_at = self._clock()
+
+    def _save_sync(self, tracks: dict) -> None:
+        with self._meta_lock:
+            seq = self._next_seq
+            self._next_seq += 1
+        self._persist_seq(seq, tracks)
+
+    def save_urgent(self, tracks: dict) -> None:
+        self._save_sync(tracks)
+
+    def save_final(self, tracks: dict) -> None:
+        self.join()
+        self._save_sync(tracks)
+        self.close()
+
+    def join(self) -> None:
+        with self._meta_lock:
+            fut = self._inflight
+        if fut is None:
+            return
+        try:
+            fut.result()
+        except Exception:
+            return
+
+    def close(self) -> None:
+        """Wait for inflight periodics and release the worker thread."""
+        if self._closed:
+            return
+        self._closed = True
+        self.join()
+        self._executor.shutdown(wait=False)
 
 
 class ManifestCheckpoint:
-    """Persist complete in-memory records, overlaying incomplete on pending keys."""
+    """Mark completes and schedule durable snapshots via ManifestPersister."""
 
     def __init__(
         self,
         plan: Plan,
         pending: set[tuple[str, str]],
         *,
-        every: int | None,
+        persister: ManifestPersister,
     ) -> None:
         self.plan = plan
         self.pending = pending
-        self.every = every
-        self._count = 0
+        self.persister = persister
 
     def mark_item_complete(
         self, item: PlannedTrack, *, metadata: str | None = None
@@ -201,23 +311,24 @@ class ManifestCheckpoint:
             recipe=recipe_from_item(item),
         )
         self.pending.discard((source_key(item.source_path), fmt))
-        if not self.every:
+        if not self.persister.should_schedule_periodic():
             return
-        self._count += 1
-        if self._count % self.every == 0:
-            _save_manifest_with_pending(
-                self.plan.manifest, self.plan.library_dir, self.pending
-            )
+        snapshot = _overlay_tracks(self.plan.manifest, self.pending)
+        self.persister.request_periodic(snapshot)
 
-    def discard_pending_and_save(self, item: PlannedTrack) -> None:
-        """Conflict/state_changed recovery: always persist the complete record."""
+    def take_urgent_snapshot(self, item: PlannedTrack) -> dict | None:
+        """Discard pending for item; return overlay snapshot (no I/O)."""
         fmt = coerce_output_format(item.output_format)
         self.pending.discard((source_key(item.source_path), fmt))
         if self.plan.manifest is None:
+            return None
+        return _overlay_tracks(self.plan.manifest, self.pending)
+
+    def persist_urgent(self, snapshot: dict | None) -> None:
+        """Persist an urgent snapshot outside stats_lock."""
+        if snapshot is None:
             return
-        _save_manifest_with_pending(
-            self.plan.manifest, self.plan.library_dir, self.pending
-        )
+        self.persister.save_urgent(snapshot)
 
 
 def _prebatch_incomplete_manifest(
@@ -245,6 +356,7 @@ def _commit_refresh_xml_freshness(
     decisions: dict[tuple[str, str], Decision],
     succeeded: set[tuple[str, str]],
     pending: set[tuple[str, str]],
+    persister: ManifestPersister,
 ) -> None:
     """Advance metadata signatures only after Import XML has been written."""
     changed = False
@@ -271,9 +383,7 @@ def _commit_refresh_xml_freshness(
         )
         changed = True
     if changed:
-        _save_manifest_with_pending(
-            prepared.manifest, prepared.library_dir, pending
-        )
+        persister.save_urgent(_overlay_tracks(prepared.manifest, pending))
 
 
 @dataclass
@@ -325,8 +435,9 @@ def _snapshot_blocks_write(
         current_src = file_snapshot(item.source_path)
         if current_src is None or not snapshots_match(key_src, current_src):
             with ctx.stats_lock:
-                ctx.checkpoint.discard_pending_and_save(item)
+                snapshot = ctx.checkpoint.take_urgent_snapshot(item)
                 ctx.stats.state_changed.append(name)
+            ctx.checkpoint.persist_urgent(snapshot)
             ctx.finish("state_changed", name)
             return _item_result(
                 item, decision.action, "state_changed", reason=decision.reason
@@ -338,8 +449,9 @@ def _snapshot_blocks_write(
     )
     if dest_changed:
         with ctx.stats_lock:
-            ctx.checkpoint.discard_pending_and_save(item)
+            snapshot = ctx.checkpoint.take_urgent_snapshot(item)
             ctx.stats.conflicts.append(name)
+        ctx.checkpoint.persist_urgent(snapshot)
         ctx.finish("conflict", name)
         return _item_result(
             item, decision.action, "conflict", reason=decision.reason
@@ -390,8 +502,9 @@ def execute_item(
         return result("succeeded")
     if action == "external_modification_conflict":
         with ctx.stats_lock:
-            ctx.checkpoint.discard_pending_and_save(item)
+            snapshot = ctx.checkpoint.take_urgent_snapshot(item)
             ctx.stats.conflicts.append(name)
+        ctx.checkpoint.persist_urgent(snapshot)
         ctx.finish("conflict", name)
         return result("conflict")
     try:
@@ -440,8 +553,9 @@ def execute_item(
                 )
             except CliError:
                 with ctx.stats_lock:
-                    ctx.checkpoint.discard_pending_and_save(item)
+                    snapshot = ctx.checkpoint.take_urgent_snapshot(item)
                     ctx.stats.state_changed.append(name)
+                ctx.checkpoint.persist_urgent(snapshot)
                 ctx.finish("state_changed", name)
                 return result("state_changed", action_name="rewrite_container")
             else:
@@ -488,8 +602,9 @@ def execute_item(
                 )
             except CliError:
                 with ctx.stats_lock:
-                    ctx.checkpoint.discard_pending_and_save(item)
+                    snapshot = ctx.checkpoint.take_urgent_snapshot(item)
                     ctx.stats.state_changed.append(name)
+                ctx.checkpoint.persist_urgent(snapshot)
                 ctx.finish("state_changed", name)
                 return result("state_changed", action_name="rewrite_container")
             else:
@@ -596,7 +711,9 @@ def convert_unique(
     cancel_event: threading.Event | None = None,
     items: list[PlannedTrack] | None = None,
     workers: int | None = None,
-    checkpoint_every: int | None = None,
+    checkpoint_interval_s: float | None = None,
+    clock: Callable[[], float] | None = None,
+    persister: ManifestPersister | None = None,
     pending_assignments: set[tuple[str, str]] | None = None,
     decisions: dict[tuple[str, str], Decision] | None = None,
 ) -> ConvertStats:
@@ -609,7 +726,14 @@ def convert_unique(
     stats_lock = threading.Lock()
     cover_lock = threading.Lock()
     pending = pending_assignments if pending_assignments is not None else set()
-    checkpoint = ManifestCheckpoint(plan, pending, every=checkpoint_every)
+    owns_persister = persister is None
+    if owns_persister:
+        persister = ManifestPersister(
+            plan.library_dir,
+            checkpoint_interval_s=checkpoint_interval_s,
+            clock=clock,
+        )
+    checkpoint = ManifestCheckpoint(plan, pending, persister=persister)
 
     def finish(action: str, name: str) -> None:
         nonlocal completed
@@ -650,6 +774,10 @@ def convert_unique(
                 fut.result()
     finally:
         bar.close()
+        if owns_persister:
+            persister.close()
+        else:
+            persister.join()
     apply_item_result_aggregates(stats)
     return stats
 
@@ -662,7 +790,8 @@ def execute_prepared(
     on_progress: Callable[[int, int, str, str], None] | None = None,
     cancel_event: threading.Event | None = None,
     workers: int | None = None,
-    checkpoint_every: int = 8,
+    checkpoint_interval_s: float | None = 10.0,
+    clock: Callable[[], float] | None = None,
 ) -> ConvertStats:
     """Save manifest, convert unique items, apply XML per plan, write import XML.
 
@@ -678,6 +807,11 @@ def execute_prepared(
         _prebatch_incomplete_manifest(prepared, force, pending),
         prepared.library_dir,
     )
+    persister = ManifestPersister(
+        prepared.library_dir,
+        checkpoint_interval_s=checkpoint_interval_s,
+        clock=clock,
+    )
     plans = prepared.plans
     stats = convert_unique(
         plans[0],
@@ -687,7 +821,7 @@ def execute_prepared(
         cancel_event=cancel_event,
         items=prepared.items,
         workers=workers,
-        checkpoint_every=checkpoint_every,
+        persister=persister,
         pending_assignments=pending,
         decisions=decisions,
     )
@@ -711,7 +845,7 @@ def execute_prepared(
             )
             for result in stats.item_results
         ]
-    _save_manifest_with_pending(prepared.manifest, prepared.library_dir, pending)
+    persister.save_final(_overlay_tracks(prepared.manifest, pending))
     appended_by_plan: list[int] = []
     playlist_results: list = []
     for one_plan in plans:
@@ -720,7 +854,7 @@ def execute_prepared(
         appended_by_plan.append(result.appended)
     xml_output.write_import_xml(plans[0].output_root, plans[0].output)
     _commit_refresh_xml_freshness(
-        prepared, decisions, stats.succeeded, pending
+        prepared, decisions, stats.succeeded, pending, persister
     )
     stats.appended_by_plan = appended_by_plan
     stats.appended = sum(appended_by_plan)

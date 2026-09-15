@@ -180,7 +180,7 @@ class ExecutePreparedTests(XmlFixtureBase):
             ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
             ):
-                stats = execute_prepared(prepared, force=True, checkpoint_every=0)
+                stats = execute_prepared(prepared, force=True, checkpoint_interval_s=0)
             self.assertEqual(
                 stats.conflicts, [f"{src.name} → {dest.parent.name}/{dest.name}"]
             )
@@ -925,10 +925,15 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertEqual(assignment_state(formats["wav"]), "complete")
 
     def test_execute_prepared_checkpoints_manifest_during_batch(self) -> None:
-        """Given several recreates: When execute_prepared runs with checkpoint
-        every completion: Then the manifest is saved between pre-batch and final."""
+        """Given several recreates: When execute_prepared runs with
+        checkpoint_interval_s and a fake clock that advances past the interval:
+        Then the manifest is saved between pre-batch and final."""
         saves: list[dict] = []
         real_save = converter_manifest.save_manifest_tracks
+        clock = {"t": 0.0}
+
+        def now() -> float:
+            return clock["t"]
 
         def tracking_save(tracks, wav_dir):
             saves.append(deepcopy(tracks))
@@ -939,6 +944,7 @@ class ExecutePreparedTests(XmlFixtureBase):
         ) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
+            clock["t"] += 10.0
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
@@ -956,10 +962,15 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertEqual(errors, [])
             assert prepared is not None
             execute_prepared(
-                prepared, force=False, progress=False, checkpoint_every=1
+                prepared,
+                force=False,
+                progress=False,
+                workers=1,
+                checkpoint_interval_s=10.0,
+                clock=now,
             )
 
-        self.assertGreaterEqual(len(saves), 5)
+        self.assertGreaterEqual(len(saves), 3)
         completes = [
             sum(
                 1
@@ -1039,6 +1050,10 @@ class ExecutePreparedTests(XmlFixtureBase):
                 skipped=[],
             )
             writes = {"n": 0}
+            clock = {"t": 0.0}
+
+            def now() -> float:
+                return clock["t"]
 
             def fake_ffmpeg(
                 source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
@@ -1046,6 +1061,7 @@ class ExecutePreparedTests(XmlFixtureBase):
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 dest_path.write_bytes(b"NEW-" + source.name.encode())
                 writes["n"] += 1
+                clock["t"] += 10.0
                 if writes["n"] >= 2:
                     raise RuntimeError("crash after replace")
 
@@ -1061,7 +1077,8 @@ class ExecutePreparedTests(XmlFixtureBase):
                     force=True,
                     progress=False,
                     workers=1,
-                    checkpoint_every=1,
+                    checkpoint_interval_s=10.0,
+                    clock=now,
                 )
             self.assertTrue(stats.errors)
             loaded = converter_manifest.load_manifest(root)
@@ -1139,6 +1156,10 @@ class ExecutePreparedTests(XmlFixtureBase):
                 skipped=[],
             )
             crash = {"on": True, "n": 0}
+            clock = {"t": 0.0}
+
+            def now() -> float:
+                return clock["t"]
 
             def fake_ffmpeg(
                 source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
@@ -1146,6 +1167,7 @@ class ExecutePreparedTests(XmlFixtureBase):
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 dest_path.write_bytes(b"NEW-" + source.name.encode())
                 crash["n"] += 1
+                clock["t"] += 10.0
                 if crash["on"] and crash["n"] >= 2:
                     raise RuntimeError("crash after replace")
 
@@ -1161,7 +1183,8 @@ class ExecutePreparedTests(XmlFixtureBase):
                     force=True,
                     progress=False,
                     workers=1,
-                    checkpoint_every=1,
+                    checkpoint_interval_s=10.0,
+                    clock=now,
                 )
                 self.assertTrue(first.errors)
                 loaded = converter_manifest.load_manifest(root)
@@ -1173,6 +1196,7 @@ class ExecutePreparedTests(XmlFixtureBase):
                 )
                 crash["on"] = False
                 crash["n"] = 0
+                clock["t"] = 0.0
                 plan.manifest = loaded
                 prepared.manifest = loaded
                 prepared.decisions = {}
@@ -1181,7 +1205,8 @@ class ExecutePreparedTests(XmlFixtureBase):
                     force=False,
                     progress=False,
                     workers=1,
-                    checkpoint_every=1,
+                    checkpoint_interval_s=10.0,
+                    clock=now,
                 )
             self.assertEqual(second.errors, [])
             final = converter_manifest.load_manifest(root)
