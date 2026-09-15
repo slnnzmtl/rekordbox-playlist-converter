@@ -67,13 +67,8 @@ class Decision:
 
 
 def preview_reason(action: str, reason: str | None = None) -> str:
-    """User-facing reason plus whether the action writes audio, metadata, or nothing."""
-    base = REASON_LABELS.get(reason or "", "") or ACTION_LABELS.get(action, "")
-    kind = ACTION_WRITE_KIND.get(action)
-    extra = WRITE_KIND_LABELS.get(kind, "") if kind else ""
-    if base and extra:
-        return f"{base} ({extra})"
-    return base or extra
+    """User-facing why string for the preview Reason column (not write kind)."""
+    return REASON_LABELS.get(reason or "", "") or ACTION_LABELS.get(action, "")
 
 
 def _decision(

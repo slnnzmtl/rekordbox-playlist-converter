@@ -6,15 +6,71 @@ import math
 import shutil
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from cli_error import CancelledError
 from convert import plan as plan_module
 from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PlannedTrack
-from convert.rerun import ACTION_WRITE_KIND, Decision, classify_item, preview_reason
+from convert.rerun import (
+    ACTION_LABELS,
+    ACTION_WRITE_KIND,
+    WRITE_KIND_LABELS,
+    Decision,
+    classify_item,
+    preview_reason,
+)
 from convert.paths import _format_size_mb, source_key
 from convert.quality import coerce_output_format
+
+_BIT_DEPTH_LABELS = {"16": "16-bit", "24": "24-bit"}
+_SAMPLE_RATE_LABELS = {"44100": "44.1 kHz", "48000": "48 kHz"}
+
+
+@dataclass(frozen=True)
+class PreviewRow:
+    """User-facing fields for one unique-output preview line (GUI + CLI)."""
+
+    source_display: str
+    relative_dest: str
+    output_format: str
+    action_label: str
+    reason: str
+    write_kind_label: str
+    quality: str
+    size_display: str
+
+
+def format_preview_summary(preview: ConversionPreview) -> str:
+    """Shared summary line for GUI preview dialog and CLI --dry-run."""
+    return (
+        f"{preview.unique_outputs} unique output file(s) · "
+        f"{preview.selected} selected · "
+        f"{preview.resolved} resolved · "
+        f"{preview.duplicates} duplicate(s) · "
+        f"{preview.missing} missing"
+    )
+
+
+def format_preview_row(item: ConversionPreviewItem) -> PreviewRow:
+    """User-facing labels for one ConversionPreviewItem."""
+    fmt = coerce_output_format(item.output_format or "wav")
+    depth = _BIT_DEPTH_LABELS.get(str(item.bit_depth), f"{item.bit_depth}-bit")
+    rate = _SAMPLE_RATE_LABELS.get(
+        str(item.sample_rate), f"{item.sample_rate} Hz"
+    )
+    write_kind = item.write_kind or ACTION_WRITE_KIND.get(item.action, "none")
+    return PreviewRow(
+        source_display=item.source_display,
+        relative_dest=item.relative_dest,
+        output_format=fmt.upper(),
+        action_label=ACTION_LABELS.get(item.action, item.action),
+        reason=item.reason,
+        write_kind_label=WRITE_KIND_LABELS.get(write_kind, write_kind),
+        quality=f"{depth} / {rate}",
+        size_display=item.size_display,
+    )
 
 
 def preview_size(item: PlannedTrack, write_kind: str) -> tuple[int | None, str]:
@@ -108,6 +164,7 @@ def build_conversion_preview(
             reason_code=decision.reason,
             source_stat=decision.source_stat,
             dest_stat=decision.dest_stat,
+            output_format=fmt,
         )
 
     workers = plan_module.convert_worker_count(total, workers=workers)

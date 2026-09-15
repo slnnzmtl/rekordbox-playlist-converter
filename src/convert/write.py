@@ -37,6 +37,7 @@ from convert.models import (
     Plan,
     PlannedTrack,
     PreparedConversion,
+    apply_item_result_aggregates,
 )
 from convert.progress import Progress
 from convert.paths import source_key
@@ -614,7 +615,10 @@ def convert_unique(
         fmt = coerce_output_format(item.output_format)
         key = (source_key(item.source_path), fmt)
         frozen = decisions.get(key) if decisions else None
-        return execute_item(item, frozen, ctx)
+        result = execute_item(item, frozen, ctx)
+        with stats_lock:
+            stats.item_results.append(result)
+        return result
 
     try:
         if not items:
@@ -628,6 +632,7 @@ def convert_unique(
                 fut.result()
     finally:
         bar.close()
+    apply_item_result_aggregates(stats)
     return stats
 
 
@@ -666,14 +671,37 @@ def execute_prepared(
         pending_assignments=pending,
         decisions=decisions,
     )
+    playlists_by_dest: dict[Path, list[str]] = {}
+    for one_plan in plans:
+        for track in one_plan.tracks:
+            names = playlists_by_dest.setdefault(track.dest_path, [])
+            if one_plan.wav_playlist_name not in names:
+                names.append(one_plan.wav_playlist_name)
+    if playlists_by_dest and stats.item_results:
+        stats.item_results = [
+            ItemResult(
+                source=result.source,
+                destination=result.destination,
+                action=result.action,
+                outcome=result.outcome,
+                playlists=tuple(playlists_by_dest.get(result.destination, ())),
+                error=result.error,
+                write=result.write,
+            )
+            for result in stats.item_results
+        ]
     _save_manifest_with_pending(prepared.manifest, prepared.library_dir, pending)
     appended_by_plan: list[int] = []
+    playlist_results: list = []
     for one_plan in plans:
-        appended_by_plan.append(xml_output.apply_xml(one_plan, stats.succeeded))
+        result = xml_output.apply_xml(one_plan, stats.succeeded)
+        playlist_results.append(result)
+        appended_by_plan.append(result.appended)
     xml_output.write_import_xml(plans[0].output_root, plans[0].output)
     _commit_refresh_xml_freshness(
         prepared, decisions, stats.succeeded, pending
     )
     stats.appended_by_plan = appended_by_plan
     stats.appended = sum(appended_by_plan)
+    stats.playlist_results = playlist_results
     return stats

@@ -6,6 +6,8 @@ import copy
 import os
 import tempfile
 import xml.etree.ElementTree as ET
+from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 
 import ffmpeg_tools
@@ -172,7 +174,25 @@ def playlist_keys(node: ET.Element) -> list[str]:
     return [t.get("Key", "") for t in node.findall("TRACK")]
 
 
-def apply_xml(plan: Plan, success: set[tuple[str, str]]) -> int:
+@dataclass(frozen=True)
+class PlaylistApplyResult:
+    """Outcome of syncing one generated playlist NODE to desired Keys."""
+
+    appended: int = 0
+    removed: int = 0
+    reordered: bool = False
+    fully_synced: bool = True
+
+
+def _replace_playlist_keys(node: ET.Element, keys: list[str]) -> None:
+    for child in list(node.findall("TRACK")):
+        node.remove(child)
+    for tid in keys:
+        ET.SubElement(node, "TRACK", {"Key": tid})
+    node.set("Entries", str(len(keys)))
+
+
+def apply_xml(plan: Plan, success: set[tuple[str, str]]) -> PlaylistApplyResult:
     collection = plan.output_root.find("COLLECTION")
     if collection is None:
         collection = ET.SubElement(plan.output_root, "COLLECTION", {"Entries": "0"})
@@ -207,21 +227,49 @@ def apply_xml(plan: Plan, success: set[tuple[str, str]]) -> int:
         dest_to_id[item.dest_location] = tid
         by_location[item.dest_location] = clone
 
-    wav_node, existed = find_or_create_wav_playlist(plan.output_root, plan.wav_playlist_name)
-    appended = 0
-    present = set(playlist_keys(wav_node)) if existed else set()
-    seen_this_run: set[str] = set()
+    complete = (not plan.warnings) and all(
+        assignment_key(item) in success for item in plan.tracks
+    )
+    if not complete:
+        return PlaylistApplyResult(fully_synced=False)
+
+    desired: list[str] = []
     for item in plan.tracks:
         if item.dest_location not in dest_to_id:
             continue
-        tid = dest_to_id[item.dest_location]
-        if tid in present or tid in seen_this_run:
-            continue
-        ET.SubElement(wav_node, "TRACK", {"Key": tid})
-        present.add(tid)
-        seen_this_run.add(tid)
-        appended += 1
-    return appended
+        desired.append(dest_to_id[item.dest_location])
+
+    wav_node, existed = find_or_create_wav_playlist(
+        plan.output_root, plan.wav_playlist_name
+    )
+    existing = playlist_keys(wav_node) if existed else []
+    if existing == desired:
+        return PlaylistApplyResult(fully_synced=True)
+
+    # Count deltas before replace for reporting.
+    old_c = Counter(existing)
+    new_c = Counter(desired)
+    appended = sum((new_c - old_c).values())
+    removed = sum((old_c - new_c).values())
+    # Reordered when same multiset but different sequence, or any non-prefix change.
+    same_multiset = old_c == new_c
+    reordered = same_multiset and existing != desired
+    if not same_multiset and existing and desired:
+        # Also treat as reordered when order of shared keys changed beyond append/remove-only.
+        if not (
+            len(existing) <= len(desired) and existing == desired[: len(existing)]
+        ) and not (
+            len(desired) <= len(existing) and desired == existing[: len(desired)]
+        ):
+            reordered = True
+
+    _replace_playlist_keys(wav_node, desired)
+    return PlaylistApplyResult(
+        appended=appended,
+        removed=removed,
+        reordered=reordered,
+        fully_synced=True,
+    )
 
 
 def validate_import_xml(root: ET.Element) -> list[str]:

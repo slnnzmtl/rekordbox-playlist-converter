@@ -839,6 +839,8 @@ class RewriteContainerTests(unittest.TestCase):
             src_size = struct.unpack_from("<I", src_raw, src_at + 4)[0]
             src_raw[src_at + 8 : src_at + 8 + src_size] = b"\x11" * src_size
             src.write_bytes(src_raw)
+            st = src.stat()
+            os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000))
             encoded: list[Path] = []
 
             def fake_ffmpeg(
@@ -962,8 +964,8 @@ class RewriteContainerTests(unittest.TestCase):
                 stats = convert_unique(plan, force=False)
             self.assertEqual(encoded, [])
             self.assertEqual(stats.errors, [])
-            self.assertEqual(stats.copied, 1)
-            self.assertEqual(stats.converted, 0)
+            self.assertEqual(stats.pcm_rebuilt, 1)
+            self.assertEqual(stats.copied, 0)
             self.assertEqual(stats.converted, 0)
             self.assertTrue(
                 cdj_wav.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100)
@@ -1176,7 +1178,8 @@ class RewriteContainerTests(unittest.TestCase):
             ):
                 stats = execute_prepared(prepared, force=False)
             self.assertTrue(dest.is_file())
-            self.assertEqual(stats.copied, 1)
+            self.assertEqual(stats.recreated, 1)
+            self.assertEqual(stats.copied, 0)
             self.assertEqual(stats.errors, [])
             self.assertIn((source_key(src), "wav"), stats.succeeded)
             self.assertFalse(

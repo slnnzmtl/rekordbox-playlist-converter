@@ -213,7 +213,53 @@ class PrintSummaryTests(unittest.TestCase):
             rb.print_summary(plan, stats, dry_run=False)
         self.assertIn("1 converted", buf.getvalue())
         self.assertIn("2 conflicts", buf.getvalue())
+        self.assertIn("Generated playlist:", buf.getvalue())
+        self.assertNotIn("New playlist:", buf.getvalue())
 
+    def test_print_summary_reports_rerun_actions_and_failures(self) -> None:
+        """Given mixed ConvertStats: When print_summary: Then reused, rebuilt,
+        metadata-refreshed, recreated, missing, and failed counts appear."""
+        import io
+        from convert.models import ConvertStats, Plan
+
+        plan = Plan(
+            playlist_name="P",
+            wav_playlist_name="P [WAV]",
+            library_dir=Path("/tmp"),
+            media_dir=Path("/tmp/WAV"),
+            output=Path("/tmp/o.xml"),
+            tracks=[],
+            unique=[],
+            source_root=ET.Element("DJ_PLAYLISTS"),
+            output_root=ET.Element("DJ_PLAYLISTS"),
+            output_existed=False,
+            warnings=["missing.flac"],
+        )
+        stats = ConvertStats(
+            converted=1,
+            copied=1,
+            pcm_rebuilt=1,
+            metadata_refreshed=2,
+            reused=3,
+            recreated=1,
+            conflicts=["A.wav"],
+            errors=["boom for x.flac"],
+        )
+        buf = io.StringIO()
+        with patch("sys.stdout", buf):
+            rb.print_summary(plan, stats, dry_run=False)
+        out = buf.getvalue()
+        self.assertIn("1 converted", out)
+        self.assertIn("1 copied", out)
+        self.assertIn("1 PCM-rebuilt", out)
+        self.assertIn("2 metadata-refreshed", out)
+        self.assertIn("3 reused", out)
+        self.assertIn("1 recreated", out)
+        self.assertIn("1 conflict", out)
+        self.assertIn("1 missing skipped", out)
+        self.assertIn("1 failed", out)
+        self.assertIn("boom for x.flac", out)
+        self.assertIn("x.flac", out)
 
 
 if __name__ == "__main__":

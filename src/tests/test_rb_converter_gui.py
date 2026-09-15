@@ -32,6 +32,12 @@ class TotalSuccessfulConversionsTests(unittest.TestCase):
         )
         self.assertEqual(
             total_successful_conversions(
+                [ConvertStats(pcm_rebuilt=2, metadata_refreshed=1)]
+            ),
+            3,
+        )
+        self.assertEqual(
+            total_successful_conversions(
                 [ConvertStats(converted=0, copied=0, skipped=5, appended=10)]
             ),
             0,

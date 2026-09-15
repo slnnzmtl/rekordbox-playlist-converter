@@ -122,7 +122,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
     ) -> None:
         """Given execute_prepared returns successes (and optional encode errors)
         then sets cancel: When the GUI write worker finishes: Then status is
-        Cancelled and encode errors still surface in the list dialog."""
+        Cancelled and encode errors still surface in the unified report."""
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -152,7 +152,9 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 ConverterApp, "_show_conversion_preview"
             ), patch.object(
                 ConverterApp, "_show_list_dialog", create=True
-            ) as show_list:
+            ) as show_list, patch.object(
+                ConverterApp, "_show_done_dialog"
+            ) as show_done:
                 execute = mocks["execute_prepared"]
                 showerror = mocks["show_centered_message"]
                 root = tk.Tk()
@@ -176,14 +178,20 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
 
                 execute.assert_called()
                 showerror.assert_not_called()
-                show_list.assert_called()
-                joined = list_dialog_text(show_list)
+                self.assertTrue(
+                    show_done.called,
+                    "cancel after encode must use the unified conversion report",
+                )
+                done_msg = show_done.call_args[0][0]
+                joined = list_dialog_text(show_list) if show_list.called else ""
                 self.assertIn(
                     "boom",
-                    joined,
+                    f"{joined}\n{done_msg}",
                     "cancel with known encode errors must surface them in "
-                    f"the scrollable list dialog; got lines={joined!r}",
+                    f"the conversion report; got {done_msg!r}",
                 )
+                done_title = show_done.call_args.kwargs.get("title")
+                self.assertEqual(done_title, "Cancelled")
                 self.assertEqual(app.status_var.get(), "Cancelled.")
                 self.assertFalse(app._busy)
         except tk.TclError:
@@ -249,17 +257,18 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 execute.assert_called()
 
                 showerror.assert_not_called()
-                show_list.assert_called()
-                joined = list_dialog_text(show_list)
+                joined = ""
+                if show_list.called:
+                    joined = list_dialog_text(show_list)
+                self.assertTrue(
+                    show_done.called,
+                    "mixed success and encode errors must still show the Done report",
+                )
+                done_msg = show_done.call_args[0][0]
                 self.assertIn(
                     "boom",
-                    joined,
-                    "encode errors must appear in the scrollable list "
-                    f"dialog; got lines={joined!r}",
-                )
-                self.assertFalse(
-                    show_done.called,
-                    "must not finish as a clean Done when encode errors exist",
+                    f"{joined}\n{done_msg}",
+                    "encode errors must appear in the conversion report",
                 )
                 self.assertFalse(app._busy)
         except tk.TclError:
@@ -396,8 +405,8 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
         self,
     ) -> None:
         """Given execute_prepared succeeds: When cancel_event is set before
-        finish scheduling: Then the GUI takes the _finish_cancelled path
-        (status Cancelled.), not _finish_ok / Done."""
+        finish scheduling: Then the unified report is titled Cancelled
+        (status Cancelled.), not Done."""
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -452,7 +461,11 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                     "late cancel after XML write must finish cancelled, "
                     f"not Done; got {app.status_var.get()!r}",
                 )
-                show_done.assert_not_called()
+                show_done.assert_called()
+                self.assertEqual(show_done.call_args.kwargs.get("title"), "Cancelled")
+                done_message = show_done.call_args.args[0]
+                self.assertIn("Import into Rekordbox", done_message)
+                self.assertIn("Imported Library", done_message)
                 self.assertFalse(app._busy)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -461,7 +474,7 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
                 root.destroy()
 
 class MissingFilesDialogTests(unittest.TestCase):
-    def test_finish_no_conversions_lists_missing_paths_in_scrollbox(self) -> None:
+    def test_finish_no_conversions_lists_missing_paths_in_report(self) -> None:
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -479,7 +492,9 @@ class MissingFilesDialogTests(unittest.TestCase):
                     startup_patches(),
                     {"show_centered_message": None},
                 )
-            ), patch.object(tk.Toplevel, "wait_window"):
+            ), patch.object(tk.Toplevel, "wait_window"), patch.object(
+                ConverterApp, "_show_done_dialog"
+            ) as done:
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
@@ -487,27 +502,21 @@ class MissingFilesDialogTests(unittest.TestCase):
                     ["48khz [WAV]: 2 missing skipped"],
                     warnings,
                 )
-                dlg = None
-                for child in root.winfo_children():
-                    if isinstance(child, tk.Toplevel):
-                        dlg = child
-                        break
-                self.assertIsNotNone(dlg)
-                listbox = find_listbox(dlg)
-                self.assertIsNotNone(listbox)
-                self.assertEqual(
-                    list(listbox.get(0, tk.END)),
-                    warnings,
-                )
+                done.assert_called_once()
+                args, kwargs = done.call_args
+                self.assertEqual(kwargs.get("title"), "No conversions")
+                message = args[0]
+                self.assertIn("missing source file: /Volumes/SSD/a.flac", message)
+                self.assertIn("missing source file: /Volumes/SSD/b.flac", message)
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
             if root is not None:
                 root.destroy()
 
-    def test_finish_no_conversions_skip_summary_uses_centered_message(self) -> None:
+    def test_finish_no_conversions_skip_summary_uses_report_dialog(self) -> None:
         """Given skipped tracks and no missing-file list: When finish: Then
-        the summary is a centered app dialog, not a macOS system alert."""
+        one report dialog is shown with title No conversions."""
         if not tk_available():
             self.skipTest("_tkinter not available")
 
@@ -521,15 +530,15 @@ class MissingFilesDialogTests(unittest.TestCase):
                     startup_patches(),
                     {"show_centered_message": None},
                 )
-            ) as mocks:
+            ), patch.object(ConverterApp, "_show_done_dialog") as done:
                 root = tk.Tk()
                 root.withdraw()
                 app = ConverterApp(root, documents_accessible=False)
                 app._finish_no_conversions(["48khz [AIFF]: 8 skipped"])
-                mocks["show_centered_message"].assert_called()
-                args = mocks["show_centered_message"].call_args.args
-                self.assertEqual(args[1], "No conversions")
-                self.assertIn("8 skipped", args[2])
+                done.assert_called_once()
+                args, kwargs = done.call_args
+                self.assertEqual(kwargs.get("title"), "No conversions")
+                self.assertIn("8 skipped", args[0])
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

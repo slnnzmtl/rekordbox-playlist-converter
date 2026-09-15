@@ -19,10 +19,20 @@ from convert import (
     prepare,
     prepare_batch,
 )
+from convert.models import (
+    conversion_exit_code,
+    format_conversion_counts,
+    format_import_guidance,
+    format_playlist_report,
+    stats_for_playlist,
+)
 from convert.plan import DEFAULT_OUTPUT, DEFAULT_WAV_DIR
 from convert.preview import (
     build_conversion_preview,
+    format_preview_row,
+    format_preview_summary,
     insufficient_output_space_message,
+    preview_block_message,
     preview_write_bytes,
 )
 from gui_prefs import import_xml_path
@@ -193,15 +203,18 @@ def prompt_paths(wav_dir: Path, output: Path | None) -> tuple[Path, Path]:
     return chosen_wav, resolve_cli_output(chosen_wav, None)
 
 
-def print_import_hints(output: Path, *, output_format: str = "wav") -> None:
-    suffix = " [AIFF]" if output_format == "aiff" else " [WAV]"
+def print_import_hints(
+    output: Path,
+    *,
+    output_format: str = "wav",
+    playlists: list[tuple[str, object]] | None = None,
+) -> None:
     print()
-    print("Import into Rekordbox")
-    print("  1. Preferences → View → Layout → enable rekordbox xml")
-    print("  2. Preferences → Advanced → Database → Imported Library →")
-    print(f"     {output}")
-    print("  3. Browser → rekordbox xml → Playlists → Import Playlist")
-    print(f"     (or drag the{suffix} playlist into Playlists)")
+    print(
+        format_import_guidance(
+            output, output_format=output_format, playlists=playlists
+        )
+    )
 
 
 def prompt_wizard(
@@ -289,14 +302,14 @@ def run_convert_batch(
 
     if dry_run:
         print_conversion_preview(plans, preview)
+        block = preview_block_message(preview, wav_dir)
+        if block is not None:
+            print(block, file=sys.stderr)
         return 0
 
-    space_issue = insufficient_output_space_message(
-        wav_dir,
-        preview_write_bytes(preview),
-    )
-    if space_issue is not None:
-        print(space_issue, file=sys.stderr)
+    block = preview_block_message(preview, wav_dir)
+    if block is not None:
+        print(block, file=sys.stderr)
         return 1
 
     try:
@@ -305,6 +318,7 @@ def run_convert_batch(
             force=force,
             progress=sys.stderr.isatty(),
         )
+        playlist_pairs: list[tuple[str, object]] = []
         for i, plan in enumerate(plans):
             if len(plans) > 1:
                 print()
@@ -314,26 +328,30 @@ def run_convert_batch(
             appended = (
                 stats.appended_by_plan[i] if i < len(stats.appended_by_plan) else 0
             )
-            plan_stats = ConvertStats(
-                converted=stats.converted if i == 0 else 0,
-                copied=stats.copied if i == 0 else 0,
-                skipped=stats.skipped if i == 0 else 0,
-                conflicts=list(stats.conflicts) if i == 0 else [],
-                errors=list(stats.errors) if i == len(plans) - 1 else [],
-                succeeded=set(stats.succeeded),
+            playlist_result = (
+                stats.playlist_results[i] if i < len(stats.playlist_results) else None
+            )
+            playlist_pairs.append((plan.wav_playlist_name, playlist_result))
+            plan_stats = stats_for_playlist(
+                stats,
+                plan.wav_playlist_name,
                 appended=appended,
             )
-            print_summary(plan, plan_stats, dry_run=False)
+            print_summary(
+                plan, plan_stats, dry_run=False, playlist_result=playlist_result
+            )
+        print_import_hints(
+            plans[0].output,
+            output_format=output_format,
+            playlists=playlist_pairs,
+        )
     except OSError as exc:
         print(f"cannot write converter manifest: {exc}", file=sys.stderr)
         return 1
     except CliError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    if stats.errors:
-        print_errors(stats.errors)
-        return 1
-    return 0
+    return conversion_exit_code(stats)
 
 
 def print_errors(errors: list[str]) -> None:
@@ -348,13 +366,7 @@ def print_warnings(warnings: list[str]) -> None:
 
 def print_conversion_preview(plans: list[Plan], preview) -> None:
     """Print shared ConversionPreview for CLI --dry-run (read-only)."""
-    print(
-        f"{preview.unique_outputs} unique output file(s) · "
-        f"{preview.selected} selected · "
-        f"{preview.resolved} resolved · "
-        f"{preview.duplicates} duplicate(s) · "
-        f"{preview.missing} missing"
-    )
+    print(format_preview_summary(preview))
     print()
     print("Format directory:")
     print(plans[0].media_dir)
@@ -362,12 +374,14 @@ def print_conversion_preview(plans: list[Plan], preview) -> None:
     if preview.items:
         print("Inputs:")
         for item in preview.items:
-            quality = f"{item.bit_depth}-bit / {item.sample_rate} Hz"
+            row = format_preview_row(item)
             print(
-                f"{item.source_display}  {item.action}  {quality}  {item.size_display}"
+                f"{row.source_display}  {row.relative_dest}  {row.output_format}  "
+                f"{row.action_label}  {row.reason}  {row.write_kind_label}  "
+                f"{row.quality}  {row.size_display}"
             )
         print()
-    print("New playlist:")
+    print("Generated playlist:")
     for plan in plans:
         print(plan.wav_playlist_name)
     print()
@@ -379,6 +393,8 @@ def print_summary(
     plan: Plan,
     stats: ConvertStats | None,
     dry_run: bool,
+    *,
+    playlist_result: object | None = None,
 ) -> None:
     unique_n = len(plan.unique)
     print("Source playlist:")
@@ -392,23 +408,12 @@ def print_summary(
         print("Output:")
         print(plan.output)
         print()
-        print("New playlist:")
+        print("Generated playlist:")
         print(plan.wav_playlist_name)
         return
     assert stats is not None
     print("Converted:")
-    parts = []
-    if stats.converted:
-        parts.append(f"{stats.converted} converted")
-    if stats.copied:
-        parts.append(f"{stats.copied} copied")
-    if stats.skipped:
-        parts.append(f"{stats.skipped} skipped")
-    if stats.conflicts:
-        n = len(stats.conflicts)
-        parts.append(f"{n} conflict{'s' if n != 1 else ''}")
-    if plan.warnings:
-        parts.append(f"{len(plan.warnings)} missing skipped")
+    parts = format_conversion_counts(stats, missing=len(plan.warnings))
     if not parts:
         parts.append(f"{unique_n} audio files")
     print(f"{', '.join(parts)} → {plan.media_dir}")
@@ -416,11 +421,29 @@ def print_summary(
     print("Output:")
     print(plan.output)
     print()
-    print("New playlist:")
-    if stats.appended:
-        print(f"{plan.wav_playlist_name} (+{stats.appended} entries)")
-    else:
-        print(plan.wav_playlist_name)
+    print("Generated playlist:")
+    for line in format_playlist_report(
+        plan.wav_playlist_name,
+        playlist_result,
+        count_parts=[],
+        missing=list(plan.warnings) if plan.warnings else None,
+    ):
+        print(line)
+    if stats.conflicts:
+        print()
+        print("Conflicts:")
+        for name in stats.conflicts:
+            print(name)
+    if stats.state_changed:
+        print()
+        print("State changed (refresh preview):")
+        for name in stats.state_changed:
+            print(name)
+    if stats.errors:
+        print()
+        print("Failed:")
+        for err in stats.errors:
+            print(err)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -462,9 +485,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    from convert.paths import abs_path
-
-    rc = run_convert_batch(
+    return run_convert_batch(
         xml_path,
         playlist_refs,
         wav_dir,
@@ -476,11 +497,6 @@ def main(argv: list[str] | None = None) -> int:
         max_sample_rate=max_sample_rate,
         source_root=shared_root,
     )
-    if rc != 0:
-        return rc
-    if not args.dry_run:
-        print_import_hints(abs_path(output), output_format=output_format)
-    return 0
 
 
 __all__ = [

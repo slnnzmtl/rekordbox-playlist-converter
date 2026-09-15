@@ -77,7 +77,8 @@ class ExecutePreparedTests(XmlFixtureBase):
 
             stats = execute_prepared(prepared, force=False, progress=False)
 
-        self.assertEqual(stats.converted, 3)
+        self.assertEqual(stats.recreated, 3)
+        self.assertEqual(stats.converted, 0)
         self.assertEqual(len(encoded), 3)
         self.assertTrue((self.wav_dir / converter_manifest.MANIFEST_NAME).is_file())
         for item in prepared.items:
@@ -180,7 +181,9 @@ class ExecutePreparedTests(XmlFixtureBase):
                 xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
             ):
                 stats = execute_prepared(prepared, force=True, checkpoint_every=0)
-            self.assertEqual(stats.conflicts, [dest.name])
+            self.assertEqual(
+                stats.conflicts, [f"{src.name} → {dest.parent.name}/{dest.name}"]
+            )
             self.assertEqual(encoded, [])
             self.assertEqual(dest.read_bytes(), prior)
             on_disk = converter_manifest.load_manifest(root)
@@ -283,7 +286,9 @@ class ExecutePreparedTests(XmlFixtureBase):
                 xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
             ):
                 stats = execute_prepared(prepared, force=True)
-            self.assertEqual(stats.state_changed, [dest.name])
+            self.assertEqual(
+                stats.state_changed, [f"{src.name} → {dest.parent.name}/{dest.name}"]
+            )
             self.assertEqual(stats.conflicts, [])
             self.assertEqual(encoded, [])
             self.assertEqual(dest.read_bytes(), prior)
@@ -342,7 +347,9 @@ class ExecutePreparedTests(XmlFixtureBase):
 
             with patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
                 stats = convert_unique(plan, force=False)
-            self.assertEqual(stats.conflicts, [dest.name])
+            self.assertEqual(
+                stats.conflicts, [f"{src.name} → {dest.parent.name}/{dest.name}"]
+            )
             self.assertEqual(stats.converted, 0)
             self.assertEqual(encoded, [])
             self.assertEqual(dest.read_bytes(), prior)
@@ -822,7 +829,9 @@ class ExecutePreparedTests(XmlFixtureBase):
             ):
                 stats = execute_prepared(prepared, force=False)
             self.assertEqual(encoded, [])
-            self.assertEqual(stats.conflicts, [dest.name])
+            self.assertEqual(
+                stats.conflicts, [f"{src.name} → {dest.parent.name}/{dest.name}"]
+            )
             self.assertEqual(dest.read_bytes(), prior)
             written = ET.parse(plan.output).getroot()
             tracks = written.findall("COLLECTION/TRACK")
@@ -862,7 +871,8 @@ class ExecutePreparedTests(XmlFixtureBase):
             assert prepared is not None
             stats = execute_prepared(prepared, force=False, progress=False)
 
-        self.assertEqual(stats.converted, 3)
+        self.assertEqual(stats.recreated, 3)
+        self.assertEqual(stats.converted, 0)
         self.assertEqual(len(encoded), 3)
         loaded = converter_manifest.load_manifest(self.wav_dir)
         for item in prepared.items:

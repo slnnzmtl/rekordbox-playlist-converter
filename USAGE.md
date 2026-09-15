@@ -64,11 +64,14 @@ You will be asked to:
 
 These quality settings are maxima, not targets. Defaults stay WAV / 24-bit / 48 kHz.
 
-Your original files stay where they are. Re-running with the same output folder **adds** new tracks and refreshes metadata for existing dest paths. Each unique source converts once per batch even if it appears in several playlists.
+Your original files stay where they are. Re-running with the same output folder
+rewrites the generated playlist to the current source order when every resolved
+track succeeds, and refreshes metadata for existing dest paths. Each unique
+source converts once per batch even if it appears in several playlists.
 
 Assignments are sticky per source and format. If two different sources would share `<artist> - <track>`, the second gets `(2)`, then `(3)`, and so on. Deleting a generated audio file recreates it at the same assignment on the next run. Deleting the hidden manifest leaves the audio unmanaged and the folder is refused — choose a new empty output folder.
 
-CLI `--dry-run` prints the same conversion plan the GUI Convert preview shows (and writes nothing). In the app, Convert opens that preview first; **Back** discards it and writes nothing. After a successful run, **Reveal output folder** opens the chosen output folder.
+CLI `--dry-run` prints the same conversion plan the GUI Convert preview shows: input, reserved destination, action, reason, write kind, quality, and size. Convert is refused while conflicts remain or the output volume is too small. After a run, the CLI summary and GUI Done dialog report converted, copied, PCM-rebuilt, metadata-refreshed, reused, recreated, missing, conflicting, and failed tracks without hiding successes. **Reveal output folder** opens the chosen output folder.
 
 ### Edit a generated Import XML (GUI)
 

@@ -18,7 +18,7 @@ import converter_manifest
 from cli_error import CancelledError, CliError
 from convert import prepare, prepare_batch
 from convert.format_policy import SUPPORTED_LOSSLESS_EXT
-from convert.preview import insufficient_output_space_message, preview_write_bytes
+from convert.preview import insufficient_output_space_message, preview_block_message, preview_write_bytes
 from convert.write import execute_prepared
 from gui.dialogs import ask_centered_yesno, show_centered_message
 from gui_prefs import (
@@ -99,5 +99,6 @@ __all__ = [
     "unreferenced_collection_track_ids",
     "unknown_playlist_node",
     "insufficient_output_space_message",
+    "preview_block_message",
     "preview_write_bytes",
 ]

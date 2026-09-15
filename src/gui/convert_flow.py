@@ -8,7 +8,16 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Mapping
 
-from convert.models import PreparedConversion
+from convert.models import (
+    ConvertStats,
+    PreparedConversion,
+    conversion_report_title,
+    format_conversion_counts,
+    format_import_guidance,
+    format_playlist_report,
+    stats_for_playlist,
+)
+from convert.preview import format_preview_summary
 from convert.quality import (
     coerce_bit_depth,
     coerce_output_format,
@@ -18,9 +27,6 @@ from convert.rerun import ACTION_LABELS
 from gui import constants
 from gui import dialogs as gui_dialogs
 from gui import runtime
-from gui.helpers import (
-    total_successful_conversions,
-)
 
 
 @dataclass(frozen=True)
@@ -201,16 +207,10 @@ class ConvertFlowMixin:
         """Modal unique-output preview; Convert continues, Back/Escape discard."""
         self._close_preview_dialog()
         preview = prepared.preview
-        summary = (
-            f"{preview.unique_outputs} unique output file(s) · "
-            f"{preview.selected} selected · "
-            f"{preview.resolved} resolved · "
-            f"{preview.duplicates} duplicate(s) · "
-            f"{preview.missing} missing"
-        )
-        space_issue = runtime.insufficient_output_space_message(
+        summary = format_preview_summary(preview)
+        space_issue = runtime.preview_block_message(
+            preview,
             prepared.library_dir,
-            runtime.preview_write_bytes(preview),
         )
         self._preview_dialog = gui_dialogs.show_conversion_preview_dialog(
             self.root,
@@ -254,12 +254,12 @@ class ConvertFlowMixin:
         prepared = self._prepared_conversion
         if prepared is None:
             return
-        space_issue = runtime.insufficient_output_space_message(
+        space_issue = runtime.preview_block_message(
+            prepared.preview,
             prepared.library_dir,
-            runtime.preview_write_bytes(prepared.preview),
         )
         if space_issue:
-            runtime.show_centered_message(self.root, "Not enough space", space_issue)
+            runtime.show_centered_message(self.root, "Cannot convert", space_issue)
             return
         self._close_preview_dialog()
         self._prepared_conversion = None
@@ -316,50 +316,66 @@ class ConvertFlowMixin:
                 )
                 return
 
+            playlist_pairs: list[tuple[str, object]] = []
             for i, plan in enumerate(plans):
-                parts = []
-                if batch_stats.converted and plan is plans[0]:
-                    parts.append(f"{batch_stats.converted} converted")
-                if batch_stats.copied and plan is plans[0]:
-                    parts.append(f"{batch_stats.copied} copied")
-                if batch_stats.skipped and plan is plans[0]:
-                    parts.append(f"{batch_stats.skipped} skipped")
-                if batch_stats.conflicts and plan is plans[0]:
-                    n = len(batch_stats.conflicts)
-                    parts.append(f"{n} conflict{'s' if n != 1 else ''}")
                 appended = (
                     batch_stats.appended_by_plan[i]
                     if i < len(batch_stats.appended_by_plan)
                     else 0
                 )
-                if appended:
-                    parts.append(f"+{appended} playlist entries")
-                if plan.warnings:
-                    parts.append(f"{len(plan.warnings)} missing skipped")
-                detail = ", ".join(parts) if parts else "done"
-                summaries.append(f"{plan.wav_playlist_name}: {detail}")
+                playlist_result = (
+                    batch_stats.playlist_results[i]
+                    if i < len(batch_stats.playlist_results)
+                    else None
+                )
+                playlist_pairs.append((plan.wav_playlist_name, playlist_result))
+                plan_stats = stats_for_playlist(
+                    batch_stats,
+                    plan.wav_playlist_name,
+                    appended=appended,
+                )
+                parts = format_conversion_counts(plan_stats, missing=0)
+                summaries.extend(
+                    format_playlist_report(
+                        plan.wav_playlist_name,
+                        playlist_result,
+                        count_parts=parts,
+                        missing=list(plan.warnings),
+                    )
+                )
+                if plan_stats.state_changed:
+                    summaries.append("State changed (refresh preview):")
+                    summaries.extend(plan_stats.state_changed)
+                if plan_stats.errors:
+                    summaries.append("Failed:")
+                    summaries.extend(plan_stats.errors)
+                if plan_stats.conflicts:
+                    summaries.append("Conflicts:")
+                    summaries.extend(plan_stats.conflicts)
+            # Batch-level skipped (deduped across plans) only when not already
+            # listed under a playlist via plan.warnings.
+            if skipped:
+                already = {w for plan in plans for w in plan.warnings}
+                extra = [s for s in skipped if s not in already]
+                if extra:
+                    summaries.append("Missing skipped:")
+                    summaries.extend(extra)
 
-            if self._cancel_event.is_set():
-                _finish_cancel_with_errors(batch_stats.errors or None)
-                return
             if total == 0:
                 self._ui(lambda: self._set_progress(0, 0))
             else:
                 self._ui(lambda t=total: self._set_progress(t, t))
-            if batch_stats.errors:
-                self._ui(lambda e=batch_stats.errors: self._finish_error(e))
-                return
             out = str(output)
-            if total_successful_conversions([batch_stats]) == 0:
-                self._ui(
-                    lambda s=summaries, w=skipped: self._finish_no_conversions(s, w)
+            title = conversion_report_title(
+                batch_stats,
+                cancelled=self._cancel_event.is_set(),
+                missing=sum(len(plan.warnings) for plan in plans),
+            )
+            self._ui(
+                lambda s=summaries, o=out, folder=output.parent, t=title, p=playlist_pairs: self._finish_report(
+                    s, o, folder, title=t, playlists=p
                 )
-            else:
-                self._ui(
-                    lambda s=summaries, o=out, w=skipped, folder=output.parent: self._finish_ok(
-                        s, o, w, folder
-                    )
-                )
+            )
         except runtime.CliError as exc:
             self._ui(lambda e=str(exc): self._finish_error(e))
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
@@ -403,21 +419,13 @@ class ConvertFlowMixin:
         summaries: list[str],
         warnings: list[str] | None = None,
     ) -> None:
-        self._prepared_conversion = None
-        self._confirm_prepared = None
-        self._set_busy(False)
-        self._animate_progress_to(0, snap=True)
-        self.status_var.set("Finished with no audio files converted or copied.")
+        """Compatibility wrapper: one report dialog titled No conversions."""
+        body = list(summaries)
         if warnings:
-            self._show_list_dialog(
-                "No conversions",
-                "These files were missing and were skipped:",
-                warnings,
-                summary="\n".join(summaries),
-            )
-            return
-        runtime.show_centered_message(
-            self.root, "No conversions", "\n".join(summaries)
+            body.append("Missing skipped:")
+            body.extend(warnings)
+        self._finish_report(
+            body, output="", output_folder=None, title="No conversions"
         )
 
     def _finish_ok(
@@ -427,32 +435,82 @@ class ConvertFlowMixin:
         warnings: list[str] | None = None,
         output_folder: Path | None = None,
     ) -> None:
+        """Compatibility wrapper: one Done report including optional missing."""
+        body = list(summaries)
+        if warnings:
+            body.append("Missing skipped:")
+            body.extend(warnings)
+        self._finish_report(body, output, output_folder, title="Done")
+
+    def _import_xml_instructions(
+        self,
+        body: str,
+        output: str,
+        playlists: list[tuple[str, object]] | None = None,
+    ) -> str:
+        fmt = self.format_var.get().strip().lower()
+        guidance = format_import_guidance(
+            Path(output),
+            output_format=fmt,
+            playlists=playlists,
+        )
+        return f"{body}\n\n{guidance}"
+
+    def _finish_report(
+        self,
+        summaries: list[str],
+        output: str,
+        output_folder: Path | None,
+        *,
+        title: str,
+        playlists: list[tuple[str, object]] | None = None,
+    ) -> None:
         self._prepared_conversion = None
         self._confirm_prepared = None
         self._set_busy(False)
-        self._animate_progress_to(100, snap=True)
+        snap_progress = 0 if title in {"No conversions", "Failed"} else 100
+        self._animate_progress_to(snap_progress, snap=True)
         body = "\n".join(summaries)
-        self.status_var.set(
-            f"Done. Point Rekordbox Imported Library at:\n{output}"
-        )
-        if warnings:
-            self._show_list_dialog(
-                "Skipped missing tracks",
-                "These files were missing and were skipped:",
-                warnings,
+        if title == "No conversions":
+            self.status_var.set("Finished with no audio files converted or copied.")
+            self._show_done_dialog(body, output_folder, title=title)
+            return
+        if title == "Failed":
+            self.status_var.set("Failed.")
+            self._show_done_dialog(body, output_folder, title=title)
+            return
+        if title == "Cancelled":
+            self.status_var.set("Cancelled.")
+            self._cancel_cancelled_clear()
+            self._cancelled_clear_id = self.root.after(
+                constants.CANCELLED_STATUS_CLEAR_MS, self._clear_cancelled_status
             )
-        fmt = self.format_var.get().strip().lower()
-        suffix = "[AIFF]" if fmt == "aiff" else "[WAV]"
+            message = (
+                self._import_xml_instructions(body, output, playlists)
+                if output
+                else body
+            )
+            self._show_done_dialog(message, output_folder, title=title)
+            return
+        if title == "Partial":
+            if output:
+                self.status_var.set(
+                    f"Partial. Point Rekordbox Imported Library at:\n{output}"
+                )
+            else:
+                self.status_var.set("Partial.")
+        elif output:
+            self.status_var.set(
+                f"Done. Point Rekordbox Imported Library at:\n{output}"
+            )
+        else:
+            self.status_var.set(f"{title}.")
         message = (
-            f"{body}\n\n"
-            "Import into Rekordbox:\n"
-            "1. Preferences → View → Layout → enable rekordbox xml\n"
-            "2. Preferences → Advanced → Database → Imported Library →\n"
-            f"   {output}\n"
-            "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
-            f"   (or drag the {suffix} playlist into Playlists)"
+            self._import_xml_instructions(body, output, playlists)
+            if output
+            else body
         )
-        self._show_done_dialog(message, output_folder)
+        self._show_done_dialog(message, output_folder, title=title)
 
     def _show_list_dialog(
         self,
@@ -477,6 +535,8 @@ class ConvertFlowMixin:
         self,
         message: str,
         output_folder: Path | None = None,
+        *,
+        title: str = "Done",
     ) -> None:
         gui_dialogs.show_done_dialog(
             self.root,
@@ -485,6 +545,7 @@ class ConvertFlowMixin:
             reveal=runtime.open_in_finder,
             on_open_guide=self._show_usage_guide,
             place_over=self._place_dialog_over_app,
+            title=title,
         )
 
 

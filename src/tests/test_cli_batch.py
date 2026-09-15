@@ -42,10 +42,11 @@ class XmlFixtureTests(XmlFixtureBase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
+        stdout = io.StringIO()
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
-        ):
+        ), patch.object(sys, "stdout", stdout):
             rc = rb.main(
                 [
                     "--xml",
@@ -62,8 +63,10 @@ class XmlFixtureTests(XmlFixtureBase):
         out = ET.parse(self.output).getroot()
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 2)
         pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
-        self.assertEqual(len(pl), 1)
-        self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2"])
+        self.assertEqual(len(pl), 0)
+        printed = stdout.getvalue()
+        self.assertIn("generated playlist was not created or refreshed", printed)
+        self.assertNotIn("Import Playlist", printed)
 
     def test_invalid_manifest_fails_before_audio_or_xml(self) -> None:
         """Given a corrupt manifest on disk: When main converts: Then exit is
@@ -353,7 +356,7 @@ class XmlFixtureTests(XmlFixtureBase):
         out = ET.parse(self.output).getroot()
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
 
-        # Drop last track from source playlist; re-run must keep existing WAV playlist entries.
+        # Drop last track from source playlist; re-run must rewrite playlist to match.
         src = ET.parse(self.xml_path).getroot()
         node = find_playlists_by_name(src, "Untitled Intelligent List")[0]
         for child in list(node):
@@ -383,7 +386,7 @@ class XmlFixtureTests(XmlFixtureBase):
         out = ET.parse(self.output).getroot()
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
         pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")[0]
-        self.assertEqual([t.get("Key") for t in pl.findall("TRACK")], ["1", "2", "3"])
+        self.assertEqual([t.get("Key") for t in pl.findall("TRACK")], ["1", "2"])
 
         # Add a fourth source track; re-run appends one collection TRACK and one playlist entry.
         d = self.music / "New" / "Added.flac"
@@ -541,21 +544,101 @@ class XmlFixtureTests(XmlFixtureBase):
         # selected format directory
         format_dir = str(self.wav_dir / "WAV")
         self.assertIn(format_dir, stdout)
-        # unique input filenames + action + effective quality + size
+        # unique input filenames + dest + format + action label + reason + write kind + quality + size
         for src in (self.a, self.b):
             self.assertIn(src.name, stdout)
         self.assertNotIn(str(self.a), stdout)
         self.assertNotIn(self.c.name, stdout)
-        self.assertNotIn("WAV/ABSL - Bestial.wav", stdout)
-        self.assertIn("recreate_missing", stdout)
-        self.assertIn("24-bit / 44100 Hz", stdout)
+        self.assertIn("WAV/ABSL - Bestial.wav", stdout)
+        self.assertIn("WAV", stdout)
+        self.assertIn("Recreate missing", stdout)
+        self.assertNotIn("recreate_missing", stdout)
+        self.assertIn("Destination file is missing", stdout)
+        self.assertIn("writes audio", stdout)
+        self.assertIn("24-bit / 44.1 kHz", stdout)
         self.assertIn("≈ 2.5 MB", stdout)
         # missing-source warning
         self.assertIn("missing source file", stderr)
         self.assertIn(str(self.c), stderr)
         # resulting playlist name + Import XML path
+        self.assertIn("Generated playlist:", stdout)
+        self.assertNotIn("New playlist:", stdout)
         self.assertIn("Untitled Intelligent List [WAV]", stdout)
         self.assertIn(str(self.output), stdout)
+
+    def test_cli_refuses_write_when_preview_has_conflicts(self) -> None:
+        """Given a conflict in the prepared preview: When converting (not dry-run):
+        Then preview_block_message is printed and nothing is written."""
+        from convert.models import (
+            ConversionPreview,
+            ConversionPreviewItem,
+            Plan,
+            PreparedConversion,
+        )
+        import convert.write as convert_write
+
+        prepared_preview = ConversionPreview(
+            selected=1,
+            resolved=1,
+            unique_outputs=1,
+            duplicates=0,
+            missing=0,
+            items=[
+                ConversionPreviewItem(
+                    relative_dest="WAV/A.wav",
+                    action="external_modification_conflict",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=1000,
+                    size_display="0.0 MB",
+                    source_display="a.flac",
+                    reason="Destination was changed outside this app",
+                    write_kind="none",
+                    output_format="wav",
+                ),
+            ],
+        )
+
+        def fake_prepare(*_a, **_k):
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=self.wav_dir,
+                media_dir=self.wav_dir / "WAV",
+                output=self.output,
+                tracks=[],
+                unique=[],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+            )
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=[],
+                manifest=converter_manifest.empty_manifest(),
+                preview=prepared_preview,
+                library_dir=self.wav_dir,
+                output=self.output,
+                skipped=[],
+            )
+            return prepared, []
+
+        err_buf = io.StringIO()
+        with patch.object(rb, "prepare_batch", side_effect=fake_prepare), patch(
+            "sys.stderr", err_buf
+        ), patch.object(convert_write, "execute_prepared") as execute:
+            rc = rb.run_convert_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+                force=False,
+                dry_run=False,
+            )
+        self.assertEqual(rc, 1)
+        self.assertIn("unresolved conflict", err_buf.getvalue())
+        execute.assert_not_called()
+        self.assertFalse(self.output.exists())
 
     def test_main_omitted_output_writes_import_xml_under_wav_dir(self) -> None:
         """Given no --output: When main converts: Then import XML is

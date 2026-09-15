@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## 2.0.0
+
+First public release of the v2 workflow and **manifest v2**. Do not publish
+GitHub release artifacts until the Rekordbox import matrix and packaged-app
+smoke rows in
+[docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
+are filled for the versions you claim. Rollback: keep the previous `.app` and
+output library; this release refuses unreleased v1 manifests (back up or use a
+new folder).
+
+- Preview shows reserved destination, action, classifier reason, write kind
+  (writes audio / metadata only / nothing), quality, and size. Convert is blocked
+  on unresolved destination conflicts or insufficient disk space. GUI and CLI
+  `--dry-run` share the same labels.
+- On a complete success rerun, generated `[WAV]`/`[AIFF]` playlist Keys are
+  rewritten to the current source order (reorder, remove, insert, repeats).
+  Incomplete runs leave existing playlist Keys unchanged, title the report
+  Partial, and say the generated playlist was not created or refreshed. Mixed
+  batches name which playlists are safe to import.
+- The conversion report counts converted, copied, PCM-rebuilt,
+  metadata-refreshed, reused, recreated, missing, conflicting, and failed
+  outputs; mixed batches keep successes visible.
+- Automated Import XML round-trips cover ratings, key, comments, unknown
+  fields, memory/hot/loop marks, and variable-tempo grids for WAV and AIFF
+  from Rekordbox 6- and 7-style PRODUCT versions.
+- Failed encode lines include source and destination (`src → WAV/out.wav: …`).
+- Recorded Rekordbox 6/7 compatibility and packaged-app smoke checks live in
+  [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
+  (empty = untested).
+- The GUI may contact GitHub Releases to check for updates. There is no
+  analytics client.
 - Manifest **v2** is the first released converter-library contract. Unreleased v1
   and unknown future versions are refused; leftover managed audio still causes
   folder validation to reject the library, so recreate the whole development
