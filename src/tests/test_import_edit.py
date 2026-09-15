@@ -119,6 +119,29 @@ class LoadImportEditDraftTests(unittest.TestCase):
         draft = import_edit.load_import_edit_draft(library)
         self.assertEqual(draft.root.tag, "DJ_PLAYLISTS")
 
+    def test_load_allows_repeated_playlist_key(self) -> None:
+        """Given the same TrackID twice in one playlist: When load: Then draft
+        loads (Rekordbox playlists may list a track more than once)."""
+        library = _valid_library(self.root)
+        xml_path = library / "rekordbox-import.xml"
+        text = xml_path.read_text(encoding="utf-8")
+        text = text.replace(
+            '<TRACK Key="1"/>',
+            '<TRACK Key="1"/><TRACK Key="1"/>',
+        )
+        text = text.replace(
+            'Name="Night Set [WAV]" Type="1" KeyType="0" Entries="1"',
+            'Name="Night Set [WAV]" Type="1" KeyType="0" Entries="2"',
+        )
+        xml_path.write_text(text, encoding="utf-8")
+        draft = import_edit.load_import_edit_draft(library)
+        playlist = next(
+            node
+            for kind, _folder, name, node in iter_playlist_nodes(draft.root)
+            if kind == "playlist" and name == "Night Set [WAV]"
+        )
+        self.assertEqual([e.get("Key") for e in playlist.findall("TRACK")], ["1", "1"])
+
     def test_load_refuses_blank_playlist_key(self) -> None:
         library = _valid_library(self.root)
         xml_path = library / "rekordbox-import.xml"
