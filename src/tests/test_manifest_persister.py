@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import concurrent.futures
 import json
+import os
 import sys
 import tempfile
 import threading
 import unittest
+import xml.etree.ElementTree as ET
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
@@ -23,11 +25,19 @@ import converter_manifest
 import convert.plan
 import convert.write as write_mod
 import ffmpeg_tools
-from convert.freshness import assignment_state
+from convert.freshness import (
+    assignment_state,
+    bind_complete_assignment,
+    output_signature,
+    source_signature,
+)
+from convert.models import ConversionPreview, Plan, PlannedTrack, PreparedConversion
 from convert.paths import source_key
 from convert.prepare import prepare_batch
-from convert.write import execute_prepared
-from convert_fixtures import XmlFixtureTests as XmlFixtureBase
+from convert.rerun import Decision
+from convert.write import ManifestPersistError, execute_prepared
+from convert_fixtures import XmlFixtureTests as XmlFixtureBase, write_pcm_wav
+from rekordbox_xml import encode_location, skeleton_from
 
 
 class _FakeClock:
@@ -264,7 +274,7 @@ class ManifestPersisterExecutePreparedTests(XmlFixtureBase):
             )
             self.assertEqual(errors, [])
             assert prepared is not None
-            with self.assertRaises(OSError):
+            with self.assertRaises(ManifestPersistError):
                 execute_prepared(
                     prepared,
                     force=False,
@@ -273,6 +283,116 @@ class ManifestPersisterExecutePreparedTests(XmlFixtureBase):
                 )
 
         self.assertFalse(self.output.is_file())
+
+    def test_urgent_save_failure_prevents_import_xml_commit(self) -> None:
+        """Given a late dest conflict whose urgent save fails: When
+        execute_prepared runs: Then it raises and Import XML is not written."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(dest)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {
+                    "Name": "rekordbox",
+                    "Version": "6.8.5",
+                    "Company": "AlphaTheta",
+                },
+            )
+            output_root = skeleton_from(source_root)
+            manifest = converter_manifest.empty_manifest()
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=False,
+                manifest=manifest,
+            )
+            bind_complete_assignment(manifest, item, "WAV/A.wav")
+            src_stat = source_signature(src)
+            out_stat = output_signature(dest)
+            decision = Decision(
+                action="transcode",
+                reason="force",
+                write_kind="audio",
+                source_stat={
+                    "size": src_stat["size"],
+                    "mtime_ns": src_stat["mtime_ns"],
+                },
+                dest_stat={
+                    "size": out_stat["size"],
+                    "mtime_ns": out_stat["mtime_ns"],
+                },
+            )
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=[item],
+                manifest=manifest,
+                preview=ConversionPreview(
+                    selected=1,
+                    resolved=1,
+                    unique_outputs=1,
+                    duplicates=0,
+                    missing=0,
+                    items=[],
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+                decisions={(source_key(src), "wav"): decision},
+            )
+            st = dest.stat()
+            os.utime(dest, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000))
+
+            real_save = converter_manifest.save_manifest_tracks
+            saves = {"n": 0}
+
+            def tracking_save(tracks, wav_dir):
+                saves["n"] += 1
+                # prebatch succeeds; first urgent (conflict) fails
+                if saves["n"] >= 2:
+                    raise OSError("urgent manifest save failed")
+                real_save(tracks, wav_dir)
+
+            with patch.object(
+                convert.plan, "run_ffmpeg", side_effect=AssertionError("no encode")
+            ), patch.object(
+                converter_manifest, "save_manifest_tracks", side_effect=tracking_save
+            ):
+                with self.assertRaises(ManifestPersistError):
+                    execute_prepared(
+                        prepared,
+                        force=True,
+                        progress=False,
+                        checkpoint_interval_s=0,
+                    )
+
+            self.assertFalse(plan.output.is_file())
 
     def test_no_mid_batch_periodic_without_clock_advance(self) -> None:
         """Given checkpoint_interval_s=10 and a frozen clock: When many tracks

@@ -9,7 +9,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import converter_manifest
 import xml_output
@@ -59,6 +59,10 @@ _MUTATING_ACTIONS = frozenset(
         "recreate_missing",
     }
 )
+
+
+class ManifestPersistError(Exception):
+    """Durable manifest write failed; abort before Import XML."""
 
 
 def _decisions_for_prepared(
@@ -257,7 +261,6 @@ class ManifestPersister:
     def save_final(self, tracks: dict) -> None:
         self.join()
         self._save_sync(tracks)
-        self.close()
 
     def join(self) -> None:
         with self._meta_lock:
@@ -294,15 +297,20 @@ class ManifestCheckpoint:
 
     def mark_item_complete(
         self, item: PlannedTrack, *, metadata: str | None = None
-    ) -> None:
+    ) -> set[tuple[str, str]] | None:
+        """Mark complete under the caller's stats_lock.
+
+        Returns a pending-key copy when a periodic should be scheduled after the
+        caller releases stats_lock; otherwise None.
+        """
         if self.plan.manifest is None:
-            return
+            return None
         fmt = coerce_output_format(item.output_format)
         record = self.plan.manifest.tracks.get(source_key(item.source_path), {}).get(
             fmt
         )
         if record is None:
-            return
+            return None
         mark_complete(
             record,
             source=source_signature(item.source_path),
@@ -312,43 +320,60 @@ class ManifestCheckpoint:
         )
         self.pending.discard((source_key(item.source_path), fmt))
         if not self.persister.should_schedule_periodic():
+            return None
+        return set(self.pending)
+
+    def schedule_periodic(self, pending_copy: set[tuple[str, str]]) -> None:
+        """Build overlay and request periodic; call outside stats_lock."""
+        if self.plan.manifest is None:
             return
-        snapshot = _overlay_tracks(self.plan.manifest, self.pending)
+        snapshot = _overlay_tracks(self.plan.manifest, pending_copy)
         self.persister.request_periodic(snapshot)
 
-    def take_urgent_snapshot(self, item: PlannedTrack) -> dict | None:
-        """Discard pending for item; return overlay snapshot (no I/O)."""
+    def take_urgent_snapshot_keys(self, item: PlannedTrack) -> set[tuple[str, str]] | None:
+        """Discard pending for item; return pending keys for overlay (no I/O)."""
         fmt = coerce_output_format(item.output_format)
         self.pending.discard((source_key(item.source_path), fmt))
         if self.plan.manifest is None:
             return None
-        return _overlay_tracks(self.plan.manifest, self.pending)
+        return set(self.pending)
 
     def persist_urgent(self, snapshot: dict | None) -> None:
         """Persist an urgent snapshot outside stats_lock."""
         if snapshot is None:
             return
-        self.persister.save_urgent(snapshot)
+        try:
+            self.persister.save_urgent(snapshot)
+        except Exception as exc:
+            raise ManifestPersistError(str(exc)) from exc
 
 
-def _prebatch_incomplete_manifest(
-    prepared: PreparedConversion,
-    force: bool,
-    pending: set[tuple[str, str]] | None = None,
-) -> converter_manifest.ConverterManifest:
-    """Copy of the prepared manifest with planned mutations marked incomplete."""
-    clone = converter_manifest.ConverterManifest(
-        tracks=deepcopy(prepared.manifest.tracks)
-    )
-    keys = pending if pending is not None else _mutating_assignment_keys(
-        prepared, force
-    )
-    for key, fmt in keys:
-        record = clone.tracks.get(key, {}).get(fmt)
-        if record is None:
-            continue
-        mark_incomplete(record)
-    return clone
+def _urgent_persist_after_conflict(
+    ctx: "ExecuteContext",
+    item: PlannedTrack,
+    *,
+    outcome_bucket: Literal["conflicts", "state_changed"],
+) -> None:
+    """Record conflict/state_changed under stats_lock; persist outside it."""
+    name = item.dest_name
+    with ctx.stats_lock:
+        pending_keys = ctx.checkpoint.take_urgent_snapshot_keys(item)
+        if outcome_bucket == "conflicts":
+            ctx.stats.conflicts.append(name)
+        else:
+            ctx.stats.state_changed.append(name)
+        manifest = ctx.plan.manifest
+    if pending_keys is None or manifest is None:
+        return
+    snapshot = _overlay_tracks(manifest, pending_keys)
+    ctx.checkpoint.persist_urgent(snapshot)
+
+
+def _maybe_schedule_periodic(
+    ctx: "ExecuteContext", pending_copy: set[tuple[str, str]] | None
+) -> None:
+    if pending_copy is not None:
+        ctx.checkpoint.schedule_periodic(pending_copy)
 
 
 def _commit_refresh_xml_freshness(
@@ -434,10 +459,9 @@ def _snapshot_blocks_write(
     if key_src is not None:
         current_src = file_snapshot(item.source_path)
         if current_src is None or not snapshots_match(key_src, current_src):
-            with ctx.stats_lock:
-                snapshot = ctx.checkpoint.take_urgent_snapshot(item)
-                ctx.stats.state_changed.append(name)
-            ctx.checkpoint.persist_urgent(snapshot)
+            _urgent_persist_after_conflict(
+                ctx, item, outcome_bucket="state_changed"
+            )
             ctx.finish("state_changed", name)
             return _item_result(
                 item, decision.action, "state_changed", reason=decision.reason
@@ -448,10 +472,7 @@ def _snapshot_blocks_write(
         frozen_dest is not None and not snapshots_match(frozen_dest, current_dest)
     )
     if dest_changed:
-        with ctx.stats_lock:
-            snapshot = ctx.checkpoint.take_urgent_snapshot(item)
-            ctx.stats.conflicts.append(name)
-        ctx.checkpoint.persist_urgent(snapshot)
+        _urgent_persist_after_conflict(ctx, item, outcome_bucket="conflicts")
         ctx.finish("conflict", name)
         return _item_result(
             item, decision.action, "conflict", reason=decision.reason
@@ -501,10 +522,7 @@ def execute_item(
         ctx.finish("skip", name)
         return result("succeeded")
     if action == "external_modification_conflict":
-        with ctx.stats_lock:
-            snapshot = ctx.checkpoint.take_urgent_snapshot(item)
-            ctx.stats.conflicts.append(name)
-        ctx.checkpoint.persist_urgent(snapshot)
+        _urgent_persist_after_conflict(ctx, item, outcome_bucket="conflicts")
         ctx.finish("conflict", name)
         return result("conflict")
     try:
@@ -535,12 +553,16 @@ def execute_item(
                     else None
                 )
                 old_meta = (record or {}).get("metadata", {}).get("signature")
-                ctx.checkpoint.mark_item_complete(item, metadata=old_meta)
+                pending_copy = ctx.checkpoint.mark_item_complete(
+                    item, metadata=old_meta
+                )
+            _maybe_schedule_periodic(ctx, pending_copy)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
             return result("succeeded", write="copy")
         if action == "rewrite_container" and not is_aiff:
             pcm_src = _pcm_origin_for_container_rewrite(ctx.plan, item, ctx.force)
+            rewrite_failed = False
             try:
                 _replace_via_sidecar(
                     item.dest_path,
@@ -552,21 +574,22 @@ def execute_item(
                     ),
                 )
             except CliError:
-                with ctx.stats_lock:
-                    snapshot = ctx.checkpoint.take_urgent_snapshot(item)
-                    ctx.stats.state_changed.append(name)
-                ctx.checkpoint.persist_urgent(snapshot)
+                rewrite_failed = True
+            if rewrite_failed:
+                _urgent_persist_after_conflict(
+                    ctx, item, outcome_bucket="state_changed"
+                )
                 ctx.finish("state_changed", name)
                 return result("state_changed", action_name="rewrite_container")
-            else:
-                with ctx.stats_lock:
-                    ctx.stats.copied += 1
-                    ctx.checkpoint.mark_item_complete(item)
-                ctx.mark_succeeded(item)
-                ctx.finish("copy", name)
-                return result(
-                    "succeeded", write="copy", action_name="rewrite_container"
-                )
+            with ctx.stats_lock:
+                ctx.stats.copied += 1
+                pending_copy = ctx.checkpoint.mark_item_complete(item)
+            _maybe_schedule_periodic(ctx, pending_copy)
+            ctx.mark_succeeded(item)
+            ctx.finish("copy", name)
+            return result(
+                "succeeded", write="copy", action_name="rewrite_container"
+            )
         if action == "rewrite_container" and is_aiff:
             cover = plan_module.cached_cover_jpeg(
                 item.source_path,
@@ -588,6 +611,7 @@ def execute_item(
                     sample_rate=item.sample_rate,
                 )
 
+            rewrite_failed = False
             try:
                 _replace_via_sidecar(
                     item.dest_path,
@@ -601,21 +625,22 @@ def execute_item(
                     ),
                 )
             except CliError:
-                with ctx.stats_lock:
-                    snapshot = ctx.checkpoint.take_urgent_snapshot(item)
-                    ctx.stats.state_changed.append(name)
-                ctx.checkpoint.persist_urgent(snapshot)
+                rewrite_failed = True
+            if rewrite_failed:
+                _urgent_persist_after_conflict(
+                    ctx, item, outcome_bucket="state_changed"
+                )
                 ctx.finish("state_changed", name)
                 return result("state_changed", action_name="rewrite_container")
-            else:
-                with ctx.stats_lock:
-                    ctx.stats.copied += 1
-                    ctx.checkpoint.mark_item_complete(item)
-                ctx.mark_succeeded(item)
-                ctx.finish("copy", name)
-                return result(
-                    "succeeded", write="copy", action_name="rewrite_container"
-                )
+            with ctx.stats_lock:
+                ctx.stats.copied += 1
+                pending_copy = ctx.checkpoint.mark_item_complete(item)
+            _maybe_schedule_periodic(ctx, pending_copy)
+            ctx.mark_succeeded(item)
+            ctx.finish("copy", name)
+            return result(
+                "succeeded", write="copy", action_name="rewrite_container"
+            )
         copy_pcm = action == "recreate_missing" and item.passthrough
         encode = action in {"transcode", "recreate_missing"} and not copy_pcm
         if copy_pcm and is_aiff:
@@ -633,7 +658,8 @@ def execute_item(
             )
             with ctx.stats_lock:
                 ctx.stats.copied += 1
-                ctx.checkpoint.mark_item_complete(item)
+                pending_copy = ctx.checkpoint.mark_item_complete(item)
+            _maybe_schedule_periodic(ctx, pending_copy)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
             return result("succeeded", write="copy")
@@ -647,7 +673,8 @@ def execute_item(
             )
             with ctx.stats_lock:
                 ctx.stats.copied += 1
-                ctx.checkpoint.mark_item_complete(item)
+                pending_copy = ctx.checkpoint.mark_item_complete(item)
+            _maybe_schedule_periodic(ctx, pending_copy)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
             return result("succeeded", write="copy")
@@ -668,7 +695,8 @@ def execute_item(
             )
             with ctx.stats_lock:
                 ctx.stats.converted += 1
-                ctx.checkpoint.mark_item_complete(item)
+                pending_copy = ctx.checkpoint.mark_item_complete(item)
+            _maybe_schedule_periodic(ctx, pending_copy)
             ctx.mark_succeeded(item)
             ctx.finish("convert", name)
             return result("succeeded", write="transcode")
@@ -688,11 +716,14 @@ def execute_item(
             )
             with ctx.stats_lock:
                 ctx.stats.converted += 1
-                ctx.checkpoint.mark_item_complete(item)
+                pending_copy = ctx.checkpoint.mark_item_complete(item)
+            _maybe_schedule_periodic(ctx, pending_copy)
             ctx.mark_succeeded(item)
             ctx.finish("convert", name)
             return result("succeeded", write="transcode")
         raise CliError(f"unsupported convert action {action!r} for {item.source_path}")
+    except ManifestPersistError:
+        raise
     except CancelledError:
         return result("cancelled")
     except Exception as exc:  # noqa: BLE001 — collect all; report after pool
@@ -803,8 +834,8 @@ def execute_prepared(
     decisions = _decisions_for_prepared(prepared, force)
     prepared.decisions = dict(decisions)
     pending = _mutating_assignment_keys(prepared, force, decisions)
-    converter_manifest.save_manifest(
-        _prebatch_incomplete_manifest(prepared, force, pending),
+    converter_manifest.save_manifest_tracks(
+        _overlay_tracks(prepared.manifest, pending),
         prepared.library_dir,
     )
     persister = ManifestPersister(
@@ -812,51 +843,57 @@ def execute_prepared(
         checkpoint_interval_s=checkpoint_interval_s,
         clock=clock,
     )
-    plans = prepared.plans
-    stats = convert_unique(
-        plans[0],
-        force=force,
-        progress=progress,
-        on_progress=on_progress,
-        cancel_event=cancel_event,
-        items=prepared.items,
-        workers=workers,
-        persister=persister,
-        pending_assignments=pending,
-        decisions=decisions,
-    )
-    playlists_by_dest: dict[Path, list[str]] = {}
-    for one_plan in plans:
-        for track in one_plan.tracks:
-            names = playlists_by_dest.setdefault(track.dest_path, [])
-            if one_plan.wav_playlist_name not in names:
-                names.append(one_plan.wav_playlist_name)
-    if playlists_by_dest and stats.item_results:
-        stats.item_results = [
-            ItemResult(
-                source=result.source,
-                destination=result.destination,
-                action=result.action,
-                outcome=result.outcome,
-                playlists=tuple(playlists_by_dest.get(result.destination, ())),
-                error=result.error,
-                write=result.write,
-                reason=result.reason,
-            )
-            for result in stats.item_results
-        ]
-    persister.save_final(_overlay_tracks(prepared.manifest, pending))
-    appended_by_plan: list[int] = []
-    playlist_results: list = []
-    for one_plan in plans:
-        result = xml_output.apply_xml(one_plan, stats.succeeded)
-        playlist_results.append(result)
-        appended_by_plan.append(result.appended)
-    xml_output.write_import_xml(plans[0].output_root, plans[0].output)
-    _commit_refresh_xml_freshness(
-        prepared, decisions, stats.succeeded, pending, persister
-    )
-    stats.appended_by_plan = appended_by_plan
-    stats.appended = sum(appended_by_plan)
-    stats.playlist_results = playlist_results
-    return stats
+    try:
+        plans = prepared.plans
+        stats = convert_unique(
+            plans[0],
+            force=force,
+            progress=progress,
+            on_progress=on_progress,
+            cancel_event=cancel_event,
+            items=prepared.items,
+            workers=workers,
+            persister=persister,
+            pending_assignments=pending,
+            decisions=decisions,
+        )
+        playlists_by_dest: dict[Path, list[str]] = {}
+        for one_plan in plans:
+            for track in one_plan.tracks:
+                names = playlists_by_dest.setdefault(track.dest_path, [])
+                if one_plan.wav_playlist_name not in names:
+                    names.append(one_plan.wav_playlist_name)
+        if playlists_by_dest and stats.item_results:
+            stats.item_results = [
+                ItemResult(
+                    source=result.source,
+                    destination=result.destination,
+                    action=result.action,
+                    outcome=result.outcome,
+                    playlists=tuple(playlists_by_dest.get(result.destination, ())),
+                    error=result.error,
+                    write=result.write,
+                    reason=result.reason,
+                )
+                for result in stats.item_results
+            ]
+        try:
+            persister.save_final(_overlay_tracks(prepared.manifest, pending))
+        except Exception as exc:
+            raise ManifestPersistError(str(exc)) from exc
+        appended_by_plan: list[int] = []
+        playlist_results: list = []
+        for one_plan in plans:
+            result = xml_output.apply_xml(one_plan, stats.succeeded)
+            playlist_results.append(result)
+            appended_by_plan.append(result.appended)
+        xml_output.write_import_xml(plans[0].output_root, plans[0].output)
+        _commit_refresh_xml_freshness(
+            prepared, decisions, stats.succeeded, pending, persister
+        )
+        stats.appended_by_plan = appended_by_plan
+        stats.appended = sum(appended_by_plan)
+        stats.playlist_results = playlist_results
+        return stats
+    finally:
+        persister.close()

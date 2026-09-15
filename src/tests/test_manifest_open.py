@@ -217,6 +217,37 @@ class ManifestLoadValidationTests(unittest.TestCase):
         self.assertIn("/b", reused.manifest.tracks)
         self.assertNotIn("/a", reused.manifest.tracks)
 
+    def test_manifest_for_prepare_cache_hit_returns_deepcopy(self) -> None:
+        """Given a fingerprint that still matches disk: When prepare reuses the
+        cache: Then the returned manifest is a copy; mutating it leaves the
+        cached snapshot unchanged."""
+        m = cm.empty_manifest()
+        m.set_dest("/music/a.flac", "wav", "WAV/Artist - Track.wav")
+        cm.save_manifest(m, self.wav_dir)
+        opened = cm.open_library(self.wav_dir)
+        self.assertIsNone(opened.error)
+        assert opened.manifest is not None
+        assert opened.fingerprint is not None
+        prepared = cm.manifest_for_prepare(
+            self.wav_dir,
+            cached_manifest=opened.manifest,
+            cached_fingerprint=opened.fingerprint,
+        )
+        self.assertIsNone(prepared.error)
+        assert prepared.manifest is not None
+        self.assertIsNot(prepared.manifest, opened.manifest)
+        prepared.manifest.set_dest(
+            "/music/a.flac", "wav", "WAV/Artist - Other.wav"
+        )
+        self.assertEqual(
+            opened.manifest.get_dest("/music/a.flac", "wav"),
+            "WAV/Artist - Track.wav",
+        )
+        self.assertEqual(
+            prepared.manifest.get_dest("/music/a.flac", "wav"),
+            "WAV/Artist - Other.wav",
+        )
+
 
 class CliOpenLibraryReuseTests(unittest.TestCase):
     def test_run_convert_batch_passes_opened_manifest_into_prepare(self) -> None:

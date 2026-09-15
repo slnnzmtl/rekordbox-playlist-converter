@@ -14,6 +14,7 @@ import json
 import os
 import re
 import tempfile
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -561,7 +562,11 @@ def manifest_for_prepare(
     cached_manifest: ConverterManifest | None = None,
     cached_fingerprint: ManifestFingerprint | None = None,
 ) -> OpenLibraryResult:
-    """Reuse a cached manifest only when its content fingerprint still matches."""
+    """Reuse a cached manifest only when its content fingerprint still matches.
+
+    On a cache hit, return a deep copy so prepare mutations never alter the
+    GUI's disk-validated snapshot.
+    """
     path = manifest_path(wav_dir)
     if (
         cached_manifest is not None
@@ -571,7 +576,7 @@ def manifest_for_prepare(
     ):
         return OpenLibraryResult(
             error=None,
-            manifest=cached_manifest,
+            manifest=ConverterManifest(tracks=deepcopy(cached_manifest.tracks)),
             fingerprint=cached_fingerprint,
         )
     return open_library(wav_dir)
