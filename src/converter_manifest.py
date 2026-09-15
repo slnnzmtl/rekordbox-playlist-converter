@@ -9,6 +9,7 @@ bit depth, sample rate, channels, revision — not passthrough), and state
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -162,8 +163,14 @@ def _manifest_document(
     }
 
 
-def _require_under_wav_dir(wav_dir: Path, dest: Path, detail: str) -> Path:
-    root = abs_path(wav_dir).resolve()
+def _require_under_wav_dir(
+    wav_dir: Path,
+    dest: Path,
+    detail: str,
+    *,
+    library_root: Path | None = None,
+) -> Path:
+    root = library_root if library_root is not None else abs_path(wav_dir).resolve()
     try:
         dest.relative_to(root)
     except ValueError as exc:
@@ -171,14 +178,20 @@ def _require_under_wav_dir(wav_dir: Path, dest: Path, detail: str) -> Path:
     return dest
 
 
-def resolve_dest_under_wav_dir(wav_dir: Path, relative_dest: str) -> Path:
+def resolve_dest_under_wav_dir(
+    wav_dir: Path,
+    relative_dest: str,
+    *,
+    library_root: Path | None = None,
+) -> Path:
     """Resolve relative_dest under wav_dir; raise if it escapes wav_dir."""
-    root = abs_path(wav_dir).resolve()
+    root = library_root if library_root is not None else abs_path(wav_dir).resolve()
     dest = root.joinpath(*PurePosixPath(relative_dest).parts).resolve()
     return _require_under_wav_dir(
         wav_dir,
         dest,
         f"manifest dest resolves outside wav_dir: {relative_dest!r}",
+        library_root=root,
     )
 
 
@@ -192,7 +205,13 @@ def ensure_dest_path_under_wav_dir(wav_dir: Path, dest_path: Path) -> Path:
     )
 
 
-def _validate_dest_relative(dest: object, *, fmt: str, wav_dir: Path) -> str | None:
+def _validate_dest_relative(
+    dest: object,
+    *,
+    fmt: str,
+    wav_dir: Path,
+    library_root: Path | None = None,
+) -> str | None:
     """Return an error message, or None if dest is valid under wav_dir."""
     if not isinstance(dest, str) or not dest:
         return "manifest dest must be a non-empty string"
@@ -222,7 +241,7 @@ def _validate_dest_relative(dest: object, *, fmt: str, wav_dir: Path) -> str | N
             f"manifest dest extension must match format {fmt!r}: {dest!r}"
         )
     try:
-        resolve_dest_under_wav_dir(wav_dir, dest)
+        resolve_dest_under_wav_dir(wav_dir, dest, library_root=library_root)
     except ManifestError as exc:
         return str(exc)
     return None
@@ -368,6 +387,7 @@ def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
         errors.append("manifest must contain a 'tracks' object")
         return errors
 
+    library_root = abs_path(wav_dir).resolve()
     ownership: dict[str, tuple[str, str]] = {}
     for source_key, formats in tracks.items():
         if not isinstance(source_key, str) or not source_key:
@@ -391,7 +411,9 @@ def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
                 )
                 continue
             dest = record.get("dest")
-            dest_err = _validate_dest_relative(dest, fmt=fmt, wav_dir=wav_dir)
+            dest_err = _validate_dest_relative(
+                dest, fmt=fmt, wav_dir=wav_dir, library_root=library_root
+            )
             if dest_err:
                 errors.append(dest_err)
                 continue
@@ -427,13 +449,133 @@ def load_manifest(wav_dir: Path) -> ConverterManifest:
     errors = validate_manifest_data(data, abs_path(wav_dir))
     if errors:
         raise ManifestError(errors[0])
-    tracks = data["tracks"]
-    typed: dict[str, dict[str, dict[str, Any]]] = {}
-    for sk, formats in tracks.items():
-        typed[sk] = {}
-        for fmt, record in formats.items():
-            typed[sk][fmt] = deepcopy(record)
-    return ConverterManifest(tracks=typed)
+    return ConverterManifest(tracks=data["tracks"])
+
+
+@dataclass(frozen=True)
+class ManifestFingerprint:
+    """Content fingerprint for safe reuse of a validated in-memory manifest."""
+
+    path: Path
+    exists: bool
+    size: int
+    mtime_ns: int
+    sha256: str
+
+    @classmethod
+    def capture(cls, path: Path) -> ManifestFingerprint:
+        path = Path(path)
+        try:
+            st = path.stat()
+        except OSError:
+            return cls(path=path, exists=False, size=0, mtime_ns=0, sha256="")
+        if not path.is_file():
+            return cls(path=path, exists=False, size=0, mtime_ns=0, sha256="")
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        return cls(
+            path=path,
+            exists=True,
+            size=st.st_size,
+            mtime_ns=st.st_mtime_ns,
+            sha256=digest,
+        )
+
+    def matches_disk(self) -> bool:
+        current = ManifestFingerprint.capture(self.path)
+        return (
+            current.exists == self.exists
+            and current.size == self.size
+            and current.mtime_ns == self.mtime_ns
+            and current.sha256 == self.sha256
+        )
+
+
+@dataclass(frozen=True)
+class OpenLibraryResult:
+    """Validation outcome plus loaded manifest when the library is usable."""
+
+    error: str | None
+    manifest: ConverterManifest | None
+    fingerprint: ManifestFingerprint | None
+
+
+def open_library(wav_dir: Path) -> OpenLibraryResult:
+    """Validate wav_dir and load the manifest once when present and valid."""
+    expanded = wav_dir.expanduser()
+    man_path = abs_path(expanded) / MANIFEST_NAME
+    fingerprint = ManifestFingerprint.capture(man_path)
+
+    if expanded.exists() and not expanded.is_dir():
+        return OpenLibraryResult(
+            error="Output folder path exists and is not a directory.",
+            manifest=None,
+            fingerprint=fingerprint,
+        )
+    if expanded.is_dir():
+        if not _path_is_writable_dir(expanded):
+            return OpenLibraryResult(
+                error="Output folder is not writable.",
+                manifest=None,
+                fingerprint=fingerprint,
+            )
+    else:
+        if not _parent_writable_for_create(expanded):
+            return OpenLibraryResult(
+                error="Output folder is not accessible or not writable.",
+                manifest=None,
+                fingerprint=fingerprint,
+            )
+
+    if expanded.is_dir() and (expanded / MANIFEST_NAME).is_file():
+        try:
+            manifest = load_manifest(expanded)
+        except ManifestError as exc:
+            return OpenLibraryResult(
+                error=f"Converter manifest is invalid: {exc}",
+                manifest=None,
+                fingerprint=fingerprint,
+            )
+        fingerprint = ManifestFingerprint.capture(expanded / MANIFEST_NAME)
+        return OpenLibraryResult(
+            error=None, manifest=manifest, fingerprint=fingerprint
+        )
+
+    if expanded.is_dir() and _has_legacy_library_content(expanded):
+        return OpenLibraryResult(
+            error=(
+                "This folder looks like an older converter library without a "
+                "manifest. Remove or recreate the whole output library folder, "
+                "or choose a new empty output folder."
+            ),
+            manifest=None,
+            fingerprint=fingerprint,
+        )
+
+    return OpenLibraryResult(
+        error=None, manifest=empty_manifest(), fingerprint=fingerprint
+    )
+
+
+def manifest_for_prepare(
+    wav_dir: Path,
+    *,
+    cached_manifest: ConverterManifest | None = None,
+    cached_fingerprint: ManifestFingerprint | None = None,
+) -> OpenLibraryResult:
+    """Reuse a cached manifest only when its content fingerprint still matches."""
+    path = manifest_path(wav_dir)
+    if (
+        cached_manifest is not None
+        and cached_fingerprint is not None
+        and cached_fingerprint.path == path
+        and cached_fingerprint.matches_disk()
+    ):
+        return OpenLibraryResult(
+            error=None,
+            manifest=cached_manifest,
+            fingerprint=cached_fingerprint,
+        )
+    return open_library(wav_dir)
 
 
 def _path_is_writable_dir(path: Path) -> bool:
@@ -485,30 +627,7 @@ def validate_library_folder(wav_dir: Path) -> str | None:
     writable. Existing manifests must validate. Legacy audio or import XML
     without a manifest is refused.
     """
-    expanded = wav_dir.expanduser()
-    if expanded.exists() and not expanded.is_dir():
-        return "Output folder path exists and is not a directory."
-    if expanded.is_dir():
-        if not _path_is_writable_dir(expanded):
-            return "Output folder is not writable."
-    else:
-        if not _parent_writable_for_create(expanded):
-            return "Output folder is not accessible or not writable."
-
-    if expanded.is_dir() and (expanded / MANIFEST_NAME).is_file():
-        try:
-            load_manifest(expanded)
-        except ManifestError as exc:
-            return f"Converter manifest is invalid: {exc}"
-        return None
-
-    if expanded.is_dir() and _has_legacy_library_content(expanded):
-        return (
-            "This folder looks like an older converter library without a "
-            "manifest. Remove or recreate the whole output library folder, "
-            "or choose a new empty output folder."
-        )
-    return None
+    return open_library(wav_dir).error
 
 
 def save_manifest_tracks(
