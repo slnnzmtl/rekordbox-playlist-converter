@@ -375,6 +375,13 @@ class PlaylistsMixin:
         self._sync_scan_indicator()
 
     def _refresh_tracklist_preview(self) -> None:
+        prev_playlists = list(self._tracklist_painted_playlists)
+        prev_refs = [
+            meta
+            for iid in self.tracklist_tree.selection()
+            if (meta := self._tracklist_iids.get(iid)) is not None
+        ]
+        had_leaves = bool(self._tracklist_iids)
         self._tracklist_tech_gen += 1
         gen = self._tracklist_tech_gen
         self.tracklist_tree.delete(*self.tracklist_tree.get_children())
@@ -384,12 +391,14 @@ class PlaylistsMixin:
         view_root = self._active_view_root()
         if view_root is None:
             self._tracklist_group_open.clear()
+            self._tracklist_painted_playlists = []
             self._set_preview_scan_active(False)
             self._set_idle_status()
             return
         selected = self._selected_playlists(unique_names=False)
         if not selected:
             self._tracklist_group_open.clear()
+            self._tracklist_painted_playlists = []
             self._set_preview_scan_active(False)
             self._set_idle_status()
             return
@@ -485,13 +494,29 @@ class PlaylistsMixin:
         if not painted:
             self._set_preview_scan_active(False)
             self._set_idle_status()
+            self._tracklist_painted_playlists = list(selected)
             return
+        same_playlists = prev_playlists == selected
+        restore: list[str] = []
+        if same_playlists and prev_refs:
+            want = {(r.folder, r.name, r.key) for r in prev_refs}
+            restore = [
+                iid
+                for iid, ref in self._tracklist_iids.items()
+                if (ref.folder, ref.name, ref.key) in want
+            ]
         self._tracklist_selecting = True
         try:
-            if leaf_iids:
-                self.tracklist_tree.selection_set(leaf_iids)
+            if not same_playlists or not had_leaves:
+                if leaf_iids:
+                    self.tracklist_tree.selection_set(leaf_iids)
+            elif restore:
+                self.tracklist_tree.selection_set(restore)
+            else:
+                self.tracklist_tree.selection_set(())
         finally:
             self._tracklist_selecting = False
+        self._tracklist_painted_playlists = list(selected)
         self._sync_tracklist_header_highlights()
         self._set_idle_status(self._tracklist_selection_summary())
         if self._tracklist_sort_column is not None:

@@ -1178,8 +1178,9 @@ class RewriteContainerTests(unittest.TestCase):
             ):
                 stats = execute_prepared(prepared, force=False)
             self.assertTrue(dest.is_file())
-            self.assertEqual(stats.recreated, 1)
-            self.assertEqual(stats.copied, 0)
+            self.assertEqual(stats.copied, 1)
+            self.assertEqual(stats.recreated, 0)
+            self.assertEqual(stats.converted, 0)
             self.assertEqual(stats.errors, [])
             self.assertIn((source_key(src), "wav"), stats.succeeded)
             self.assertFalse(

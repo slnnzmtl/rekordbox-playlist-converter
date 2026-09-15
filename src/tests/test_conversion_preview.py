@@ -517,6 +517,8 @@ class ConversionPreviewTests(unittest.TestCase):
             self.assertIn("WAV/Same - Song (2).wav", by_dest)
             for it in preview.items:
                 self.assertEqual(it.action, "recreate_missing")
+                self.assertEqual(it.reason_code, "not_converted")
+                self.assertEqual(it.reason, "Not converted yet")
                 self.assertEqual(it.bit_depth, 16)
                 self.assertEqual(it.sample_rate, 44100)
                 self.assertTrue(it.size_display.startswith("≈ "))
@@ -658,12 +660,11 @@ class ConversionPreviewTests(unittest.TestCase):
             )
         )
 
-    def test_format_preview_summary_and_row_include_dest_reason_write_kind(
+    def test_format_preview_summary_and_row_include_action_reason(
         self,
     ) -> None:
         """Given a preview item: When formatting: Then summary counts and row
-        expose input, reserved dest, format, action label, reason, write kind,
-        quality labels, and size."""
+        expose input, format, action label, reason, quality labels, and size."""
         preview = ConversionPreview(
             selected=3,
             resolved=2,
@@ -692,28 +693,70 @@ class ConversionPreviewTests(unittest.TestCase):
         )
         row = format_preview_row(preview.items[0])
         self.assertEqual(row.source_display, "Bestial.flac")
-        self.assertEqual(row.relative_dest, "WAV/ABSL - Bestial.wav")
         self.assertEqual(row.output_format, "WAV")
         self.assertEqual(row.action_label, "Recreate missing")
         self.assertEqual(row.reason, "Destination file is missing")
-        self.assertEqual(row.write_kind_label, "writes audio")
         self.assertEqual(row.quality, "24-bit / 44.1 kHz")
         self.assertEqual(row.size_display, "≈ 2.5 MB")
 
     def test_preview_reason_omits_write_kind_suffix(self) -> None:
-        """Given a dest_missing recreate: When preview_reason runs: Then only
-        the why string is returned (write kind is a separate column)."""
+        """Given classifier reasons: When preview_reason runs: Then only the why
+        string is returned (write kind is a separate column)."""
         from convert.rerun import preview_reason
 
         self.assertEqual(
             preview_reason("recreate_missing", "dest_missing"),
             "Destination file is missing",
         )
-        self.assertNotIn("writes audio", preview_reason("recreate_missing", "dest_missing"))
+        self.assertNotIn(
+            "writes audio",
+            preview_reason("recreate_missing", "dest_missing"),
+        )
         self.assertEqual(
             preview_reason("reuse", "unchanged"),
             "Output is already current",
         )
+        self.assertEqual(
+            preview_reason("recreate_missing", "not_converted"),
+            "Not converted yet",
+        )
+
+    def test_preview_action_label_convert_for_not_converted(self) -> None:
+        """Given recreate_missing: When preview_action_label runs: Then
+        not_converted is Convert; dest_missing stays Recreate missing."""
+        from convert.rerun import preview_action_label
+
+        self.assertEqual(
+            preview_action_label("recreate_missing", "not_converted"),
+            "Convert",
+        )
+        self.assertEqual(
+            preview_action_label("recreate_missing", "dest_missing"),
+            "Recreate missing",
+        )
+        self.assertEqual(preview_action_label("transcode", "force"), "Transcode")
+
+    def test_format_preview_row_first_run_says_convert(self) -> None:
+        """Given recreate_missing with not_converted: When format_preview_row:
+        Then Action is Convert and Reason is Not converted yet."""
+        row = format_preview_row(
+            ConversionPreviewItem(
+                relative_dest="WAV/A.wav",
+                action="recreate_missing",
+                bit_depth=24,
+                sample_rate=44100,
+                size_bytes=1_000_000,
+                size_display="≈ 1.0 MB",
+                source_display="A.flac",
+                reason="Not converted yet",
+                write_kind="audio",
+                reason_code="not_converted",
+                output_format="wav",
+            )
+        )
+        self.assertEqual(row.action_label, "Convert")
+        self.assertEqual(row.reason, "Not converted yet")
+
     def test_preview_block_message_reports_conflicts_before_space(self) -> None:
         """Given unresolved conflicts: When preview_block_message runs: Then
         it reports conflicts and does not check disk space."""

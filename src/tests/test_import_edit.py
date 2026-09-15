@@ -711,6 +711,24 @@ class EditPreviewRowTests(unittest.TestCase):
         self.assertEqual(rows[0].action, import_edit.ACTION_MOVE_TO_TRASH)
         self.assertEqual(rows[0].playlist, "Night Set [WAV]")
 
+    def test_preview_save_unknown_collection_remove_lists_trash_action(self) -> None:
+        """Given a collection-only track: When trashed: Then preview lists Unknown."""
+        import copy
+
+        from rekordbox_xml import UNKNOWN_PLAYLIST_NAME
+
+        draft = import_edit.load_import_edit_draft(_valid_library(self.root))
+        import_edit.remove_track_from_playlist(
+            draft, folder="", name="Night Set [WAV]", track_id="1"
+        )
+        draft.original_root = copy.deepcopy(draft.root)
+        import_edit.remove_track_from_collection(draft, track_id="1")
+        rows = import_edit.preview_save(draft)
+        self.assertEqual(
+            [(r.track, r.action, r.playlist) for r in rows],
+            [("Artist - Track", import_edit.ACTION_MOVE_TO_TRASH, UNKNOWN_PLAYLIST_NAME)],
+        )
+
 
 class MovePathToTrashTests(unittest.TestCase):
     def test_move_path_to_trash_uses_nsfilemanager_javascript(self) -> None:

@@ -92,32 +92,40 @@ class ClassifyAssignmentTests(unittest.TestCase):
 
     def test_missing_dest_is_recreate_missing(self) -> None:
         """Given a reserved dest that is absent: When classify: Then
-        recreate_missing even if the record looks complete."""
+        recreate_missing with dest_missing for complete or incomplete state."""
         item = _item()
-        self.assertEqual(
-            classify_assignment(
-                item=item,
-                record={
-                    "dest": "WAV/A.wav",
-                    "state": "complete",
-                    "source": {"size": 1, "mtime_ns": 1},
-                    "metadata": {"signature": "sha256:" + ("ab" * 32)},
-                    "output": {"size": 2, "mtime_ns": 2},
-                    "recipe": {
-                        "format": "wav",
-                        "bit_depth": 24,
-                        "sample_rate": 48000,
-                        "channels": 2,
-                        "revision": 1,
-                    },
-                },
-                force=False,
-                dest_exists=False,
-                dest_stat=None,
-                source_stat={"size": 1, "mtime_ns": 1},
-            ).action,
-            "recreate_missing",
-        )
+        for record in (
+            _complete_record(item),
+            {"dest": "WAV/A.wav", "state": "incomplete"},
+        ):
+            with self.subTest(state=record.get("state")):
+                decision = classify_assignment(
+                    item=item,
+                    record=record,
+                    force=False,
+                    dest_exists=False,
+                    dest_stat=None,
+                    source_stat={"size": 1, "mtime_ns": 1},
+                )
+                self.assertEqual(decision.action, "recreate_missing")
+                self.assertEqual(decision.reason, "dest_missing")
+
+    def test_missing_dest_without_assignment_is_not_converted(self) -> None:
+        """Given no dest and no prior convert state: When classify: Then
+        recreate_missing with not_converted (first run / dest-only reserve)."""
+        item = _item()
+        for record in (None, {}, {"dest": "WAV/A.wav"}):
+            with self.subTest(record=record):
+                decision = classify_assignment(
+                    item=item,
+                    record=record,
+                    force=False,
+                    dest_exists=False,
+                    dest_stat=None,
+                    source_stat={"size": 1, "mtime_ns": 1},
+                )
+                self.assertEqual(decision.action, "recreate_missing")
+                self.assertEqual(decision.reason, "not_converted")
 
     def test_complete_output_mismatch_is_conflict_even_under_force(self) -> None:
         """Given a complete record whose dest stats differ: When classify:

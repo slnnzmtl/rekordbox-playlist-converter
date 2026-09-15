@@ -163,6 +163,7 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                     source_display="two.wav",
                     reason="Destination file is missing",
                     write_kind="audio",
+                    reason_code="dest_missing",
                     output_format="wav",
                 ),
                 ConversionPreviewItem(
@@ -232,11 +233,9 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                 table = find_treeview(dlg)
                 self.assertIsNotNone(table)
                 self.assertEqual(table.heading("#0", "text"), "Input file")
-                self.assertEqual(table.heading("destination", "text"), "Destination")
                 self.assertEqual(table.heading("format", "text"), "Format")
                 self.assertEqual(table.heading("action", "text"), "Action")
                 self.assertEqual(table.heading("reason", "text"), "Reason")
-                self.assertEqual(table.heading("write_kind", "text"), "Write")
                 self.assertEqual(table.heading("quality", "text"), "Quality")
                 self.assertEqual(table.heading("size", "text"), "Size")
                 rows = [
@@ -252,11 +251,9 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                         (
                             "one.flac",
                             [
-                                "WAV/A - One.wav",
                                 "WAV",
                                 "Reuse existing",
                                 "Output is already current",
-                                "writes nothing",
                                 "16-bit / 44.1 kHz",
                                 "0.0 MB",
                             ],
@@ -264,11 +261,9 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                         (
                             "two.wav",
                             [
-                                "WAV/B - Two.wav",
                                 "WAV",
                                 "Recreate missing",
                                 "Destination file is missing",
-                                "writes audio",
                                 "24-bit / 48 kHz",
                                 "≈ 0.3 MB",
                             ],
@@ -276,11 +271,9 @@ class ConversionPreviewDialogTests(unittest.TestCase):
                         (
                             "three.flac",
                             [
-                                "WAV/C - Three.wav",
                                 "WAV",
                                 "Transcode",
                                 "Source file changed",
-                                "writes audio",
                                 "24-bit / 48 kHz",
                                 "—",
                             ],

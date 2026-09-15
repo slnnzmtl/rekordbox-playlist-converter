@@ -314,13 +314,18 @@ class GuiTracklistTests(unittest.TestCase):
                 _flush_track_search_debounce(app)
                 groups = preview.get_children("")
                 self.assertEqual(len(groups), 2)
-                all_leaves = list(preview.get_children(groups[0])) + list(
-                    preview.get_children(groups[1])
+                self.assertEqual(
+                    [
+                        preview.item(r, "values")[0]
+                        for g in groups
+                        for r in preview.get_children(g)
+                        if r in preview.selection()
+                    ],
+                    ["Shogan - Revelation"],
                 )
-                self.assertEqual(set(preview.selection()), set(all_leaves))
                 self.assertEqual(
                     app.status_var.get(),
-                    "4 unique tracks from 2 playlists",
+                    "1 unique tracks from 1 playlist",
                 )
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")

@@ -721,8 +721,8 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 convert.plan, "extract_cover_jpeg", return_value=None
             ) as cover:
                 stats = convert_unique(plan, force=False)
-            self.assertEqual(stats.recreated, 1)
-            self.assertEqual(stats.copied, 0)
+            self.assertEqual(stats.copied, 1)
+            self.assertEqual(stats.recreated, 0)
             self.assertEqual(cover.call_count, 1)
             cover.assert_called_with(src, cancel_event=None)
 

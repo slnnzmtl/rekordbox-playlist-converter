@@ -28,6 +28,7 @@ ACTION_LABELS = {
 REASON_LABELS = {
     "in_place": "Source and destination are the same file",
     "dest_missing": "Destination file is missing",
+    "not_converted": "Not converted yet",
     "external_modification": "Destination was changed outside this app",
     "incomplete": "Previous conversion did not finish",
     "unverified": "Existing destination is not yet verified",
@@ -69,6 +70,13 @@ class Decision:
 def preview_reason(action: str, reason: str | None = None) -> str:
     """User-facing why string for the preview Reason column (not write kind)."""
     return REASON_LABELS.get(reason or "", "") or ACTION_LABELS.get(action, "")
+
+
+def preview_action_label(action: str, reason: str | None = None) -> str:
+    """User-facing Action column; first-run missing dest says Convert."""
+    if action == "recreate_missing" and reason == "not_converted":
+        return "Convert"
+    return ACTION_LABELS.get(action, action)
 
 
 def _decision(
@@ -184,9 +192,15 @@ def classify_assignment(
             dest_stat=dest_stat,
         )
     if not dest_exists:
+        prior = record or {}
+        reason = (
+            "dest_missing"
+            if prior.get("state") in {"complete", "incomplete"}
+            else "not_converted"
+        )
         return _decision(
             "recreate_missing",
-            "dest_missing",
+            reason,
             source_stat=source_stat,
             dest_stat=dest_stat,
         )

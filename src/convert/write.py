@@ -302,6 +302,7 @@ def _item_result(
     *,
     error: str | None = None,
     write: str = "",
+    reason: str = "",
 ) -> ItemResult:
     return ItemResult(
         source=item.source_path,
@@ -310,6 +311,7 @@ def _item_result(
         outcome=outcome,
         error=error,
         write=write,
+        reason=reason,
     )
 
 
@@ -326,7 +328,9 @@ def _snapshot_blocks_write(
                 ctx.checkpoint.discard_pending_and_save(item)
                 ctx.stats.state_changed.append(name)
             ctx.finish("state_changed", name)
-            return _item_result(item, decision.action, "state_changed")
+            return _item_result(
+                item, decision.action, "state_changed", reason=decision.reason
+            )
     frozen_dest = decision.dest_stat
     current_dest = file_snapshot(item.dest_path)
     dest_changed = (frozen_dest is None and current_dest is not None) or (
@@ -337,7 +341,9 @@ def _snapshot_blocks_write(
             ctx.checkpoint.discard_pending_and_save(item)
             ctx.stats.conflicts.append(name)
         ctx.finish("conflict", name)
-        return _item_result(item, decision.action, "conflict")
+        return _item_result(
+            item, decision.action, "conflict", reason=decision.reason
+        )
     return None
 
 
@@ -355,27 +361,39 @@ def execute_item(
         blocked = _snapshot_blocks_write(item, decision, ctx)
         if blocked is not None:
             return blocked
-        action = decision.action
     else:
-        action = format_policy.planned_action(
-            ctx.plan,
+        decision = classify_item(ctx.plan, item, ctx.force)
+    action = decision.action
+    reason = decision.reason
+
+    def result(
+        outcome: str,
+        *,
+        error: str | None = None,
+        write: str = "",
+        action_name: str | None = None,
+    ) -> ItemResult:
+        return _item_result(
             item,
-            ctx.force,
-            cover_lock=ctx.cover_lock,
-            cancel_event=ctx.cancel_event,
+            action if action_name is None else action_name,
+            outcome,
+            error=error,
+            write=write,
+            reason=reason,
         )
+
     if action in {"reuse", "in_place_noop", "refresh_xml"}:
         with ctx.stats_lock:
             ctx.stats.skipped += 1
         ctx.mark_succeeded(item)
         ctx.finish("skip", name)
-        return _item_result(item, action, "succeeded")
+        return result("succeeded")
     if action == "external_modification_conflict":
         with ctx.stats_lock:
             ctx.checkpoint.discard_pending_and_save(item)
             ctx.stats.conflicts.append(name)
         ctx.finish("conflict", name)
-        return _item_result(item, action, "conflict")
+        return result("conflict")
     try:
         converter_manifest.ensure_dest_path_under_wav_dir(
             ctx.plan.library_dir, item.dest_path
@@ -407,7 +425,7 @@ def execute_item(
                 ctx.checkpoint.mark_item_complete(item, metadata=old_meta)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
-            return _item_result(item, action, "succeeded", write="copy")
+            return result("succeeded", write="copy")
         if action == "rewrite_container" and not is_aiff:
             pcm_src = _pcm_origin_for_container_rewrite(ctx.plan, item, ctx.force)
             try:
@@ -425,15 +443,15 @@ def execute_item(
                     ctx.checkpoint.discard_pending_and_save(item)
                     ctx.stats.state_changed.append(name)
                 ctx.finish("state_changed", name)
-                return _item_result(item, "rewrite_container", "state_changed")
+                return result("state_changed", action_name="rewrite_container")
             else:
                 with ctx.stats_lock:
                     ctx.stats.copied += 1
                     ctx.checkpoint.mark_item_complete(item)
                 ctx.mark_succeeded(item)
                 ctx.finish("copy", name)
-                return _item_result(
-                    item, "rewrite_container", "succeeded", write="copy"
+                return result(
+                    "succeeded", write="copy", action_name="rewrite_container"
                 )
         if action == "rewrite_container" and is_aiff:
             cover = plan_module.cached_cover_jpeg(
@@ -473,15 +491,15 @@ def execute_item(
                     ctx.checkpoint.discard_pending_and_save(item)
                     ctx.stats.state_changed.append(name)
                 ctx.finish("state_changed", name)
-                return _item_result(item, "rewrite_container", "state_changed")
+                return result("state_changed", action_name="rewrite_container")
             else:
                 with ctx.stats_lock:
                     ctx.stats.copied += 1
                     ctx.checkpoint.mark_item_complete(item)
                 ctx.mark_succeeded(item)
                 ctx.finish("copy", name)
-                return _item_result(
-                    item, "rewrite_container", "succeeded", write="copy"
+                return result(
+                    "succeeded", write="copy", action_name="rewrite_container"
                 )
         copy_pcm = action == "recreate_missing" and item.passthrough
         encode = action in {"transcode", "recreate_missing"} and not copy_pcm
@@ -503,7 +521,7 @@ def execute_item(
                 ctx.checkpoint.mark_item_complete(item)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
-            return _item_result(item, action, "succeeded", write="copy")
+            return result("succeeded", write="copy")
         if copy_pcm:
             copy_wav_atomic(
                 item.source_path,
@@ -517,7 +535,7 @@ def execute_item(
                 ctx.checkpoint.mark_item_complete(item)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
-            return _item_result(item, action, "succeeded", write="copy")
+            return result("succeeded", write="copy")
         if encode and is_aiff:
             plan_module.write_aiff_output(
                 item.source_path,
@@ -538,7 +556,7 @@ def execute_item(
                 ctx.checkpoint.mark_item_complete(item)
             ctx.mark_succeeded(item)
             ctx.finish("convert", name)
-            return _item_result(item, action, "succeeded", write="transcode")
+            return result("succeeded", write="transcode")
         if encode:
             codec = item.codec or format_policy.pcm_codec_for_depth(
                 item.bit_depth, output_format=item.output_format
@@ -558,15 +576,15 @@ def execute_item(
                 ctx.checkpoint.mark_item_complete(item)
             ctx.mark_succeeded(item)
             ctx.finish("convert", name)
-            return _item_result(item, action, "succeeded", write="transcode")
+            return result("succeeded", write="transcode")
         raise CliError(f"unsupported convert action {action!r} for {item.source_path}")
     except CancelledError:
-        return _item_result(item, action, "cancelled")
+        return result("cancelled")
     except Exception as exc:  # noqa: BLE001 — collect all; report after pool
         with ctx.stats_lock:
             ctx.stats.errors.append(str(exc))
         ctx.finish("error", name)
-        return _item_result(item, action, "failed", error=str(exc))
+        return result("failed", error=str(exc))
 
 
 def convert_unique(
@@ -687,6 +705,7 @@ def execute_prepared(
                 playlists=tuple(playlists_by_dest.get(result.destination, ())),
                 error=result.error,
                 write=result.write,
+                reason=result.reason,
             )
             for result in stats.item_results
         ]

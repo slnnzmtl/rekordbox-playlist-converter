@@ -61,10 +61,9 @@ Updates…). There is no analytics in this app.
    44.1 kHz/48 kHz). These are maxima, not targets: 16-bit tracks stay
    16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are 24-bit / 48 kHz.
 6. Click Convert (beside the progress bar). A Conversion preview lists each
-   unique input, reserved destination, action, reason, write kind, quality, and
-   size. The Write column says whether the step writes audio, updates metadata
-   only, or writes nothing. Convert stays disabled on unresolved destination
-   conflicts or insufficient disk space. Back (or Escape) writes nothing and
+   unique input, format, action, reason, quality, and size. Convert stays
+   disabled on unresolved destination conflicts or insufficient disk space.
+   Back (or Escape) writes nothing and
    returns to the main window. Confirm Convert to start encoding. While
    converting, Cancel replaces Convert in that spot. Cancel stops in-flight
    encodes (up to 4 at once); files already written are kept and Import XML
@@ -83,12 +82,13 @@ What you get:
 • Import file <output folder>/rekordbox-import.xml
 • Playlist inside that file named {your playlist} [WAV] or [AIFF]
 
-Your original files stay where they are. Re-running with the same output folder
-classifies each reserved destination (reuse, refresh XML, update AIFF tags,
-rebuild container, transcode, recreate missing, in-place skip, or conflict).
-When every resolved track succeeds, the generated playlist is rewritten to the
-current source order. Conflicts are not overwritten; Convert is blocked until
-they are resolved.
+Your original files stay where they are. The first conversion of a track shows
+Convert (output has not been created yet). Re-running with the same output
+folder classifies each reserved destination (reuse, refresh XML, update AIFF
+tags, rebuild container, transcode, recreate missing, in-place skip, or
+conflict). When every resolved track succeeds, the generated playlist is
+rewritten to the current source order. Conflicts are not overwritten; Convert
+is blocked until they are resolved.
 Cancel stops in-flight encodes; already-written files and Import XML for
 successes are kept. Each unique source converts once per batch even if it
 appears in several playlists. Assignments are sticky per source and format.

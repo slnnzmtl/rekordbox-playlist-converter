@@ -558,6 +558,43 @@ class GuiImportEditMenusTests(unittest.TestCase):
             if tk_root is not None:
                 tk_root.destroy()
 
+    def test_remove_one_track_does_not_select_remaining(self) -> None:
+        """Given one selected leaf: When it is removed: Then remaining leaves
+        are not auto-selected."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        library = _seed_two_track_library(self.root_dir)
+        tk_root = None
+        try:
+            with app_patches(**_patches(wav_dir=library)):
+                tk_root = tk.Tk()
+                tk_root.withdraw()
+                app = ConverterApp(tk_root, documents_accessible=False)
+                mark_output_folder_valid(app)
+                app._enter_import_edit_mode()
+                for iid, meta in app._playlist_iids.items():
+                    if meta[0] == "playlist":
+                        app.playlist_tree.selection_set(iid)
+                        break
+                app._refresh_tracklist_preview()
+                leaves = list(app._tracklist_iids)
+                drop = leaves[0]
+                drop_key = app._tracklist_iids[drop].key
+                app.tracklist_tree.selection_set(drop)
+                app._edit_remove_track_from_playlist(
+                    "", "Night Set [WAV]", drop_key
+                )
+                self.assertEqual(len(app._tracklist_iids), 1)
+                self.assertEqual(list(app.tracklist_tree.selection()), [])
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if tk_root is not None:
+                tk_root.destroy()
+
     def test_remove_from_collection_applies_to_all_selected_tracks(self) -> None:
         """Given two selected tracklist rows: When remove from collection:
         Then both collection rows and playlist Keys are gone."""

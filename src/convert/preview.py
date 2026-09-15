@@ -14,11 +14,11 @@ from cli_error import CancelledError
 from convert import plan as plan_module
 from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PlannedTrack
 from convert.rerun import (
-    ACTION_LABELS,
     ACTION_WRITE_KIND,
     WRITE_KIND_LABELS,
     Decision,
     classify_item,
+    preview_action_label,
     preview_reason,
 )
 from convert.paths import _format_size_mb, source_key
@@ -65,7 +65,7 @@ def format_preview_row(item: ConversionPreviewItem) -> PreviewRow:
         source_display=item.source_display,
         relative_dest=item.relative_dest,
         output_format=fmt.upper(),
-        action_label=ACTION_LABELS.get(item.action, item.action),
+        action_label=preview_action_label(item.action, item.reason_code),
         reason=item.reason,
         write_kind_label=WRITE_KIND_LABELS.get(write_kind, write_kind),
         quality=f"{depth} / {rate}",

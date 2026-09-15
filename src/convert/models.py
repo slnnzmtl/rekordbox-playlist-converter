@@ -65,6 +65,7 @@ class ItemResult:
     playlists: tuple[str, ...] = ()
     error: str | None = None
     write: str = ""  # transcode, copy, or empty for non-audio outcomes
+    reason: str = ""  # classifier reason (e.g. not_converted, dest_missing)
 
 
 @dataclass
@@ -171,7 +172,12 @@ def summarize_item_results(results: list[ItemResult]) -> ItemResultSummary:
             continue
         successes += 1
         if result.action == "recreate_missing":
-            if result.write == "copy":
+            if result.reason == "not_converted":
+                if result.write == "copy":
+                    copied += 1
+                else:
+                    converted += 1
+            elif result.write == "copy":
                 rec_copy += 1
             else:
                 rec_tx += 1

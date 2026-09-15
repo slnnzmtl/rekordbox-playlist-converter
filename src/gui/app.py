@@ -95,6 +95,7 @@ class ConverterApp(ImportEditMixin, ConvertFlowMixin, PlaylistsMixin, ShellMixin
         # (folder, name) -> open state for tracklist playlist groups
         self._tracklist_group_open: dict[tuple[str, str], bool] = {}
         self._tracklist_group_iids: dict[str, tuple[str, str]] = {}
+        self._tracklist_painted_playlists: list[tuple[str, str]] = []
         self._tracklist_selecting = False
         self._playlist_selecting = False
         self._tracklist_tech_gen = 0

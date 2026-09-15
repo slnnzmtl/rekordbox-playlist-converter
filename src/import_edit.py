@@ -18,6 +18,7 @@ from cli_error import CliError
 from convert.paths import abs_path, collision_key
 from gui_prefs.paths import import_xml_path
 from rekordbox_xml import (
+    UNKNOWN_PLAYLIST_NAME,
     decode_location,
     iter_playlist_nodes,
     load_dj_playlists,
@@ -419,6 +420,17 @@ def _original_relative_dest(draft: ImportEditDraft, track_id: str) -> str | None
         return None
 
 
+def _collection_track_ids(root: ET.Element) -> list[str]:
+    collection = root.find("COLLECTION")
+    if collection is None:
+        return []
+    return [
+        tid
+        for track in collection.findall("TRACK")
+        if (tid := track.get("TrackID") or "")
+    ]
+
+
 def preview_save(draft: ImportEditDraft) -> list[EditPreviewRow]:
     """Net pending edits vs the loaded Import XML (for the Save confirmation)."""
     orig_playlists = _playlist_key_map(draft.original_root)
@@ -443,6 +455,27 @@ def preview_save(draft: ImportEditDraft) -> list[EditPreviewRow]:
                     playlist=label,
                 )
             )
+    # Unknown: collection-only tracks (never in a playlist NODE) removed for Trash.
+    orig_playlist_keys = {
+        key for keys in orig_playlists.values() for key in keys if key
+    }
+    curr_ids = set(_collection_track_ids(draft.root))
+    for key in _collection_track_ids(draft.original_root):
+        if key in curr_ids or key in orig_playlist_keys:
+            continue
+        dest = _original_relative_dest(draft, key)
+        action = (
+            ACTION_MOVE_TO_TRASH
+            if dest and dest in draft.trash_relative_dests
+            else ACTION_REMOVE_FROM_PLAYLIST
+        )
+        rows.append(
+            EditPreviewRow(
+                track=collection_track_label(draft.original_root, key),
+                action=action,
+                playlist=UNKNOWN_PLAYLIST_NAME,
+            )
+        )
     return rows
 
 

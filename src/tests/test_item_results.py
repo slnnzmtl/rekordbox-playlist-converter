@@ -40,6 +40,26 @@ from convert_fixtures import write_pcm_wav
 from rekordbox_xml import encode_location
 
 
+def _result(
+    name: str,
+    *,
+    action: str = "recreate_missing",
+    write: str = "transcode",
+    reason: str = "",
+    playlists: tuple[str, ...] = (),
+    ext: str = "flac",
+) -> ItemResult:
+    return ItemResult(
+        source=Path(f"{name}.{ext}"),
+        destination=Path(f"{name.upper()}.wav"),
+        action=action,
+        outcome="succeeded",
+        write=write,
+        reason=reason,
+        playlists=playlists,
+    )
+
+
 class ItemResultDeriveTests(unittest.TestCase):
     def test_pcm_rebuild_is_not_also_copied_in_counts(self) -> None:
         """Given a container rewrite: When convert_unique succeeds: Then
@@ -202,43 +222,46 @@ class ItemResultDeriveTests(unittest.TestCase):
         """Given three recreate_missing successes: When formatting counts:
         Then the line is exclusive (recreated wrapping transcode/copy)."""
         results = [
-            ItemResult(
-                source=Path("a.flac"),
-                destination=Path("A.wav"),
-                action="recreate_missing",
-                outcome="succeeded",
-                write="transcode",
+            _result(
+                "a",
+                reason="dest_missing",
                 playlists=("Night [WAV]", "Morning [WAV]"),
             ),
-            ItemResult(
-                source=Path("b.flac"),
-                destination=Path("B.wav"),
-                action="recreate_missing",
-                outcome="succeeded",
-                write="transcode",
-                playlists=("Night [WAV]",),
-            ),
-            ItemResult(
-                source=Path("c.wav"),
-                destination=Path("C.wav"),
-                action="recreate_missing",
-                outcome="succeeded",
+            _result("b", reason="dest_missing", playlists=("Night [WAV]",)),
+            _result(
+                "c",
                 write="copy",
+                reason="dest_missing",
                 playlists=("Night [WAV]",),
+                ext="wav",
             ),
         ]
         stats = ConvertStats(item_results=results)
-        parts = format_conversion_counts(stats)
-        self.assertEqual(parts, ["3 recreated (2 transcoded, 1 copied)"])
-        night = stats_for_playlist(stats, "Night [WAV]")
-        morning = stats_for_playlist(stats, "Morning [WAV]")
         self.assertEqual(
-            format_conversion_counts(night),
+            format_conversion_counts(stats),
             ["3 recreated (2 transcoded, 1 copied)"],
         )
         self.assertEqual(
-            format_conversion_counts(morning),
+            format_conversion_counts(stats_for_playlist(stats, "Night [WAV]")),
+            ["3 recreated (2 transcoded, 1 copied)"],
+        )
+        self.assertEqual(
+            format_conversion_counts(stats_for_playlist(stats, "Morning [WAV]")),
             ["1 recreated (1 transcoded)"],
+        )
+
+    def test_not_converted_recreate_counts_as_converted_or_copied(self) -> None:
+        """Given first-run recreate_missing (not_converted): When formatting:
+        Then counts are converted/copied, not recreated."""
+        stats = ConvertStats(
+            item_results=[
+                _result("a", reason="not_converted"),
+                _result("b", write="copy", reason="not_converted", ext="wav"),
+            ]
+        )
+        self.assertEqual(
+            format_conversion_counts(stats),
+            ["1 converted", "1 copied"],
         )
 
     def test_exit_code_nonzero_for_conflicts_and_state_changed(self) -> None:

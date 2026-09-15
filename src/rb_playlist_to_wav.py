@@ -376,8 +376,8 @@ def print_conversion_preview(plans: list[Plan], preview) -> None:
         for item in preview.items:
             row = format_preview_row(item)
             print(
-                f"{row.source_display}  {row.relative_dest}  {row.output_format}  "
-                f"{row.action_label}  {row.reason}  {row.write_kind_label}  "
+                f"{row.source_display}  {row.output_format}  "
+                f"{row.action_label}  {row.reason}  "
                 f"{row.quality}  {row.size_display}"
             )
         print()

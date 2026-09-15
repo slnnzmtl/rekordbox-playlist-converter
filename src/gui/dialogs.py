@@ -157,7 +157,7 @@ def show_conversion_preview_dialog(
     table_frame.columnconfigure(0, weight=1)
     table_frame.rowconfigure(0, weight=1)
 
-    columns = ("destination", "format", "action", "reason", "write_kind", "quality", "size")
+    columns = ("format", "action", "reason", "quality", "size")
     table, yscroll = tree_with_yscroll(
         table_frame,
         columns=columns,
@@ -166,19 +166,15 @@ def show_conversion_preview_dialog(
         height=18,
     )
     table.heading("#0", text="Input file", anchor="w")
-    table.heading("destination", text="Destination", anchor="w")
     table.heading("format", text="Format", anchor="w")
     table.heading("action", text="Action", anchor="w")
     table.heading("reason", text="Reason", anchor="w")
-    table.heading("write_kind", text="Write", anchor="w")
     table.heading("quality", text="Quality", anchor="w")
     table.heading("size", text="Size", anchor="e")
-    table.column("#0", width=160, stretch=True, minwidth=100)
-    table.column("destination", width=220, stretch=True, minwidth=120)
+    table.column("#0", width=420, stretch=True, minwidth=200)
     table.column("format", width=60, stretch=False, anchor="w")
-    table.column("action", width=130, stretch=False, anchor="w")
-    table.column("reason", width=240, stretch=True, minwidth=120)
-    table.column("write_kind", width=130, stretch=False, anchor="w")
+    table.column("action", width=140, stretch=False, anchor="w")
+    table.column("reason", width=200, stretch=False, anchor="w")
     table.column("quality", width=130, stretch=False, anchor="w")
     table.column("size", width=100, stretch=False, minwidth=80, anchor="e")
     table.grid(row=0, column=0, sticky="nsew")
@@ -191,11 +187,9 @@ def show_conversion_preview_dialog(
             tk.END,
             text=row.source_display,
             values=(
-                row.relative_dest,
                 row.output_format,
                 row.action_label,
                 row.reason,
-                row.write_kind_label,
                 row.quality,
                 row.size_display,
             ),

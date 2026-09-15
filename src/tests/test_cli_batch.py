@@ -544,17 +544,15 @@ class XmlFixtureTests(XmlFixtureBase):
         # selected format directory
         format_dir = str(self.wav_dir / "WAV")
         self.assertIn(format_dir, stdout)
-        # unique input filenames + dest + format + action label + reason + write kind + quality + size
+        # unique input filenames + format + action label + reason + quality + size
         for src in (self.a, self.b):
             self.assertIn(src.name, stdout)
         self.assertNotIn(str(self.a), stdout)
         self.assertNotIn(self.c.name, stdout)
-        self.assertIn("WAV/ABSL - Bestial.wav", stdout)
         self.assertIn("WAV", stdout)
-        self.assertIn("Recreate missing", stdout)
+        self.assertIn("Convert", stdout)
+        self.assertIn("Not converted yet", stdout)
         self.assertNotIn("recreate_missing", stdout)
-        self.assertIn("Destination file is missing", stdout)
-        self.assertIn("writes audio", stdout)
         self.assertIn("24-bit / 44.1 kHz", stdout)
         self.assertIn("≈ 2.5 MB", stdout)
         # missing-source warning

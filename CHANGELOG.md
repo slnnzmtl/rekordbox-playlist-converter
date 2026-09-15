@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Preview Action for a first conversion (dest reserved, never written) is
+  **Convert** / Not converted yet; **Recreate missing** remains when a prior
+  complete or incomplete assignment’s file is gone. The Done report counts
+  those first writes as converted/copied, not recreated.
+- Conversion preview omits Destination and Write columns (Action + Reason
+  remain; Format directory still shown in CLI dry-run).
+- Save Import XML confirmation lists Unknown (no-playlist) tracks moved to Trash.
+
 ## 2.0.0
 
 First public release of the v2 workflow and **manifest v2**. Do not publish
