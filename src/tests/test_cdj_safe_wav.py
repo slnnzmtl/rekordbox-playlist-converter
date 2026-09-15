@@ -120,6 +120,23 @@ class WavHeaderParseTests(unittest.TestCase):
             self.assertFalse(dest.exists())
             self.assertEqual(cdj_wav.parse_wav_info(src).format_tag, 0xFFFE)
 
+    def test_extensible_cbsize_zero_is_not_pcm_rewritten(self) -> None:
+        """Given WAVE_FORMAT_EXTENSIBLE with cbSize 0 and trailing PCM-like
+        bytes: When rewrite is considered: Then the file is not treated as
+        integer PCM."""
+        pcm = bytes.fromhex("0100000000001000800000aa00389b71")
+        extra = struct.pack("<HHI", 0, 16, 0x3) + pcm
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "cb0.wav"
+            dest = Path(tmp) / "out.wav"
+            write_pcm_wav(src, format_tag=0xFFFE, fmt_extra=extra)
+            from convert.rerun import container_rewrite_supported
+
+            self.assertFalse(container_rewrite_supported(src, "wav"))
+            with self.assertRaises(CliError):
+                cdj_wav.rewrite_wav_pcm(src, dest)
+            self.assertFalse(dest.exists())
+
     def test_trailing_bytes_after_chunks_raise(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "trail.wav"
