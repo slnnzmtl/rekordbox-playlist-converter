@@ -31,16 +31,19 @@ new folder).
 - The GUI may contact GitHub Releases to check for updates. There is no
   analytics client.
 - Manifest **v2** is the first released converter-library contract. Unreleased v1
-  and unknown future versions are refused (delete `.rekordbox-converter-manifest.json`
-  or choose a new output folder). Reruns classify explicit actions from source,
-  metadata, output, and recipe signatures: reuse, refresh XML, update AIFF
-  metadata, rewrite container, transcode, recreate missing, in-place skip, or
-  conflict. Preview and execute share the classifier; execute reclassifies on a
-  fresh filesystem snapshot. Mutating writes save incomplete first, then persist
-  complete signatures after a successful replace. Mid-batch checkpoints and the
-  final save keep unfinished mutations incomplete on disk so a crash cannot look
-  like an external edit. Conflicts are not overwritten and keep existing Import
-  XML / playlist keys.
+  and unknown future versions are refused; leftover managed audio still causes
+  folder validation to reject the library, so recreate the whole development
+  output library or choose a new empty folder (deleting only
+  `.rekordbox-converter-manifest.json` is not enough). Reruns classify explicit
+  actions from source, metadata, output, and recipe signatures: reuse, refresh
+  XML, update AIFF metadata, rewrite container, transcode, recreate missing,
+  in-place skip, or conflict. Preview and execute share a frozen preflight
+  Decision plus filesystem snapshots; execute does not reclassify before write.
+  Mutating writes save incomplete first, then persist complete signatures after
+  a successful replace. WAV/AIFF metadata freshness is committed only after
+  Import XML succeeds. Mid-batch checkpoints and the final save keep unfinished
+  mutations incomplete on disk so a crash cannot look like an external edit.
+  Conflicts are not overwritten and keep existing Import XML / playlist keys.
 
 - GUI **Unknown** playlist lists collection tracks that are not in any playlist.
 - GUI tracklist shows artist and title without a file-extension suffix;

@@ -17,6 +17,7 @@ for _p in (_SRC, _TESTS):
 import converter_manifest
 from convert.freshness import bind_complete_assignment, metadata_signature, recipe_from_item
 from convert.models import Plan, PlannedTrack
+from convert.paths import source_key
 from convert.rerun import classify_assignment, classify_item
 from convert_fixtures import write_pcm_wav
 
@@ -251,8 +252,19 @@ class ClassifyAssignmentTests(unittest.TestCase):
             dest_stat={"size": 20, "mtime_ns": 2},
             source_stat={"size": 10, "mtime_ns": 1},
         )
-        self.assertEqual(revision.action, "rewrite_container")
+        self.assertEqual(revision.action, "transcode")
         self.assertEqual(revision.reason, "revision_changed")
+
+        passthrough_rev = classify_assignment(
+            item=_item(passthrough=True),
+            record=_complete_record(_item(passthrough=True), revision=2),
+            force=False,
+            dest_exists=True,
+            dest_stat={"size": 20, "mtime_ns": 2},
+            source_stat={"size": 10, "mtime_ns": 1},
+        )
+        self.assertEqual(passthrough_rev.reason, "revision_changed")
+        self.assertEqual(passthrough_rev.action, "transcode")
 
         wav = _item()
         wav.source_el.set("Name", "New")
@@ -377,6 +389,50 @@ class ClassifyItemTests(unittest.TestCase):
             self.assertEqual(
                 classify_item(plan, item, False).action,
                 "external_modification_conflict",
+            )
+
+    def test_revision_on_unrewriteable_dest_rewrites_from_safe_source(self) -> None:
+        """Given a complete passthrough dest that is not a valid WAV: When the
+        recipe revision changes: Then classify_item chooses rewrite_container
+        so PCM is taken from the safe source."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.wav"
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(src, frames=8)
+            dest.write_bytes(b"not a wav")
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location="file://localhost/A",
+                dest_name=dest.name,
+                codec=None,
+                passthrough=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            plan.manifest.tracks[source_key(src)]["wav"]["recipe"]["revision"] = 2
+            self.assertEqual(
+                classify_item(plan, item, False).action, "rewrite_container"
             )
 
 

@@ -10,6 +10,7 @@ from convert.freshness import assignment_state, metadata_signature, recipe_from_
 from convert.models import Plan, PlannedTrack
 from convert.paths import source_key
 from convert.quality import coerce_output_format
+from cli_error import CliError
 
 _PCM_RECIPE_KEYS = ("format", "bit_depth", "sample_rate", "channels")
 
@@ -91,8 +92,61 @@ def _decision(
     )
 
 
+def container_rewrite_supported(path: Path, output_format: str) -> bool | None:
+    """True/False when path exists; None when it cannot be inspected."""
+    if not path.is_file():
+        return None
+    fmt = coerce_output_format(output_format)
+    try:
+        if fmt == "wav":
+            from cdj_wav import parse_wav_info, pcm_rewrite_supported
+
+            return pcm_rewrite_supported(parse_wav_info(path))
+        from cdj_aiff import info_is_cdj_safe_aiff, parse_aiff_audio
+
+        info = parse_aiff_audio(path)
+        return info_is_cdj_safe_aiff(
+            info, bit_depth=info.bits_per_sample, sample_rate=_aiff_rate_hz(info)
+        )
+    except CliError:
+        return False
+
+
+def _aiff_rate_hz(info: object) -> int:
+    rate_bytes = getattr(info, "sample_rate_bytes", b"")
+    from cdj_aiff import AIFF_RATE_BYTES
+
+    for hz, packed in AIFF_RATE_BYTES.items():
+        if packed == rate_bytes:
+            return hz
+    return 48000
+
+
 def _rebuild_action(item: PlannedTrack) -> str:
-    return "rewrite_container" if item.passthrough else "transcode"
+    if not item.passthrough:
+        return "transcode"
+    dest_ok = (
+        container_rewrite_supported(item.dest_path, item.output_format)
+        if item.dest_path.is_file()
+        else None
+    )
+    if dest_ok is True:
+        return "rewrite_container"
+    if container_rewrite_supported(item.source_path, item.output_format) is False:
+        return "transcode"
+    return "rewrite_container"
+
+
+def _revision_action(item: PlannedTrack) -> str:
+    """PCM-preserving rewrite when dest (or a passthrough source) is rewriteable."""
+    if container_rewrite_supported(item.dest_path, item.output_format) is True:
+        return "rewrite_container"
+    if (
+        item.passthrough
+        and container_rewrite_supported(item.source_path, item.output_format) is True
+    ):
+        return "rewrite_container"
+    return "transcode"
 
 
 def snapshots_match(
@@ -191,7 +245,7 @@ def classify_assignment(
         )
     if stored_recipe.get("revision") != current_recipe.get("revision"):
         return _decision(
-            "rewrite_container",
+            _revision_action(item),
             "revision_changed",
             source_stat=source_stat,
             dest_stat=dest_stat,

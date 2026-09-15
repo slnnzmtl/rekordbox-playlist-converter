@@ -260,6 +260,5 @@ class PrintSummaryTests(unittest.TestCase):
         self.assertIn("x.flac", out)
 
 
-
 if __name__ == "__main__":
     unittest.main()

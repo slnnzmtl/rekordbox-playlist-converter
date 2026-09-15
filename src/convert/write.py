@@ -42,7 +42,13 @@ from convert.models import (
 from convert.progress import Progress
 from convert.paths import source_key
 from convert.quality import coerce_output_format
-from convert.rerun import Decision, classify_item, file_snapshot, snapshots_match
+from convert.rerun import (
+    Decision,
+    classify_item,
+    container_rewrite_supported,
+    file_snapshot,
+    snapshots_match,
+)
 
 _MUTATING_ACTIONS = frozenset(
     {
@@ -111,6 +117,8 @@ def _pcm_origin_for_container_rewrite(
         return item.source_path
     if stored.get("size") != st.st_size or stored.get("mtime_ns") != st.st_mtime_ns:
         return item.source_path
+    if container_rewrite_supported(item.dest_path, item.output_format) is not True:
+        return item.source_path
     return item.dest_path
 
 
@@ -174,7 +182,9 @@ class ManifestCheckpoint:
         self.every = every
         self._count = 0
 
-    def mark_item_complete(self, item: PlannedTrack) -> None:
+    def mark_item_complete(
+        self, item: PlannedTrack, *, metadata: str | None = None
+    ) -> None:
         if self.plan.manifest is None:
             return
         fmt = coerce_output_format(item.output_format)
@@ -186,7 +196,7 @@ class ManifestCheckpoint:
         mark_complete(
             record,
             source=source_signature(item.source_path),
-            metadata=metadata_signature(item.source_el),
+            metadata=metadata if metadata is not None else metadata_signature(item.source_el),
             output=output_signature(item.dest_path),
             recipe=recipe_from_item(item),
         )
@@ -230,6 +240,42 @@ def _prebatch_incomplete_manifest(
     return clone
 
 
+def _commit_refresh_xml_freshness(
+    prepared: PreparedConversion,
+    decisions: dict[tuple[str, str], Decision],
+    succeeded: set[tuple[str, str]],
+    pending: set[tuple[str, str]],
+) -> None:
+    """Advance metadata signatures only after Import XML has been written."""
+    changed = False
+    for item in prepared.items:
+        fmt = coerce_output_format(item.output_format)
+        key = (source_key(item.source_path), fmt)
+        decision = decisions.get(key)
+        if decision is None or decision.action not in {
+            "refresh_xml",
+            "update_metadata",
+        }:
+            continue
+        if key not in succeeded:
+            continue
+        record = prepared.manifest.tracks.get(key[0], {}).get(fmt)
+        if record is None:
+            continue
+        mark_complete(
+            record,
+            source=source_signature(item.source_path),
+            metadata=metadata_signature(item.source_el),
+            output=output_signature(item.dest_path),
+            recipe=recipe_from_item(item),
+        )
+        changed = True
+    if changed:
+        _save_manifest_with_pending(
+            prepared.manifest, prepared.library_dir, pending
+        )
+
+
 @dataclass
 class ExecuteContext:
     """Shared convert_unique state for one item execution."""
@@ -267,23 +313,18 @@ def _item_result(
     )
 
 
-def _track_ref(item: PlannedTrack) -> str:
-    return f"{item.source_path.name} → {item.dest_name}"
-
-
 def _snapshot_blocks_write(
     item: PlannedTrack, decision: Decision, ctx: ExecuteContext
 ) -> ItemResult | None:
     """Return a blocking result if frozen stats no longer match."""
     name = item.dest_name
-    ref = _track_ref(item)
     key_src = decision.source_stat
     if key_src is not None:
         current_src = file_snapshot(item.source_path)
         if current_src is None or not snapshots_match(key_src, current_src):
             with ctx.stats_lock:
                 ctx.checkpoint.discard_pending_and_save(item)
-                ctx.stats.state_changed.append(ref)
+                ctx.stats.state_changed.append(name)
             ctx.finish("state_changed", name)
             return _item_result(item, decision.action, "state_changed")
     frozen_dest = decision.dest_stat
@@ -294,7 +335,7 @@ def _snapshot_blocks_write(
     if dest_changed:
         with ctx.stats_lock:
             ctx.checkpoint.discard_pending_and_save(item)
-            ctx.stats.conflicts.append(ref)
+            ctx.stats.conflicts.append(name)
         ctx.finish("conflict", name)
         return _item_result(item, decision.action, "conflict")
     return None
@@ -324,13 +365,6 @@ def execute_item(
             cancel_event=ctx.cancel_event,
         )
     if action in {"reuse", "in_place_noop", "refresh_xml"}:
-        if action == "refresh_xml":
-            with ctx.stats_lock:
-                ctx.checkpoint.mark_item_complete(item)
-                ctx.stats.metadata_refreshed += 1
-        else:
-            with ctx.stats_lock:
-                ctx.stats.reused += 1
         with ctx.stats_lock:
             ctx.stats.skipped += 1
         ctx.mark_succeeded(item)
@@ -339,7 +373,7 @@ def execute_item(
     if action == "external_modification_conflict":
         with ctx.stats_lock:
             ctx.checkpoint.discard_pending_and_save(item)
-            ctx.stats.conflicts.append(_track_ref(item))
+            ctx.stats.conflicts.append(name)
         ctx.finish("conflict", name)
         return _item_result(item, action, "conflict")
     try:
@@ -361,9 +395,16 @@ def execute_item(
                 sample_rate=item.sample_rate,
             )
             with ctx.stats_lock:
-                ctx.checkpoint.mark_item_complete(item)
-                ctx.stats.metadata_refreshed += 1
-                ctx.stats.skipped += 1
+                fmt = coerce_output_format(item.output_format)
+                record = (
+                    ctx.plan.manifest.tracks.get(source_key(item.source_path), {}).get(
+                        fmt
+                    )
+                    if ctx.plan.manifest is not None
+                    else None
+                )
+                old_meta = (record or {}).get("metadata", {}).get("signature")
+                ctx.checkpoint.mark_item_complete(item, metadata=old_meta)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
             return _item_result(item, action, "succeeded", write="copy")
@@ -380,10 +421,13 @@ def execute_item(
                     ),
                 )
             except CliError:
-                action = "transcode"
+                with ctx.stats_lock:
+                    ctx.checkpoint.discard_pending_and_save(item)
+                    ctx.stats.state_changed.append(name)
+                ctx.finish("state_changed", name)
+                return _item_result(item, "rewrite_container", "state_changed")
             else:
                 with ctx.stats_lock:
-                    ctx.stats.pcm_rebuilt += 1
                     ctx.stats.copied += 1
                     ctx.checkpoint.mark_item_complete(item)
                 ctx.mark_succeeded(item)
@@ -425,10 +469,13 @@ def execute_item(
                     ),
                 )
             except CliError:
-                action = "transcode"
+                with ctx.stats_lock:
+                    ctx.checkpoint.discard_pending_and_save(item)
+                    ctx.stats.state_changed.append(name)
+                ctx.finish("state_changed", name)
+                return _item_result(item, "rewrite_container", "state_changed")
             else:
                 with ctx.stats_lock:
-                    ctx.stats.pcm_rebuilt += 1
                     ctx.stats.copied += 1
                     ctx.checkpoint.mark_item_complete(item)
                 ctx.mark_succeeded(item)
@@ -436,12 +483,14 @@ def execute_item(
                 return _item_result(
                     item, "rewrite_container", "succeeded", write="copy"
                 )
-        if is_aiff:
+        copy_pcm = action == "recreate_missing" and item.passthrough
+        encode = action in {"transcode", "recreate_missing"} and not copy_pcm
+        if copy_pcm and is_aiff:
             plan_module.write_aiff_output(
                 item.source_path,
                 item.dest_path,
                 item.source_el,
-                passthrough=item.passthrough,
+                passthrough=True,
                 codec=item.codec,
                 bit_depth=item.bit_depth,
                 sample_rate=item.sample_rate,
@@ -450,57 +499,74 @@ def execute_item(
                 cover_lock=ctx.cover_lock,
             )
             with ctx.stats_lock:
-                if item.passthrough:
-                    ctx.stats.copied += 1
-                else:
-                    ctx.stats.converted += 1
-                if action == "recreate_missing":
-                    ctx.stats.recreated += 1
-                ctx.checkpoint.mark_item_complete(item)
-            ctx.mark_succeeded(item)
-            write = "copy" if item.passthrough else "transcode"
-            ctx.finish("copy" if item.passthrough else "convert", name)
-            return _item_result(item, action, "succeeded", write=write)
-        if item.passthrough:
-            copy_wav_atomic(
-                item.source_path, item.dest_path, cancel_event=ctx.cancel_event
-            )
-            with ctx.stats_lock:
                 ctx.stats.copied += 1
-                if action == "recreate_missing":
-                    ctx.stats.recreated += 1
                 ctx.checkpoint.mark_item_complete(item)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
             return _item_result(item, action, "succeeded", write="copy")
-        if not item.codec:
-            raise CliError(f"no codec planned for {item.source_path}")
-        plan_module.run_ffmpeg(
-            item.source_path,
-            item.dest_path,
-            item.codec,
-            force=True,
-            sample_rate=item.sample_rate,
-            bit_depth=item.bit_depth,
-            cancel_event=ctx.cancel_event,
-            output_format=item.output_format,
-        )
-        with ctx.stats_lock:
-            ctx.stats.converted += 1
-            if action == "recreate_missing":
-                ctx.stats.recreated += 1
-            ctx.checkpoint.mark_item_complete(item)
-        ctx.mark_succeeded(item)
-        ctx.finish("convert", name)
-        return _item_result(item, action, "succeeded", write="transcode")
+        if copy_pcm:
+            copy_wav_atomic(
+                item.source_path,
+                item.dest_path,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+                cancel_event=ctx.cancel_event,
+            )
+            with ctx.stats_lock:
+                ctx.stats.copied += 1
+                ctx.checkpoint.mark_item_complete(item)
+            ctx.mark_succeeded(item)
+            ctx.finish("copy", name)
+            return _item_result(item, action, "succeeded", write="copy")
+        if encode and is_aiff:
+            plan_module.write_aiff_output(
+                item.source_path,
+                item.dest_path,
+                item.source_el,
+                passthrough=False,
+                codec=item.codec or format_policy.pcm_codec_for_depth(
+                    item.bit_depth, output_format="aiff"
+                ),
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+                cover_cache=ctx.plan.cover_cache,
+                cancel_event=ctx.cancel_event,
+                cover_lock=ctx.cover_lock,
+            )
+            with ctx.stats_lock:
+                ctx.stats.converted += 1
+                ctx.checkpoint.mark_item_complete(item)
+            ctx.mark_succeeded(item)
+            ctx.finish("convert", name)
+            return _item_result(item, action, "succeeded", write="transcode")
+        if encode:
+            codec = item.codec or format_policy.pcm_codec_for_depth(
+                item.bit_depth, output_format=item.output_format
+            )
+            plan_module.run_ffmpeg(
+                item.source_path,
+                item.dest_path,
+                codec,
+                force=True,
+                sample_rate=item.sample_rate,
+                bit_depth=item.bit_depth,
+                cancel_event=ctx.cancel_event,
+                output_format=item.output_format,
+            )
+            with ctx.stats_lock:
+                ctx.stats.converted += 1
+                ctx.checkpoint.mark_item_complete(item)
+            ctx.mark_succeeded(item)
+            ctx.finish("convert", name)
+            return _item_result(item, action, "succeeded", write="transcode")
+        raise CliError(f"unsupported convert action {action!r} for {item.source_path}")
     except CancelledError:
         return _item_result(item, action, "cancelled")
     except Exception as exc:  # noqa: BLE001 — collect all; report after pool
-        message = f"{_track_ref(item)}: {exc}"
         with ctx.stats_lock:
-            ctx.stats.errors.append(message)
+            ctx.stats.errors.append(str(exc))
         ctx.finish("error", name)
-        return _item_result(item, action, "failed", error=message)
+        return _item_result(item, action, "failed", error=str(exc))
 
 
 def convert_unique(
@@ -632,6 +698,9 @@ def execute_prepared(
         playlist_results.append(result)
         appended_by_plan.append(result.appended)
     xml_output.write_import_xml(plans[0].output_root, plans[0].output)
+    _commit_refresh_xml_freshness(
+        prepared, decisions, stats.succeeded, pending
+    )
     stats.appended_by_plan = appended_by_plan
     stats.appended = sum(appended_by_plan)
     stats.playlist_results = playlist_results

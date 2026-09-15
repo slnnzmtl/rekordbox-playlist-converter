@@ -12,7 +12,10 @@ from convert.quality import coerce_bit_depth, coerce_sample_rate
 
 CDJ_SAFE_CHANNELS = 2
 WAVE_FORMAT_PCM = 1
+WAVE_FORMAT_EXTENSIBLE = 0xFFFE
 CDJ_SAFE_CHUNK_IDS = ("fmt ", "data")
+# KSDATAFORMAT_SUBTYPE_PCM {00000001-0000-0010-8000-00aa00389b71}
+KSDATAFORMAT_SUBTYPE_PCM = bytes.fromhex("0100000000001000800000aa00389b71")
 
 
 @dataclass(frozen=True)
@@ -23,6 +26,8 @@ class WavInfo:
     bits_per_sample: int
     fmt_chunk_size: int
     chunk_ids: tuple[str, ...]
+    valid_bits_per_sample: int | None = None
+    sub_format: bytes | None = None
 
 
 def parse_wav_info(path: Path) -> WavInfo:
@@ -42,6 +47,8 @@ def parse_wav_info(path: Path) -> WavInfo:
                 raise CliError(f"invalid RIFF length in {path}")
             chunk_ids: list[str] = []
             format_tag = channels = sample_rate = bits_per_sample = fmt_chunk_size = 0
+            valid_bits_per_sample: int | None = None
+            sub_format: bytes | None = None
             found_fmt = False
             offset = 12
             try:
@@ -66,6 +73,22 @@ def parse_wav_info(path: Path) -> WavInfo:
                         ) = struct.unpack("<HHIIHH", raw)
                         fmt_chunk_size = size
                         found_fmt = True
+                        extra = b""
+                        if size > 16:
+                            extra = fp.read(size - 16)
+                            if len(extra) < size - 16:
+                                raise CliError(f"fmt chunk too small in {path}")
+                        if (
+                            format_tag == WAVE_FORMAT_EXTENSIBLE
+                            and size >= 40
+                            and len(extra) >= 24
+                        ):
+                            cb_size, valid_bits, _mask = struct.unpack_from(
+                                "<HHI", extra, 0
+                            )
+                            if cb_size == 22:
+                                valid_bits_per_sample = valid_bits
+                                sub_format = extra[8:24]
                     offset = payload_start + size + (size % 2)
             except ValueError as exc:
                 raise CliError(f"truncated WAV chunk in {path}: {exc}") from exc
@@ -80,6 +103,8 @@ def parse_wav_info(path: Path) -> WavInfo:
                 bits_per_sample=bits_per_sample,
                 fmt_chunk_size=fmt_chunk_size,
                 chunk_ids=tuple(chunk_ids),
+                valid_bits_per_sample=valid_bits_per_sample,
+                sub_format=sub_format,
             )
     except OSError as exc:
         raise CliError(f"cannot read WAV: {path}: {exc}") from exc
@@ -110,8 +135,29 @@ def is_cdj_safe_wav(
     )
 
 
+def pcm_rewrite_supported(info: WavInfo) -> bool:
+    """True when PCM samples can be copied into a CDJ-safe WAVE_FORMAT_PCM file."""
+    if (
+        info.channels != CDJ_SAFE_CHANNELS
+        or info.bits_per_sample not in (16, 24)
+        or info.sample_rate not in (44100, 48000)
+    ):
+        return False
+    if info.format_tag == WAVE_FORMAT_PCM:
+        return True
+    return (
+        info.format_tag == WAVE_FORMAT_EXTENSIBLE
+        and info.fmt_chunk_size >= 40
+        and info.sub_format == KSDATAFORMAT_SUBTYPE_PCM
+        and info.valid_bits_per_sample == info.bits_per_sample
+    )
+
+
 def rewrite_wav_pcm(source: Path, dest: Path) -> None:
     """Rewrite as WAVE_FORMAT_PCM with only fmt + data (never EXTENSIBLE)."""
+    info = parse_wav_info(source)
+    if not pcm_rewrite_supported(info):
+        raise CliError(f"unsupported WAV format tag in {source}")
     try:
         with source.open("rb") as fp:
             header = fp.read(12)
@@ -127,33 +173,16 @@ def rewrite_wav_pcm(source: Path, dest: Path) -> None:
                     fp, endian="little", start=12, end=end
                 ):
                     if cid == b"fmt ":
-                        if size < 16:
-                            raise CliError(f"fmt chunk too small in {source}")
-                        fp.seek(payload_start)
-                        raw = fp.read(16)
-                        if len(raw) < 16:
-                            raise CliError(f"fmt chunk too small in {source}")
-                        format_tag, channels, sample_rate, _br, _ba, bits = struct.unpack(
-                            "<HHIIHH", raw
-                        )
-                        if format_tag not in (WAVE_FORMAT_PCM, 0xFFFE):
-                            raise CliError(f"unsupported WAV format tag in {source}")
-                        if channels != CDJ_SAFE_CHANNELS:
-                            raise CliError(f"WAV must be stereo: {source}")
-                        if bits not in (16, 24):
-                            raise CliError(f"unsupported bit depth in {source}")
-                        if sample_rate not in (44100, 48000):
-                            raise CliError(f"unsupported sample rate in {source}")
-                        block_align = channels * (bits // 8)
-                        byte_rate = sample_rate * block_align
+                        block_align = info.channels * (info.bits_per_sample // 8)
+                        byte_rate = info.sample_rate * block_align
                         fmt_payload = struct.pack(
                             "<HHIIHH",
                             WAVE_FORMAT_PCM,
-                            channels,
-                            sample_rate,
+                            info.channels,
+                            info.sample_rate,
                             byte_rate,
                             block_align,
-                            bits,
+                            info.bits_per_sample,
                         )
                     elif cid == b"data":
                         data_start = payload_start

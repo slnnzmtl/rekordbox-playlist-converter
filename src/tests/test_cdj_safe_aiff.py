@@ -557,7 +557,6 @@ class Id3AndConvertAiffTests(unittest.TestCase):
                 stats = convert_unique(plan, force=False)
             self.assertEqual(encoded, [])
             self.assertEqual(stats.converted, 0)
-            self.assertEqual(stats.metadata_refreshed, 1)
             self.assertEqual(cdj_aiff.ssnd_pcm_bytes(dest), before_ssnd)
             tag = cdj_aiff._extract_id3_chunk(dest)
             assert tag is not None

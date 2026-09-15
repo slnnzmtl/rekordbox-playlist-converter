@@ -198,11 +198,16 @@ def _validate_stat_object(obj: dict[str, Any], where: str) -> list[str]:
     return errors
 
 
-def _validate_recipe(recipe: dict[str, Any]) -> list[str]:
+def _validate_recipe(recipe: dict[str, Any], assignment_format: str) -> list[str]:
     errors = _unknown_field_errors(recipe, RECIPE_KEYS, "recipe")
     fmt = recipe.get("format")
     if "format" in recipe and fmt not in OUTPUT_FORMATS:
         errors.append(f"manifest recipe format must be wav or aiff, got {fmt!r}")
+    elif "format" in recipe and fmt != assignment_format:
+        errors.append(
+            "manifest recipe format must match assignment format "
+            f"{assignment_format}, got {fmt!r}"
+        )
     bit_depth = recipe.get("bit_depth")
     if "bit_depth" in recipe and bit_depth not in BIT_DEPTHS:
         errors.append(
@@ -226,7 +231,9 @@ def _validate_recipe(recipe: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _validate_optional_freshness(record: dict[str, Any]) -> list[str]:
+def _validate_optional_freshness(
+    record: dict[str, Any], assignment_format: str
+) -> list[str]:
     errors = _unknown_field_errors(record, RECORD_KEYS, "assignment")
     state = record.get("state")
     if state is not None and state not in ALLOWED_STATES:
@@ -263,7 +270,7 @@ def _validate_optional_freshness(record: dict[str, Any]) -> list[str]:
         if not isinstance(recipe, dict):
             errors.append("manifest recipe must be an object")
         else:
-            errors.extend(_validate_recipe(recipe))
+            errors.extend(_validate_recipe(recipe, assignment_format))
     return errors
 
 
@@ -322,7 +329,7 @@ def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
             if dest_err:
                 errors.append(dest_err)
                 continue
-            errors.extend(_validate_optional_freshness(record))
+            errors.extend(_validate_optional_freshness(record, fmt))
             assert isinstance(dest, str)
             ck = collision_key(dest)
             prior = ownership.get(ck)
