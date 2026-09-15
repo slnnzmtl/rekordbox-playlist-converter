@@ -319,7 +319,6 @@ def format_conversion_counts(
     results = stats.item_results
     if results:
         summary = summarize_item_results(results)
-        apply_item_result_aggregates(stats)
         parts: list[str] = []
         recreated = _recreated_count_part_from_summary(summary)
         if summary.converted:

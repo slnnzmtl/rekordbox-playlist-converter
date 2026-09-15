@@ -62,8 +62,7 @@ class XmlFixtureTests(XmlFixtureBase):
         out = ET.parse(self.output).getroot()
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 2)
         pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
-        self.assertEqual(len(pl), 1)
-        self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2"])
+        self.assertEqual(len(pl), 0)
 
     def test_invalid_manifest_fails_before_audio_or_xml(self) -> None:
         """Given a corrupt manifest on disk: When main converts: Then exit is
@@ -558,6 +557,8 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertIn("missing source file", stderr)
         self.assertIn(str(self.c), stderr)
         # resulting playlist name + Import XML path
+        self.assertIn("Generated playlist:", stdout)
+        self.assertNotIn("New playlist:", stdout)
         self.assertIn("Untitled Intelligent List [WAV]", stdout)
         self.assertIn(str(self.output), stdout)
 
@@ -587,7 +588,7 @@ class XmlFixtureTests(XmlFixtureBase):
                     size_bytes=1000,
                     size_display="0.0 MB",
                     source_display="a.flac",
-                    reason="Destination was changed outside this app (writes nothing)",
+                    reason="Destination was changed outside this app",
                     write_kind="none",
                     output_format="wav",
                 ),

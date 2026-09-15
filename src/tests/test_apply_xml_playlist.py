@@ -226,6 +226,81 @@ class ApplyXmlPlaylistSyncTests(unittest.TestCase):
             self.assertFalse(result.fully_synced)
             self.assertEqual(result.appended, 0)
 
+    def test_apply_xml_first_run_incomplete_creates_no_playlist_node(self) -> None:
+        """Given empty playlists, one success and one failure: When apply_xml
+        runs: Then no generated playlist NODE is created, the successful
+        TRACK is still in COLLECTION, and fully_synced is False."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            d1 = root / "WAV" / "A.wav"
+            d2 = root / "WAV" / "B.wav"
+            d1.parent.mkdir(parents=True)
+            d1.write_bytes(b"RIFF")
+            d2.write_bytes(b"RIFF")
+            a = self._item("A", d1)
+            b = self._item("B", d2)
+            output_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                output_root, "PRODUCT", {"Name": "rekordbox", "Version": "6.8.5"}
+            )
+            ET.SubElement(output_root, "COLLECTION", {"Entries": "0"})
+            playlists = ET.SubElement(output_root, "PLAYLISTS")
+            ET.SubElement(
+                playlists, "NODE", {"Type": "0", "Name": "ROOT", "Count": "0"}
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=root / "WAV",
+                output=root / "import.xml",
+                tracks=[a, b],
+                unique=[a, b],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=output_root,
+                output_existed=False,
+                output_format="wav",
+            )
+            success = {(source_key(a.source_path), "wav")}
+            with patch("xml_output.probe_dest_tech", return_value=("1", "1411", "44100")):
+                result = apply_xml(plan, success)
+            self.assertIsNone(plan.output_root.find(".//NODE[@Name='P [WAV]']"))
+            self.assertFalse(result.fully_synced)
+            self.assertEqual(result.appended, 0)
+            locations = [
+                t.get("Location") for t in plan.output_root.findall("COLLECTION/TRACK")
+            ]
+            self.assertIn(a.dest_location, locations)
+            self.assertNotIn(b.dest_location, locations)
+
+    def test_apply_xml_existing_playlist_preserves_keys_when_missing_source(
+        self,
+    ) -> None:
+        """Given existing [1,2], plan.warnings set, and remaining track in
+        success: When apply_xml runs: Then keys stay [1,2] and fully_synced
+        is False."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            d1 = root / "WAV" / "A.wav"
+            d2 = root / "WAV" / "B.wav"
+            d1.parent.mkdir(parents=True)
+            d1.write_bytes(b"RIFF")
+            d2.write_bytes(b"RIFF")
+            a = self._item("A", d1)
+            b = self._item("B", d2)
+            # Missing source is not in plan.tracks (only resolved A remains).
+            plan = self._plan_with_existing(root, [a, b], ["1", "2"], tracks=[a])
+            plan.warnings = ["missing source file: /music/B.flac"]
+            success = {(source_key(a.source_path), "wav")}
+            with patch("xml_output.probe_dest_tech", return_value=("1", "1411", "44100")):
+                result = apply_xml(plan, success)
+            pl = plan.output_root.find(".//NODE[@Name='P [WAV]']")
+            assert pl is not None
+            self.assertEqual(playlist_keys(pl), ["1", "2"])
+            self.assertFalse(result.fully_synced)
+            self.assertEqual(result.appended, 0)
+            self.assertEqual(result.removed, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

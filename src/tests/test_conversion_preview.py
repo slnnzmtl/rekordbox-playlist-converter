@@ -679,7 +679,7 @@ class ConversionPreviewTests(unittest.TestCase):
                     size_bytes=2_646_000,
                     size_display="≈ 2.5 MB",
                     source_display="Bestial.flac",
-                    reason="Destination file is missing (writes audio)",
+                    reason="Destination file is missing",
                     write_kind="audio",
                     output_format="wav",
                 ),
@@ -695,11 +695,25 @@ class ConversionPreviewTests(unittest.TestCase):
         self.assertEqual(row.relative_dest, "WAV/ABSL - Bestial.wav")
         self.assertEqual(row.output_format, "WAV")
         self.assertEqual(row.action_label, "Recreate missing")
-        self.assertEqual(row.reason, "Destination file is missing (writes audio)")
+        self.assertEqual(row.reason, "Destination file is missing")
         self.assertEqual(row.write_kind_label, "writes audio")
         self.assertEqual(row.quality, "24-bit / 44.1 kHz")
         self.assertEqual(row.size_display, "≈ 2.5 MB")
 
+    def test_preview_reason_omits_write_kind_suffix(self) -> None:
+        """Given a dest_missing recreate: When preview_reason runs: Then only
+        the why string is returned (write kind is a separate column)."""
+        from convert.rerun import preview_reason
+
+        self.assertEqual(
+            preview_reason("recreate_missing", "dest_missing"),
+            "Destination file is missing",
+        )
+        self.assertNotIn("writes audio", preview_reason("recreate_missing", "dest_missing"))
+        self.assertEqual(
+            preview_reason("reuse", "unchanged"),
+            "Output is already current",
+        )
     def test_preview_block_message_reports_conflicts_before_space(self) -> None:
         """Given unresolved conflicts: When preview_block_message runs: Then
         it reports conflicts and does not check disk space."""

@@ -142,6 +142,25 @@ class ItemResultDeriveTests(unittest.TestCase):
         )
         self.assertIn("2 state-changed", parts)
 
+    def test_format_conversion_counts_does_not_mutate_stats(self) -> None:
+        """Given item_results and empty counters: When formatting: Then stats stay empty."""
+        stats = ConvertStats(
+            item_results=[
+                ItemResult(
+                    source=Path("a.flac"),
+                    destination=Path("A.wav"),
+                    action="transcode",
+                    outcome="succeeded",
+                    write="transcode",
+                )
+            ]
+        )
+        parts = format_conversion_counts(stats)
+        self.assertEqual(parts, ["1 converted"])
+        self.assertEqual(stats.converted, 0)
+        self.assertEqual(stats.copied, 0)
+        self.assertEqual(stats.errors, [])
+
     def test_recreated_counts_are_exclusive_of_converted_and_copied(self) -> None:
         """Given three recreate_missing successes: When formatting counts:
         Then the line is exclusive (recreated wrapping transcode/copy)."""

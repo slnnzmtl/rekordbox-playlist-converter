@@ -370,7 +370,7 @@ def print_conversion_preview(plans: list[Plan], preview) -> None:
                 f"{row.quality}  {row.size_display}"
             )
         print()
-    print("New playlist:")
+    print("Generated playlist:")
     for plan in plans:
         print(plan.wav_playlist_name)
     print()
@@ -397,7 +397,7 @@ def print_summary(
         print("Output:")
         print(plan.output)
         print()
-        print("New playlist:")
+        print("Generated playlist:")
         print(plan.wav_playlist_name)
         return
     assert stats is not None
@@ -410,7 +410,7 @@ def print_summary(
     print("Output:")
     print(plan.output)
     print()
-    print("New playlist:")
+    print("Generated playlist:")
     for line in format_playlist_report(
         plan.wav_playlist_name,
         playlist_result,

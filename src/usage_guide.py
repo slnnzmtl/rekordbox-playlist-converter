@@ -61,10 +61,10 @@ Updates…). There is no analytics in this app.
    44.1 kHz/48 kHz). These are maxima, not targets: 16-bit tracks stay
    16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are 24-bit / 48 kHz.
 6. Click Convert (beside the progress bar). A Conversion preview lists each
-   unique input, reserved destination, action, reason, quality, and size.
-   Reasons say whether the step writes audio, updates metadata only, or writes
-   nothing. Convert stays disabled on unresolved destination conflicts or
-   insufficient disk space. Back (or Escape) writes nothing and
+   unique input, reserved destination, action, reason, write kind, quality, and
+   size. The Write column says whether the step writes audio, updates metadata
+   only, or writes nothing. Convert stays disabled on unresolved destination
+   conflicts or insufficient disk space. Back (or Escape) writes nothing and
    returns to the main window. Confirm Convert to start encoding. While
    converting, Cancel replaces Convert in that spot. Cancel stops in-flight
    encodes (up to 4 at once); files already written are kept and Import XML

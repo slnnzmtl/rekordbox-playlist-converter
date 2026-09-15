@@ -213,6 +213,8 @@ class PrintSummaryTests(unittest.TestCase):
             rb.print_summary(plan, stats, dry_run=False)
         self.assertIn("1 converted", buf.getvalue())
         self.assertIn("2 conflicts", buf.getvalue())
+        self.assertIn("Generated playlist:", buf.getvalue())
+        self.assertNotIn("New playlist:", buf.getvalue())
 
     def test_print_summary_reports_rerun_actions_and_failures(self) -> None:
         """Given mixed ConvertStats: When print_summary: Then reused, rebuilt,

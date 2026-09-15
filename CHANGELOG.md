@@ -12,10 +12,10 @@ are filled for the versions you claim. Rollback: keep the previous `.app` and
 output library; this release refuses unreleased v1 manifests (back up or use a
 new folder).
 
-- Preview shows reserved destination, action, classifier reason (writes audio /
-  metadata only / nothing), quality, and size. Convert is blocked on unresolved
-  destination conflicts or insufficient disk space. GUI and CLI `--dry-run`
-  share the same labels.
+- Preview shows reserved destination, action, classifier reason, write kind
+  (writes audio / metadata only / nothing), quality, and size. Convert is blocked
+  on unresolved destination conflicts or insufficient disk space. GUI and CLI
+  `--dry-run` share the same labels.
 - On a complete success rerun, generated `[WAV]`/`[AIFF]` playlist Keys are
   rewritten to the current source order (reorder, remove, insert, repeats).
   Incomplete runs leave existing playlist Keys unchanged and report that the
