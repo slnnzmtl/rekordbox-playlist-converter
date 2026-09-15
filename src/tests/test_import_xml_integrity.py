@@ -102,6 +102,13 @@ RB6_FIXTURE = """\
 """
 
 
+RB7_FIXTURE = RB6_FIXTURE.replace(
+    'PRODUCT Name="rekordbox" Version="6.8.5"',
+    'PRODUCT Name="rekordbox" Version="7.0.4"',
+    1,
+)
+
+
 def _assert_utf8_declaration(path: Path) -> None:
     head = path.read_bytes()[:120]
     if b"UTF-8" not in head and b"utf-8" not in head:
@@ -265,12 +272,54 @@ class ImportXmlIntegrityRoundTripTests(unittest.TestCase):
         self.assertEqual(coll.get("Entries"), "2")
         self.assertEqual(pl[0].get("Entries"), "3")
 
+    def test_rb7_style_convert_write_validate(self) -> None:
+        """DDD-146: Rekordbox 7-style export keeps the same metadata fidelity
+        contract as the Rekordbox 6 fixture (cues, BPM, rating, Kind)."""
+        out = self._convert_and_validate(
+            fixture=RB7_FIXTURE,
+            playlist="Night Set",
+            playlist_folder="Nested Folder",
+            product_version_prefix="7.",
+        )
+        tracks = out.findall("COLLECTION/TRACK")
+        self.assertEqual(len(tracks), 2)
+        cafe = next(t for t in tracks if t.get("Name") == "Café & Dreams")
+        self.assertEqual(cafe.get("Rating"), "51")
+        self.assertEqual(cafe.get("AverageBpm"), "128.00")
+        self.assertEqual(cafe.get("Tonality"), "Am")
+        self.assertEqual(cafe.get("Comments"), "prep notes")
+        self.assertEqual(cafe.get("Colour"), "0xFF0000")
+        self.assertEqual(cafe.get("UnknownAttr"), "keep-me")
+        self.assertEqual(len(cafe.findall("TEMPO")), 2)
+        self.assertEqual(len(cafe.findall("POSITION_MARK")), 3)
+        self.assertEqual(cafe.get("Kind"), "WAV File")
+        pl = find_playlists_by_name(out, "Night Set [WAV]")
+        self.assertEqual(len(pl), 1)
+        self.assertEqual(pl[0].get("Entries"), "3")
+
     def test_rb6_style_aiff_preserves_kind_and_cues(self) -> None:
         out = self._convert_and_validate(
             fixture=RB6_FIXTURE,
             playlist="Night Set",
             playlist_folder="Nested Folder",
             product_version_prefix="6.",
+            output_format="aiff",
+        )
+        tracks = out.findall("COLLECTION/TRACK")
+        self.assertEqual({t.get("Kind") for t in tracks}, {"AIFF File"})
+        cafe = next(t for t in tracks if t.get("Name") == "Café & Dreams")
+        self.assertEqual(len(cafe.findall("TEMPO")), 2)
+        self.assertEqual(len(cafe.findall("POSITION_MARK")), 3)
+        pl = find_playlists_by_name(out, "Night Set [AIFF]")
+        self.assertEqual(len(pl), 1)
+        self.assertEqual([t.get("Key") for t in pl[0].findall("TRACK")], ["1", "2", "1"])
+
+    def test_rb7_style_aiff_preserves_kind_and_cues(self) -> None:
+        out = self._convert_and_validate(
+            fixture=RB7_FIXTURE,
+            playlist="Night Set",
+            playlist_folder="Nested Folder",
+            product_version_prefix="7.",
             output_format="aiff",
         )
         tracks = out.findall("COLLECTION/TRACK")

@@ -839,6 +839,8 @@ class RewriteContainerTests(unittest.TestCase):
             src_size = struct.unpack_from("<I", src_raw, src_at + 4)[0]
             src_raw[src_at + 8 : src_at + 8 + src_size] = b"\x11" * src_size
             src.write_bytes(src_raw)
+            st = src.stat()
+            os.utime(src, ns=(st.st_atime_ns, st.st_mtime_ns + 2_000_000))
             encoded: list[Path] = []
 
             def fake_ffmpeg(

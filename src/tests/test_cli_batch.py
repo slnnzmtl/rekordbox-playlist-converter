@@ -42,10 +42,11 @@ class XmlFixtureTests(XmlFixtureBase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
 
+        stdout = io.StringIO()
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(cdj_wav, "is_cdj_safe_wav", return_value=False
-        ):
+        ), patch.object(sys, "stdout", stdout):
             rc = rb.main(
                 [
                     "--xml",
@@ -63,6 +64,9 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 2)
         pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
         self.assertEqual(len(pl), 0)
+        printed = stdout.getvalue()
+        self.assertIn("generated playlist was not created or refreshed", printed)
+        self.assertNotIn("Import Playlist", printed)
 
     def test_invalid_manifest_fails_before_audio_or_xml(self) -> None:
         """Given a corrupt manifest on disk: When main converts: Then exit is

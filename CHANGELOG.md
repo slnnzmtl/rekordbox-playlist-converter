@@ -18,13 +18,16 @@ new folder).
   `--dry-run` share the same labels.
 - On a complete success rerun, generated `[WAV]`/`[AIFF]` playlist Keys are
   rewritten to the current source order (reorder, remove, insert, repeats).
-  Incomplete runs leave existing playlist Keys unchanged and report that the
-  playlist was not fully refreshed.
+  Incomplete runs leave existing playlist Keys unchanged, title the report
+  Partial, and say the generated playlist was not created or refreshed. Mixed
+  batches name which playlists are safe to import.
 - The conversion report counts converted, copied, PCM-rebuilt,
   metadata-refreshed, reused, recreated, missing, conflicting, and failed
   outputs; mixed batches keep successes visible.
 - Automated Import XML round-trips cover ratings, key, comments, unknown
-  fields, memory/hot/loop marks, and variable-tempo grids for WAV and AIFF.
+  fields, memory/hot/loop marks, and variable-tempo grids for WAV and AIFF
+  from Rekordbox 6- and 7-style PRODUCT versions.
+- Failed encode lines include source and destination (`src → WAV/out.wav: …`).
 - Recorded Rekordbox 6/7 compatibility and packaged-app smoke checks live in
   [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
   (empty = untested).

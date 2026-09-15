@@ -13,6 +13,7 @@ from convert.models import (
     PreparedConversion,
     conversion_report_title,
     format_conversion_counts,
+    format_import_guidance,
     format_playlist_report,
     stats_for_playlist,
 )
@@ -315,6 +316,7 @@ class ConvertFlowMixin:
                 )
                 return
 
+            playlist_pairs: list[tuple[str, object]] = []
             for i, plan in enumerate(plans):
                 appended = (
                     batch_stats.appended_by_plan[i]
@@ -326,6 +328,7 @@ class ConvertFlowMixin:
                     if i < len(batch_stats.playlist_results)
                     else None
                 )
+                playlist_pairs.append((plan.wav_playlist_name, playlist_result))
                 plan_stats = stats_for_playlist(
                     batch_stats,
                     plan.wav_playlist_name,
@@ -364,11 +367,13 @@ class ConvertFlowMixin:
                 self._ui(lambda t=total: self._set_progress(t, t))
             out = str(output)
             title = conversion_report_title(
-                batch_stats, cancelled=self._cancel_event.is_set()
+                batch_stats,
+                cancelled=self._cancel_event.is_set(),
+                missing=sum(len(plan.warnings) for plan in plans),
             )
             self._ui(
-                lambda s=summaries, o=out, folder=output.parent, t=title: self._finish_report(
-                    s, o, folder, title=t
+                lambda s=summaries, o=out, folder=output.parent, t=title, p=playlist_pairs: self._finish_report(
+                    s, o, folder, title=t, playlists=p
                 )
             )
         except runtime.CliError as exc:
@@ -437,18 +442,19 @@ class ConvertFlowMixin:
             body.extend(warnings)
         self._finish_report(body, output, output_folder, title="Done")
 
-    def _import_xml_instructions(self, body: str, output: str) -> str:
+    def _import_xml_instructions(
+        self,
+        body: str,
+        output: str,
+        playlists: list[tuple[str, object]] | None = None,
+    ) -> str:
         fmt = self.format_var.get().strip().lower()
-        suffix = "[AIFF]" if fmt == "aiff" else "[WAV]"
-        return (
-            f"{body}\n\n"
-            "Import into Rekordbox:\n"
-            "1. Preferences → View → Layout → enable rekordbox xml\n"
-            "2. Preferences → Advanced → Database → Imported Library →\n"
-            f"   {output}\n"
-            "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
-            f"   (or drag the {suffix} playlist into Playlists)"
+        guidance = format_import_guidance(
+            Path(output),
+            output_format=fmt,
+            playlists=playlists,
         )
+        return f"{body}\n\n{guidance}"
 
     def _finish_report(
         self,
@@ -457,6 +463,7 @@ class ConvertFlowMixin:
         output_folder: Path | None,
         *,
         title: str,
+        playlists: list[tuple[str, object]] | None = None,
     ) -> None:
         self._prepared_conversion = None
         self._confirm_prepared = None
@@ -479,7 +486,9 @@ class ConvertFlowMixin:
                 constants.CANCELLED_STATUS_CLEAR_MS, self._clear_cancelled_status
             )
             message = (
-                self._import_xml_instructions(body, output) if output else body
+                self._import_xml_instructions(body, output, playlists)
+                if output
+                else body
             )
             self._show_done_dialog(message, output_folder, title=title)
             return
@@ -497,7 +506,9 @@ class ConvertFlowMixin:
         else:
             self.status_var.set(f"{title}.")
         message = (
-            self._import_xml_instructions(body, output) if output else body
+            self._import_xml_instructions(body, output, playlists)
+            if output
+            else body
         )
         self._show_done_dialog(message, output_folder, title=title)
 

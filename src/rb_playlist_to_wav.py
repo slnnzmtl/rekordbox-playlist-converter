@@ -22,6 +22,7 @@ from convert import (
 from convert.models import (
     conversion_exit_code,
     format_conversion_counts,
+    format_import_guidance,
     format_playlist_report,
     stats_for_playlist,
 )
@@ -202,15 +203,18 @@ def prompt_paths(wav_dir: Path, output: Path | None) -> tuple[Path, Path]:
     return chosen_wav, resolve_cli_output(chosen_wav, None)
 
 
-def print_import_hints(output: Path, *, output_format: str = "wav") -> None:
-    suffix = " [AIFF]" if output_format == "aiff" else " [WAV]"
+def print_import_hints(
+    output: Path,
+    *,
+    output_format: str = "wav",
+    playlists: list[tuple[str, object]] | None = None,
+) -> None:
     print()
-    print("Import into Rekordbox")
-    print("  1. Preferences → View → Layout → enable rekordbox xml")
-    print("  2. Preferences → Advanced → Database → Imported Library →")
-    print(f"     {output}")
-    print("  3. Browser → rekordbox xml → Playlists → Import Playlist")
-    print(f"     (or drag the{suffix} playlist into Playlists)")
+    print(
+        format_import_guidance(
+            output, output_format=output_format, playlists=playlists
+        )
+    )
 
 
 def prompt_wizard(
@@ -314,6 +318,7 @@ def run_convert_batch(
             force=force,
             progress=sys.stderr.isatty(),
         )
+        playlist_pairs: list[tuple[str, object]] = []
         for i, plan in enumerate(plans):
             if len(plans) > 1:
                 print()
@@ -326,6 +331,7 @@ def run_convert_batch(
             playlist_result = (
                 stats.playlist_results[i] if i < len(stats.playlist_results) else None
             )
+            playlist_pairs.append((plan.wav_playlist_name, playlist_result))
             plan_stats = stats_for_playlist(
                 stats,
                 plan.wav_playlist_name,
@@ -334,6 +340,11 @@ def run_convert_batch(
             print_summary(
                 plan, plan_stats, dry_run=False, playlist_result=playlist_result
             )
+        print_import_hints(
+            plans[0].output,
+            output_format=output_format,
+            playlists=playlist_pairs,
+        )
     except OSError as exc:
         print(f"cannot write converter manifest: {exc}", file=sys.stderr)
         return 1
@@ -474,9 +485,7 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc), file=sys.stderr)
         return 1
 
-    from convert.paths import abs_path
-
-    rc = run_convert_batch(
+    return run_convert_batch(
         xml_path,
         playlist_refs,
         wav_dir,
@@ -488,11 +497,6 @@ def main(argv: list[str] | None = None) -> int:
         max_sample_rate=max_sample_rate,
         source_root=shared_root,
     )
-    if rc != 0:
-        return rc
-    if not args.dry_run:
-        print_import_hints(abs_path(output), output_format=output_format)
-    return 0
 
 
 __all__ = [

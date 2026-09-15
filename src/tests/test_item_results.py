@@ -28,8 +28,10 @@ from convert.models import (
     conversion_exit_code,
     conversion_report_title,
     format_conversion_counts,
+    format_import_guidance,
     format_playlist_report,
     stats_for_playlist,
+    summarize_item_results,
 )
 from xml_output import PlaylistApplyResult
 from convert.paths import source_key
@@ -120,6 +122,41 @@ class ItemResultDeriveTests(unittest.TestCase):
             "Cancelled",
         )
         self.assertEqual(conversion_report_title(ConvertStats()), "No conversions")
+
+    def test_report_title_is_partial_when_playlist_not_fully_synced(self) -> None:
+        """Given successes plus PlaylistApplyResult(fully_synced=False): When
+        titling: Then the report is Partial, not Done."""
+        stats = ConvertStats(
+            converted=1,
+            item_results=[
+                ItemResult(
+                    source=Path("a.flac"),
+                    destination=Path("WAV/A.wav"),
+                    action="transcode",
+                    outcome="succeeded",
+                    write="transcode",
+                )
+            ],
+            playlist_results=[PlaylistApplyResult(fully_synced=False)],
+        )
+        self.assertEqual(conversion_report_title(stats), "Partial")
+
+    def test_report_title_is_partial_when_selected_track_is_missing(self) -> None:
+        """Given successes plus a missing selected track: When titling: Then
+        the report is Partial, not Done."""
+        stats = ConvertStats(
+            converted=1,
+            item_results=[
+                ItemResult(
+                    source=Path("a.flac"),
+                    destination=Path("WAV/A.wav"),
+                    action="transcode",
+                    outcome="succeeded",
+                    write="transcode",
+                )
+            ],
+        )
+        self.assertEqual(conversion_report_title(stats, missing=1), "Partial")
 
     def test_format_counts_includes_state_changed(self) -> None:
         parts = format_conversion_counts(
@@ -252,9 +289,28 @@ class ItemResultDeriveTests(unittest.TestCase):
         )
         self.assertEqual(conversion_exit_code(failed), 1)
 
+    def test_failed_item_error_includes_source_and_destination(self) -> None:
+        """Given a failed ItemResult with an error: When summarizing: Then the
+        line is source → dest: error (DDD-145)."""
+        summary = summarize_item_results(
+            [
+                ItemResult(
+                    source=Path("/music/source.flac"),
+                    destination=Path("/out/WAV/output.wav"),
+                    action="transcode",
+                    outcome="failed",
+                    error="ffmpeg exited 1",
+                )
+            ]
+        )
+        self.assertEqual(
+            summary.errors,
+            ("source.flac → WAV/output.wav: ffmpeg exited 1",),
+        )
+
     def test_format_playlist_report_refreshed_incomplete_and_missing(self) -> None:
         """Given apply results and missing paths: When formatting: Then
-        refreshed / not fully refreshed / per-playlist missing lines appear."""
+        refreshed / not created or refreshed / per-playlist missing lines appear."""
         refreshed = format_playlist_report(
             "Night [WAV]",
             PlaylistApplyResult(removed=1, reordered=False, fully_synced=True),
@@ -280,10 +336,40 @@ class ItemResultDeriveTests(unittest.TestCase):
             missing=["/missing/a.flac"],
         )
         self.assertEqual(
-            incomplete[0], "Night [WAV]: 1 conflict, playlist not fully refreshed"
+            incomplete[0],
+            "Night [WAV]: 1 conflict, generated playlist was not created or refreshed",
         )
         self.assertEqual(incomplete[1], "Missing skipped:")
         self.assertEqual(incomplete[2], "/missing/a.flac")
+
+    def test_import_guidance_omits_import_playlist_when_none_synced(self) -> None:
+        """Given no fully_synced playlist: When formatting import hints: Then
+        Import Playlist is omitted and the missing NODE is explained."""
+        text = format_import_guidance(
+            Path("/out/rekordbox-import.xml"),
+            output_format="wav",
+            playlists=[("Night [WAV]", PlaylistApplyResult(fully_synced=False))],
+        )
+        self.assertIn("Imported Library", text)
+        self.assertIn("was not created or refreshed", text)
+        self.assertNotIn("Import Playlist", text)
+        self.assertNotIn("drag the", text.casefold())
+
+    def test_import_guidance_lists_only_fully_synced_playlists(self) -> None:
+        """Given a mixed batch: When formatting import hints: Then only fully
+        synced playlists are listed as safe to import."""
+        text = format_import_guidance(
+            Path("/out/rekordbox-import.xml"),
+            output_format="wav",
+            playlists=[
+                ("Night [WAV]", PlaylistApplyResult(fully_synced=False)),
+                ("Morning [WAV]", PlaylistApplyResult(appended=2, fully_synced=True)),
+            ],
+        )
+        self.assertIn("Import Playlist", text)
+        self.assertIn("Morning [WAV]", text)
+        self.assertIn("safe to import", text.casefold())
+        self.assertNotIn("Night [WAV]", text.split("Import Playlist")[-1])
 
 
 if __name__ == "__main__":

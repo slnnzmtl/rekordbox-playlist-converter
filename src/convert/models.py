@@ -110,7 +110,18 @@ class ConvertStats:
 
 
 def _item_ref(result: ItemResult) -> str:
-    return f"{result.source.name} → {result.destination.name}"
+    dest = result.destination
+    dest_display = (
+        f"{dest.parent.name}/{dest.name}" if dest.parent.name else dest.name
+    )
+    return f"{result.source.name} → {dest_display}"
+
+
+def _item_error_line(result: ItemResult) -> str:
+    ref = _item_ref(result)
+    if result.error:
+        return f"{ref}: {result.error}"
+    return ref
 
 
 @dataclass(frozen=True)
@@ -145,7 +156,7 @@ def summarize_item_results(results: list[ItemResult]) -> ItemResultSummary:
     successes = 0
     for result in results:
         if result.outcome == "failed":
-            errors.append(result.error or _item_ref(result))
+            errors.append(_item_error_line(result))
             continue
         if result.outcome == "conflict":
             conflicts.append(_item_ref(result))
@@ -263,6 +274,7 @@ def conversion_report_title(
     stats: ConvertStats,
     *,
     cancelled: bool = False,
+    missing: int = 0,
 ) -> str:
     """Done-dialog / finish title from batch outcomes."""
     if cancelled or any(r.outcome == "cancelled" for r in stats.item_results):
@@ -283,11 +295,15 @@ def conversion_report_title(
         )
         has_problems = bool(stats.errors or stats.conflicts or stats.state_changed)
         has_failed = bool(stats.errors)
+    incomplete_playlist = any(
+        not bool(getattr(result, "fully_synced", True))
+        for result in stats.playlist_results
+    )
     if successes == 0:
         if has_failed:
             return "Failed"
         return "No conversions"
-    if has_problems:
+    if has_problems or incomplete_playlist or missing:
         return "Partial"
     return "Done"
 
@@ -396,7 +412,7 @@ def format_playlist_report(
         else True
     )
     if playlist_result is not None and not fully_synced:
-        parts.append("playlist not fully refreshed")
+        parts.append("generated playlist was not created or refreshed")
     elif removed or reordered:
         parts.append("playlist refreshed")
     elif appended:
@@ -409,6 +425,52 @@ def format_playlist_report(
         lines.append("Missing skipped:")
         lines.extend(missing)
     return lines
+
+
+def format_import_guidance(
+    output: Path,
+    *,
+    output_format: str = "wav",
+    playlists: list[tuple[str, object]] | None = None,
+) -> str:
+    """Rekordbox import steps; omit Import Playlist when no NODE was synced."""
+    suffix = "[AIFF]" if output_format == "aiff" else "[WAV]"
+    header = (
+        "Import into Rekordbox:\n"
+        "1. Preferences → View → Layout → enable rekordbox xml\n"
+        "2. Preferences → Advanced → Database → Imported Library →\n"
+        f"   {output}"
+    )
+    pairs = playlists or []
+    synced = [
+        name
+        for name, result in pairs
+        if bool(getattr(result, "fully_synced", True))
+    ]
+    if not pairs:
+        return (
+            f"{header}\n"
+            "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
+            f"   (or drag the {suffix} playlist into Playlists)"
+        )
+    if not synced:
+        return (
+            f"{header}\n"
+            "The generated playlist was not created or refreshed. "
+            "Do not import a generated playlist until a complete run writes it."
+        )
+    if len(synced) == len(pairs):
+        return (
+            f"{header}\n"
+            "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
+            f"   (or drag the {suffix} playlist into Playlists)"
+        )
+    names = ", ".join(synced)
+    return (
+        f"{header}\n"
+        "3. Browser → rekordbox xml → Playlists → Import Playlist\n"
+        f"   Safe to import: {names}"
+    )
 
 
 @dataclass
