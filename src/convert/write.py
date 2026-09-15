@@ -41,7 +41,13 @@ from convert.models import (
 from convert.progress import Progress
 from convert.paths import source_key
 from convert.quality import coerce_output_format
-from convert.rerun import Decision, classify_item, file_snapshot, snapshots_match
+from convert.rerun import (
+    Decision,
+    classify_item,
+    container_rewrite_supported,
+    file_snapshot,
+    snapshots_match,
+)
 
 _MUTATING_ACTIONS = frozenset(
     {
@@ -110,6 +116,8 @@ def _pcm_origin_for_container_rewrite(
         return item.source_path
     if stored.get("size") != st.st_size or stored.get("mtime_ns") != st.st_mtime_ns:
         return item.source_path
+    if container_rewrite_supported(item.dest_path, item.output_format) is not True:
+        return item.source_path
     return item.dest_path
 
 
@@ -173,7 +181,9 @@ class ManifestCheckpoint:
         self.every = every
         self._count = 0
 
-    def mark_item_complete(self, item: PlannedTrack) -> None:
+    def mark_item_complete(
+        self, item: PlannedTrack, *, metadata: str | None = None
+    ) -> None:
         if self.plan.manifest is None:
             return
         fmt = coerce_output_format(item.output_format)
@@ -185,7 +195,7 @@ class ManifestCheckpoint:
         mark_complete(
             record,
             source=source_signature(item.source_path),
-            metadata=metadata_signature(item.source_el),
+            metadata=metadata if metadata is not None else metadata_signature(item.source_el),
             output=output_signature(item.dest_path),
             recipe=recipe_from_item(item),
         )
@@ -241,7 +251,10 @@ def _commit_refresh_xml_freshness(
         fmt = coerce_output_format(item.output_format)
         key = (source_key(item.source_path), fmt)
         decision = decisions.get(key)
-        if decision is None or decision.action != "refresh_xml":
+        if decision is None or decision.action not in {
+            "refresh_xml",
+            "update_metadata",
+        }:
             continue
         if key not in succeeded:
             continue
@@ -381,7 +394,16 @@ def execute_item(
                 sample_rate=item.sample_rate,
             )
             with ctx.stats_lock:
-                ctx.checkpoint.mark_item_complete(item)
+                fmt = coerce_output_format(item.output_format)
+                record = (
+                    ctx.plan.manifest.tracks.get(source_key(item.source_path), {}).get(
+                        fmt
+                    )
+                    if ctx.plan.manifest is not None
+                    else None
+                )
+                old_meta = (record or {}).get("metadata", {}).get("signature")
+                ctx.checkpoint.mark_item_complete(item, metadata=old_meta)
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
             return _item_result(item, action, "succeeded", write="copy")
@@ -460,12 +482,14 @@ def execute_item(
                 return _item_result(
                     item, "rewrite_container", "succeeded", write="copy"
                 )
-        if is_aiff:
+        copy_pcm = action == "recreate_missing" and item.passthrough
+        encode = action in {"transcode", "recreate_missing"} and not copy_pcm
+        if copy_pcm and is_aiff:
             plan_module.write_aiff_output(
                 item.source_path,
                 item.dest_path,
                 item.source_el,
-                passthrough=item.passthrough,
+                passthrough=True,
                 codec=item.codec,
                 bit_depth=item.bit_depth,
                 sample_rate=item.sample_rate,
@@ -474,16 +498,12 @@ def execute_item(
                 cover_lock=ctx.cover_lock,
             )
             with ctx.stats_lock:
-                if item.passthrough:
-                    ctx.stats.copied += 1
-                else:
-                    ctx.stats.converted += 1
+                ctx.stats.copied += 1
                 ctx.checkpoint.mark_item_complete(item)
             ctx.mark_succeeded(item)
-            write = "copy" if item.passthrough else "transcode"
-            ctx.finish("copy" if item.passthrough else "convert", name)
-            return _item_result(item, action, "succeeded", write=write)
-        if item.passthrough:
+            ctx.finish("copy", name)
+            return _item_result(item, action, "succeeded", write="copy")
+        if copy_pcm:
             copy_wav_atomic(
                 item.source_path,
                 item.dest_path,
@@ -497,24 +517,48 @@ def execute_item(
             ctx.mark_succeeded(item)
             ctx.finish("copy", name)
             return _item_result(item, action, "succeeded", write="copy")
-        if not item.codec:
-            raise CliError(f"no codec planned for {item.source_path}")
-        plan_module.run_ffmpeg(
-            item.source_path,
-            item.dest_path,
-            item.codec,
-            force=True,
-            sample_rate=item.sample_rate,
-            bit_depth=item.bit_depth,
-            cancel_event=ctx.cancel_event,
-            output_format=item.output_format,
-        )
-        with ctx.stats_lock:
-            ctx.stats.converted += 1
-            ctx.checkpoint.mark_item_complete(item)
-        ctx.mark_succeeded(item)
-        ctx.finish("convert", name)
-        return _item_result(item, action, "succeeded", write="transcode")
+        if encode and is_aiff:
+            plan_module.write_aiff_output(
+                item.source_path,
+                item.dest_path,
+                item.source_el,
+                passthrough=False,
+                codec=item.codec or format_policy.pcm_codec_for_depth(
+                    item.bit_depth, output_format="aiff"
+                ),
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
+                cover_cache=ctx.plan.cover_cache,
+                cancel_event=ctx.cancel_event,
+                cover_lock=ctx.cover_lock,
+            )
+            with ctx.stats_lock:
+                ctx.stats.converted += 1
+                ctx.checkpoint.mark_item_complete(item)
+            ctx.mark_succeeded(item)
+            ctx.finish("convert", name)
+            return _item_result(item, action, "succeeded", write="transcode")
+        if encode:
+            codec = item.codec or format_policy.pcm_codec_for_depth(
+                item.bit_depth, output_format=item.output_format
+            )
+            plan_module.run_ffmpeg(
+                item.source_path,
+                item.dest_path,
+                codec,
+                force=True,
+                sample_rate=item.sample_rate,
+                bit_depth=item.bit_depth,
+                cancel_event=ctx.cancel_event,
+                output_format=item.output_format,
+            )
+            with ctx.stats_lock:
+                ctx.stats.converted += 1
+                ctx.checkpoint.mark_item_complete(item)
+            ctx.mark_succeeded(item)
+            ctx.finish("convert", name)
+            return _item_result(item, action, "succeeded", write="transcode")
+        raise CliError(f"unsupported convert action {action!r} for {item.source_path}")
     except CancelledError:
         return _item_result(item, action, "cancelled")
     except Exception as exc:  # noqa: BLE001 — collect all; report after pool

@@ -103,6 +103,23 @@ class WavHeaderParseTests(unittest.TestCase):
             self.assertEqual(info.fmt_chunk_size, 40)
             self.assertEqual(info.chunk_ids, ("fmt ", "LIST", "data"))
 
+    def test_extensible_ieee_float_is_not_pcm_rewritten(self) -> None:
+        """Given WAVE_FORMAT_EXTENSIBLE with an IEEE-float SubFormat: When
+        rewrite runs: Then the file is not relabeled as integer PCM."""
+        ieee_float = bytes.fromhex("0300000000001000800000aa00389b71")
+        extra = struct.pack("<HHI", 22, 16, 0x3) + ieee_float
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "float.wav"
+            dest = Path(tmp) / "out.wav"
+            write_pcm_wav(src, format_tag=0xFFFE, fmt_extra=extra)
+            from convert.rerun import container_rewrite_supported
+
+            self.assertFalse(container_rewrite_supported(src, "wav"))
+            with self.assertRaises(CliError):
+                cdj_wav.rewrite_wav_pcm(src, dest)
+            self.assertFalse(dest.exists())
+            self.assertEqual(cdj_wav.parse_wav_info(src).format_tag, 0xFFFE)
+
     def test_trailing_bytes_after_chunks_raise(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "trail.wav"
@@ -877,6 +894,64 @@ class RewriteContainerTests(unittest.TestCase):
             self.assertEqual(stats.converted, 1)
             self.assertEqual(dest.read_bytes(), b"RIFF-FROM-SOURCE")
 
+    def test_unrewriteable_dest_passthrough_rewrites_pcm_from_source(self) -> None:
+        """Given a passthrough source and garbage dest: When revision changes:
+        Then dest is rewritten from source PCM without ffmpeg."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.wav"
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(src, frames=8)
+            dest.write_bytes(b"not a wav")
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                passthrough=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            plan.manifest.tracks[source_key(src)]["wav"]["recipe"]["revision"] = 2
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"ENCODED")
+
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+                stats = convert_unique(plan, force=False)
+            self.assertEqual(encoded, [])
+            self.assertEqual(stats.errors, [])
+            self.assertEqual(stats.copied, 1)
+            self.assertEqual(stats.converted, 0)
+            self.assertEqual(stats.converted, 0)
+            self.assertTrue(
+                cdj_wav.is_cdj_safe_wav(dest, bit_depth=16, sample_rate=44100)
+            )
+
     def test_invalid_sidecar_is_not_replaced_onto_dest(self) -> None:
         """Given rewrite_container writes an invalid sidecar: When convert:
         Then dest is left unchanged and the batch reports state_changed."""
@@ -949,6 +1024,72 @@ class RewriteContainerTests(unittest.TestCase):
             self.assertEqual(dest.read_bytes(), prior)
             self.assertTrue(stats.state_changed)
             self.assertEqual(stats.copied + stats.converted, 0)
+
+    def test_frozen_transcode_encodes_even_when_source_is_passthrough(self) -> None:
+        """Given a frozen transcode decision and a CDJ-safe passthrough source:
+        When convert runs: Then ffmpeg encodes and the write is not a copy."""
+        from convert.rerun import Decision, file_snapshot
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "src.wav"
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(src, frames=8)
+            write_pcm_wav(dest, frames=4)
+            el = ET.Element("TRACK", {"Name": "Song", "Artist": "DJ"})
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                passthrough=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=ET.Element("DJ_PLAYLISTS"),
+                output_existed=False,
+                manifest=converter_manifest.empty_manifest(),
+            )
+            bind_complete_assignment(plan.manifest, item, "WAV/A.wav")
+            decision = Decision(
+                action="transcode",
+                reason="force",
+                write_kind="audio",
+                source_stat=file_snapshot(src),
+                dest_stat=file_snapshot(dest),
+            )
+            encoded: list[Path] = []
+
+            def fake_ffmpeg(
+                source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
+            ) -> None:
+                encoded.append(dest_path)
+                dest_path.write_bytes(b"ENCODED")
+
+            with mock.patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg):
+                stats = convert_unique(
+                    plan,
+                    force=False,
+                    decisions={(source_key(src), "wav"): decision},
+                )
+            self.assertEqual(encoded, [dest])
+            self.assertEqual(stats.converted, 1)
+            self.assertEqual(stats.copied, 0)
+            self.assertEqual(dest.read_bytes(), b"ENCODED")
 
     def test_missing_dest_cdj_safe_wav_passthrough_succeeds(self) -> None:
         """Given a CDJ-safe WAV source and missing dest: When convert_unique
