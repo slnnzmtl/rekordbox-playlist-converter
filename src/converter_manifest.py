@@ -53,39 +53,95 @@ class ConverterManifest:
     """In-memory source→(format→dest) assignments for one wav_dir."""
 
     tracks: dict[str, dict[str, dict[str, Any]]] = field(default_factory=dict)
+    _dest_owners: dict[str, tuple[str, str]] = field(
+        default_factory=dict, init=False, repr=False
+    )
+
+    def __post_init__(self) -> None:
+        self._dest_owners = {}
+        for source_key, formats in self.tracks.items():
+            for output_format, record in formats.items():
+                dest = record.get("dest")
+                if dest:
+                    self._dest_owners[collision_key(dest)] = (
+                        source_key,
+                        output_format,
+                    )
 
     def get_dest(self, source_key: str, output_format: str) -> str | None:
         dest = self.tracks.get(source_key, {}).get(output_format, {}).get("dest")
         return dest or None
 
+    def owner_for_dest(self, relative_dest: str) -> tuple[str, str] | None:
+        return self._dest_owners.get(collision_key(relative_dest))
+
+    def _release_dest(
+        self, source_key: str, output_format: str, dest: object
+    ) -> None:
+        if not dest or not isinstance(dest, str):
+            return
+        ck = collision_key(dest)
+        if self._dest_owners.get(ck) == (source_key, output_format):
+            del self._dest_owners[ck]
+
+    def _claim_dest(
+        self, source_key: str, output_format: str, dest: str
+    ) -> None:
+        """Index dest for this slot; drop prior dest if it moved. Raises on conflict."""
+        ck = collision_key(dest)
+        owner = self._dest_owners.get(ck)
+        if owner is not None and owner != (source_key, output_format):
+            raise ManifestError(
+                "manifest duplicate dest ownership after collision_key: "
+                f"{dest!r} claimed by {owner[0]!r}/{owner[1]} and "
+                f"{source_key!r}/{output_format}"
+            )
+        old_dest = self.get_dest(source_key, output_format)
+        if old_dest and collision_key(old_dest) != ck:
+            self._release_dest(source_key, output_format, old_dest)
+        self._dest_owners[ck] = (source_key, output_format)
+
     def set_dest(self, source_key: str, output_format: str, dest: str) -> None:
+        self._claim_dest(source_key, output_format, dest)
         formats = self.tracks.setdefault(source_key, {})
         record = formats.get(output_format)
         if record is None:
             formats[output_format] = {"dest": dest}
+        else:
+            record["dest"] = dest
+
+    def put_assignment(
+        self, source_key: str, output_format: str, record: dict[str, Any]
+    ) -> None:
+        dest = record.get("dest")
+        if not isinstance(dest, str) or not dest:
+            raise ManifestError("manifest assignment record must include a dest string")
+        self._claim_dest(source_key, output_format, dest)
+        self.tracks.setdefault(source_key, {})[output_format] = record
+
+    def remove_assignment(self, source_key: str, output_format: str) -> None:
+        formats = self.tracks.get(source_key)
+        if not formats:
             return
-        record["dest"] = dest
+        record = formats.pop(output_format, None)
+        if record:
+            self._release_dest(source_key, output_format, record.get("dest"))
+        if not formats:
+            self.tracks.pop(source_key, None)
 
     def dest_collision_keys(
         self, *, exclude: tuple[str, str] | None = None
     ) -> set[str]:
         """collision_key of every assigned dest, optionally excluding one owner."""
         keys: set[str] = set()
-        for sk, formats in self.tracks.items():
-            for fmt, record in formats.items():
-                if exclude is not None and (sk, fmt) == exclude:
-                    continue
-                dest = record.get("dest")
-                if dest:
-                    keys.add(collision_key(dest))
+        for ck, owner in self._dest_owners.items():
+            if exclude is not None and owner == exclude:
+                continue
+            keys.add(ck)
         return keys
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "version": MANIFEST_VERSION,
-            "layout": MANIFEST_LAYOUT,
-            "tracks": self.tracks,
-        }
+        return _manifest_document(self.tracks)
 
 
 def manifest_path(wav_dir: Path) -> Path:
@@ -94,6 +150,16 @@ def manifest_path(wav_dir: Path) -> Path:
 
 def empty_manifest() -> ConverterManifest:
     return ConverterManifest()
+
+
+def _manifest_document(
+    tracks: dict[str, dict[str, dict[str, Any]]],
+) -> dict[str, Any]:
+    return {
+        "version": MANIFEST_VERSION,
+        "layout": MANIFEST_LAYOUT,
+        "tracks": tracks,
+    }
 
 
 def _require_under_wav_dir(wav_dir: Path, dest: Path, detail: str) -> Path:
@@ -445,14 +511,22 @@ def validate_library_folder(wav_dir: Path) -> str | None:
     return None
 
 
-def save_manifest(manifest: ConverterManifest, wav_dir: Path) -> None:
-    """Atomically write manifest under wav_dir (tempfile + os.replace)."""
+def save_manifest_tracks(
+    tracks: dict[str, dict[str, dict[str, Any]]], wav_dir: Path
+) -> None:
+    """Atomically write a tracks dict under wav_dir (tempfile + os.replace)."""
     root = abs_path(wav_dir)
     root.mkdir(parents=True, exist_ok=True)
     path = root / MANIFEST_NAME
-    payload = json.dumps(
-        manifest.to_dict(), indent=2, ensure_ascii=False, sort_keys=True
-    ) + "\n"
+    payload = (
+        json.dumps(
+            _manifest_document(tracks),
+            indent=2,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n"
+    )
     fd, tmp_name = tempfile.mkstemp(
         dir=root, prefix=".manifest-", suffix=".tmp.json"
     )
@@ -471,6 +545,11 @@ def save_manifest(manifest: ConverterManifest, wav_dir: Path) -> None:
         raise
 
 
+def save_manifest(manifest: ConverterManifest, wav_dir: Path) -> None:
+    """Atomically write manifest under wav_dir (tempfile + os.replace)."""
+    save_manifest_tracks(manifest.tracks, wav_dir)
+
+
 def relative_dest_occupied(
     manifest: ConverterManifest,
     relative_dest: str,
@@ -480,8 +559,8 @@ def relative_dest_occupied(
     source_path: Path | None = None,
 ) -> bool:
     """True if dest is taken by another assignment or an unrelated file on disk."""
-    ck = collision_key(relative_dest)
-    if ck in manifest.dest_collision_keys(exclude=exclude):
+    owner = manifest.owner_for_dest(relative_dest)
+    if owner is not None and owner != exclude:
         return True
     try:
         dest = resolve_dest_under_wav_dir(wav_dir, relative_dest)

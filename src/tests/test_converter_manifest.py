@@ -5,6 +5,7 @@ import json
 import sys
 import tempfile
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 _SRC = Path(__file__).resolve().parents[1]
@@ -86,8 +87,8 @@ class ManifestValidationTests(unittest.TestCase):
                 self.assertTrue(errors, f"expected errors for {dest!r}/{fmt}")
 
     def test_set_dest_keeps_existing_freshness_fields(self) -> None:
-        """Given a complete record: When set_dest: Then dest updates and
-        state, source, metadata, output, and recipe stay."""
+        """Given a complete record via put_assignment: When set_dest: Then dest
+        updates and state, source, metadata, output, and recipe stay."""
         m = cm.empty_manifest()
         record = {
             "dest": "WAV/Artist - Track.wav",
@@ -103,7 +104,7 @@ class ManifestValidationTests(unittest.TestCase):
                 "revision": 1,
             },
         }
-        m.tracks["/music/a.flac"] = {"wav": record}
+        m.put_assignment("/music/a.flac", "wav", deepcopy(record))
         m.set_dest("/music/a.flac", "wav", "WAV/Artist - Track.wav")
         kept = m.tracks["/music/a.flac"]["wav"]
         self.assertEqual(kept["dest"], "WAV/Artist - Track.wav")
@@ -390,6 +391,143 @@ class ManifestValidationTests(unittest.TestCase):
             },
         }
         self.assertEqual(cm.validate_manifest_data(ok, self.wav_dir), [])
+
+
+class ManifestOwnerIndexTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.wav_dir = Path(self.tmp.name) / "lib"
+        self.wav_dir.mkdir()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_set_dest_indexes_owner_for_dest(self) -> None:
+        """Given empty manifest: When set_dest: Then owner_for_dest returns
+        (source_key, output_format)."""
+        m = cm.empty_manifest()
+        m.set_dest("/music/a.flac", "wav", "WAV/Artist - Track.wav")
+        self.assertEqual(
+            m.owner_for_dest("WAV/Artist - Track.wav"),
+            ("/music/a.flac", "wav"),
+        )
+
+    def test_put_assignment_indexes_owner_for_dest(self) -> None:
+        """Given empty manifest: When put_assignment: Then owner_for_dest
+        returns (source_key, output_format)."""
+        m = cm.empty_manifest()
+        record = {"dest": "WAV/Artist - Track.wav", "state": "complete"}
+        m.put_assignment("/music/a.flac", "wav", record)
+        self.assertEqual(
+            m.owner_for_dest("WAV/Artist - Track.wav"),
+            ("/music/a.flac", "wav"),
+        )
+        self.assertEqual(m.tracks["/music/a.flac"]["wav"], record)
+
+    def test_set_dest_moves_ownership_off_old_collision_key(self) -> None:
+        """Given an indexed dest: When set_dest changes dest: Then the old
+        collision_key has no owner and the new dest is indexed."""
+        m = cm.empty_manifest()
+        m.set_dest("/music/a.flac", "wav", "WAV/Artist - Track.wav")
+        m.set_dest("/music/a.flac", "wav", "WAV/Artist - Renamed.wav")
+        self.assertIsNone(m.owner_for_dest("WAV/Artist - Track.wav"))
+        self.assertEqual(
+            m.owner_for_dest("WAV/Artist - Renamed.wav"),
+            ("/music/a.flac", "wav"),
+        )
+
+    def test_put_assignment_refuses_duplicate_dest_without_mutating_owner(
+        self,
+    ) -> None:
+        """Given dest owned by A: When B put_assignment claims the same
+        collision_key: Then ManifestError and A's assignment is unchanged."""
+        m = cm.empty_manifest()
+        owner_record = {"dest": "WAV/Same - Intro.wav", "state": "complete"}
+        m.put_assignment("/a", "wav", owner_record)
+        before = deepcopy(m.tracks["/a"]["wav"])
+        with self.assertRaises(cm.ManifestError):
+            m.put_assignment(
+                "/b",
+                "wav",
+                {"dest": "WAV/same - intro.wav", "state": "incomplete"},
+            )
+        self.assertEqual(m.tracks["/a"]["wav"], before)
+        self.assertEqual(m.owner_for_dest("WAV/Same - Intro.wav"), ("/a", "wav"))
+        self.assertNotIn("/b", m.tracks)
+
+    def test_remove_assignment_clears_ownership(self) -> None:
+        """Given an indexed assignment: When remove_assignment: Then
+        owner_for_dest returns None."""
+        m = cm.empty_manifest()
+        m.put_assignment(
+            "/music/a.flac",
+            "wav",
+            {"dest": "WAV/Artist - Track.wav"},
+        )
+        m.remove_assignment("/music/a.flac", "wav")
+        self.assertIsNone(m.owner_for_dest("WAV/Artist - Track.wav"))
+        self.assertNotIn("wav", m.tracks.get("/music/a.flac", {}))
+
+    def test_owner_index_stays_correct_after_replace_and_remove(self) -> None:
+        """Given two owners: When one replaces dest then the other is removed:
+        Then lookups match the remaining live assignment only."""
+        m = cm.empty_manifest()
+        m.put_assignment("/a", "wav", {"dest": "WAV/One.wav"})
+        m.put_assignment("/b", "aiff", {"dest": "AIFF/Two.aiff"})
+        m.set_dest("/a", "wav", "WAV/One-Renamed.wav")
+        m.remove_assignment("/b", "aiff")
+        self.assertIsNone(m.owner_for_dest("WAV/One.wav"))
+        self.assertEqual(m.owner_for_dest("WAV/One-Renamed.wav"), ("/a", "wav"))
+        self.assertIsNone(m.owner_for_dest("AIFF/Two.aiff"))
+
+    def test_save_manifest_tracks_writes_same_canonical_json(self) -> None:
+        """Given a plain tracks dict: When save_manifest_tracks: Then the
+        written JSON matches save_manifest for the same assignments."""
+        live = cm.empty_manifest()
+        live.put_assignment(
+            "/music/a.flac",
+            "wav",
+            {
+                "dest": "WAV/Artist - Track.wav",
+                "state": "complete",
+                "source": {"size": 10, "mtime_ns": 1, "hash": None},
+            },
+        )
+        via_manifest = self.wav_dir / "via-manifest"
+        via_tracks = self.wav_dir / "via-tracks"
+        via_manifest.mkdir()
+        via_tracks.mkdir()
+        cm.save_manifest(live, via_manifest)
+        cm.save_manifest_tracks(deepcopy(live.tracks), via_tracks)
+        expected = (via_manifest / cm.MANIFEST_NAME).read_text(encoding="utf-8")
+        actual = (via_tracks / cm.MANIFEST_NAME).read_text(encoding="utf-8")
+        self.assertEqual(actual, expected)
+        data = json.loads(actual)
+        self.assertEqual(data["version"], 2)
+        self.assertEqual(data["layout"], "format-flat")
+        self.assertEqual(
+            data["tracks"]["/music/a.flac"]["wav"]["dest"],
+            "WAV/Artist - Track.wav",
+        )
+
+    def test_save_manifest_tracks_works_without_converter_manifest(self) -> None:
+        """Given only a deepcopy of tracks: When save_manifest_tracks: Then
+        snapshot serialization succeeds without constructing ConverterManifest."""
+        tracks = {
+            "/music/a.flac": {
+                "wav": {"dest": "WAV/Artist - Track.wav", "state": "complete"}
+            }
+        }
+        cm.save_manifest_tracks(deepcopy(tracks), self.wav_dir)
+        data = json.loads(
+            (self.wav_dir / cm.MANIFEST_NAME).read_text(encoding="utf-8")
+        )
+        self.assertEqual(data["version"], 2)
+        self.assertEqual(data["layout"], "format-flat")
+        self.assertEqual(
+            data["tracks"]["/music/a.flac"]["wav"]["dest"],
+            "WAV/Artist - Track.wav",
+        )
 
 
 class LibraryFolderValidationTests(unittest.TestCase):

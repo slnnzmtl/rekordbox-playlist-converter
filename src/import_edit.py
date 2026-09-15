@@ -358,17 +358,6 @@ def track_id_reference_counts(root: ET.Element) -> dict[str, int]:
     return counts
 
 
-def _remove_manifest_assignment(
-    manifest: cm.ConverterManifest, *, source_key: str, output_format: str
-) -> None:
-    formats = manifest.tracks.get(source_key)
-    if not formats:
-        return
-    formats.pop(output_format, None)
-    if not formats:
-        manifest.tracks.pop(source_key, None)
-
-
 def _schedule_orphan_collection_removal(
     draft: ImportEditDraft,
     track: ET.Element,
@@ -387,11 +376,7 @@ def _schedule_orphan_collection_removal(
         impact.files_to_trash.append(owner.relative_dest)
     else:
         impact.missing_files_cleaned += 1
-    _remove_manifest_assignment(
-        draft.manifest,
-        source_key=owner.source_key,
-        output_format=owner.output_format,
-    )
+    draft.manifest.remove_assignment(owner.source_key, owner.output_format)
     collection = draft.root.find("COLLECTION")
     if collection is not None and track in list(collection):
         collection.remove(track)

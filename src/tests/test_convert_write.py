@@ -886,11 +886,11 @@ class ExecutePreparedTests(XmlFixtureBase):
         """Given planned recreates: When execute_prepared runs: Then the first
         manifest save marks those assignments incomplete before ffmpeg writes."""
         saves: list[dict] = []
-        real_save = converter_manifest.save_manifest
+        real_save = converter_manifest.save_manifest_tracks
 
-        def tracking_save(manifest, wav_dir):
-            saves.append(deepcopy(manifest.tracks))
-            real_save(manifest, wav_dir)
+        def tracking_save(tracks, wav_dir):
+            saves.append(deepcopy(tracks))
+            real_save(tracks, wav_dir)
 
         def fake_ffmpeg(
             source: Path, dest: Path, codec: str, force: bool, **_kwargs
@@ -903,7 +903,7 @@ class ExecutePreparedTests(XmlFixtureBase):
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             cdj_wav, "is_cdj_safe_wav", return_value=False
         ), patch.object(
-            converter_manifest, "save_manifest", side_effect=tracking_save
+            converter_manifest, "save_manifest_tracks", side_effect=tracking_save
         ):
             prepared, errors = prepare_batch(
                 self.xml_path,
@@ -928,11 +928,11 @@ class ExecutePreparedTests(XmlFixtureBase):
         """Given several recreates: When execute_prepared runs with checkpoint
         every completion: Then the manifest is saved between pre-batch and final."""
         saves: list[dict] = []
-        real_save = converter_manifest.save_manifest
+        real_save = converter_manifest.save_manifest_tracks
 
-        def tracking_save(manifest, wav_dir):
-            saves.append(deepcopy(manifest.tracks))
-            real_save(manifest, wav_dir)
+        def tracking_save(tracks, wav_dir):
+            saves.append(deepcopy(tracks))
+            real_save(tracks, wav_dir)
 
         def fake_ffmpeg(
             source: Path, dest: Path, codec: str, force: bool, **_kwargs
@@ -945,7 +945,7 @@ class ExecutePreparedTests(XmlFixtureBase):
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             cdj_wav, "is_cdj_safe_wav", return_value=False
         ), patch.object(
-            converter_manifest, "save_manifest", side_effect=tracking_save
+            converter_manifest, "save_manifest_tracks", side_effect=tracking_save
         ):
             prepared, errors = prepare_batch(
                 self.xml_path,

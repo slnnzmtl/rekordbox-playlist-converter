@@ -158,13 +158,13 @@ def _save_manifest_with_pending(
     pending: set[tuple[str, str]],
 ) -> None:
     """Persist in-memory records, overlaying incomplete on unfinished mutations."""
-    clone = converter_manifest.ConverterManifest(tracks=deepcopy(manifest.tracks))
+    tracks = deepcopy(manifest.tracks)
     for key, fmt in pending:
-        record = clone.tracks.get(key, {}).get(fmt)
+        record = tracks.get(key, {}).get(fmt)
         if record is None:
             continue
         mark_incomplete(record)
-    converter_manifest.save_manifest(clone, library_dir)
+    converter_manifest.save_manifest_tracks(tracks, library_dir)
 
 
 class ManifestCheckpoint:
