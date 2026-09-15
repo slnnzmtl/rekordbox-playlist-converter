@@ -550,6 +550,50 @@ def save_manifest(manifest: ConverterManifest, wav_dir: Path) -> None:
     save_manifest_tracks(manifest.tracks, wav_dir)
 
 
+@dataclass
+class ReservationContext:
+    """Batch-scoped inventory of format-dir files for collision checks."""
+
+    wav_dir: Path
+    # collision_key(filename) -> tuple[Path, ...]
+    inventory: dict[str, tuple[Path, ...]] = field(default_factory=dict)
+    # normalized preferred relative dest -> next suffix n to try
+    _next_suffix: dict[str, int] = field(default_factory=dict)
+
+    @classmethod
+    def scanned(cls, wav_dir: Path) -> ReservationContext:
+        """Build a context and scan format dirs once."""
+        ctx = cls(wav_dir)
+        ctx.refresh_inventory()
+        return ctx
+
+    def _remember(self, path: Path) -> None:
+        key = collision_key(path.name)
+        self.inventory[key] = self.inventory.get(key, ()) + (path,)
+
+    def refresh_inventory(self) -> None:
+        """Clear and rescan WAV/ and AIFF/ under wav_dir (if dirs exist)."""
+        self.inventory.clear()
+        for fmt_dir_name in _FORMAT_DIRS.values():
+            fmt_dir = self.wav_dir / fmt_dir_name
+            if not fmt_dir.is_dir():
+                continue
+            for entry in fmt_dir.iterdir():
+                if entry.is_file():
+                    self._remember(entry)
+
+    def note_reserved(self, relative_dest: str) -> None:
+        """Record a reserved dest so later reserves see it in inventory."""
+        self._remember(resolve_dest_under_wav_dir(self.wav_dir, relative_dest))
+
+    def suffix_to_try(self, preferred_key: str) -> int:
+        return self._next_suffix.get(preferred_key, 2)
+
+    def advance_suffix(self, preferred_key: str, used_n: int = 1) -> None:
+        """After assigning preferred (used_n=1) or Name (n), next try is n+1."""
+        self._next_suffix[preferred_key] = used_n + 1
+
+
 def relative_dest_occupied(
     manifest: ConverterManifest,
     relative_dest: str,
@@ -557,6 +601,7 @@ def relative_dest_occupied(
     wav_dir: Path,
     exclude: tuple[str, str] | None = None,
     source_path: Path | None = None,
+    reservation: ReservationContext | None = None,
 ) -> bool:
     """True if dest is taken by another assignment or an unrelated file on disk."""
     owner = manifest.owner_for_dest(relative_dest)
@@ -569,6 +614,13 @@ def relative_dest_occupied(
 
     def _is_source(path: Path) -> bool:
         return source_path is not None and same_file(path, source_path)
+
+    if reservation is not None:
+        key = collision_key(PurePosixPath(relative_dest).name)
+        for path in reservation.inventory.get(key, ()):
+            if not _is_source(path):
+                return True
+        return False
 
     if dest.is_file():
         return not _is_source(dest)
@@ -588,21 +640,26 @@ def next_free_relative_dest(
     wav_dir: Path,
     exclude: tuple[str, str] | None = None,
     source_path: Path | None = None,
+    reservation: ReservationContext | None = None,
 ) -> str:
     """Return preferred or Name (2), Name (3), ... when occupied."""
+    preferred_key = collision_key(preferred)
     if not relative_dest_occupied(
         manifest,
         preferred,
         wav_dir=wav_dir,
         exclude=exclude,
         source_path=source_path,
+        reservation=reservation,
     ):
+        if reservation is not None:
+            reservation.advance_suffix(preferred_key)
         return preferred
     posix = PurePosixPath(preferred)
     parent = posix.parent
     stem = posix.stem
     suffix = posix.suffix
-    n = 2
+    n = reservation.suffix_to_try(preferred_key) if reservation else 2
     while True:
         name = f"{stem} ({n}){suffix}"
         candidate = (
@@ -614,7 +671,10 @@ def next_free_relative_dest(
             wav_dir=wav_dir,
             exclude=exclude,
             source_path=source_path,
+            reservation=reservation,
         ):
+            if reservation is not None:
+                reservation.advance_suffix(preferred_key, n)
             return candidate
         n += 1
 
@@ -627,6 +687,7 @@ def reserve_relative_dest(
     preferred: str,
     wav_dir: Path,
     source_path: Path | None = None,
+    reservation: ReservationContext | None = None,
 ) -> str:
     """Return sticky dest for (source_key, format), reserving on first assign."""
     existing = manifest.get_dest(source_key, output_format)
@@ -639,6 +700,9 @@ def reserve_relative_dest(
         wav_dir=wav_dir,
         exclude=exclude,
         source_path=source_path,
+        reservation=reservation,
     )
     manifest.set_dest(source_key, output_format, dest)
+    if reservation is not None:
+        reservation.note_reserved(dest)
     return dest

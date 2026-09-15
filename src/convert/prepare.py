@@ -44,6 +44,7 @@ def prepare(
     source_root: ET.Element | None = None,
     manifest: converter_manifest.ConverterManifest | None = None,
     workers: int | None = None,
+    reservation: converter_manifest.ReservationContext | None = None,
 ) -> tuple[Plan | None, list[str]]:
     errors: list[str] = []
     errors.extend(ffmpeg_tools.require_tools())
@@ -99,6 +100,9 @@ def prepare(
             errors.append(str(exc))
             return None, errors
 
+    if reservation is None:
+        reservation = converter_manifest.ReservationContext.scanned(wav_dir)
+
     plan, plan_errors = build_plan(
         source_root,
         playlist_el,
@@ -114,6 +118,7 @@ def prepare(
         cancel_event=cancel_event,
         manifest=manifest,
         workers=workers,
+        reservation=reservation,
     )
     errors.extend(plan_errors)
     return plan, errors
@@ -147,6 +152,8 @@ def prepare_batch(
         except CliError as exc:
             return None, [str(exc)]
 
+    reservation = converter_manifest.ReservationContext.scanned(wav_dir)
+
     plans: list[Plan] = []
     skipped: list[str] = []
     total = len(playlist_refs)
@@ -173,6 +180,7 @@ def prepare_batch(
             source_root=source_root,
             manifest=manifest,
             workers=workers,
+            reservation=reservation,
         )
         if cancel_event is not None and cancel_event.is_set():
             raise CancelledError("conversion cancelled")
@@ -213,6 +221,7 @@ def prepare_batch(
             output=output,
             skipped=skipped,
             decisions=dict(preview.decisions),
+            reservation=reservation,
         ),
         [],
     )

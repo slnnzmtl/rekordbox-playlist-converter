@@ -669,6 +669,8 @@ def execute_prepared(
     Encode cancel waits in-flight; successes still receive apply_xml + write.
     Hosts map cancel vs errors vs ok from the returned stats and cancel_event.
     """
+    if prepared.reservation is not None:
+        prepared.reservation.refresh_inventory()
     decisions = _decisions_for_prepared(prepared, force)
     prepared.decisions = dict(decisions)
     pending = _mutating_assignment_keys(prepared, force, decisions)
