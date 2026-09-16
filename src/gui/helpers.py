@@ -47,4 +47,6 @@ def progress_action_status_hint(
     action: str, current: int, total: int, name: str
 ) -> str:
     """Status line with counter after the verb: Convert (n/m) TrackName…"""
+    if action == "import_xml":
+        return "Updating import XML…"
     return f"{action.capitalize()} ({current}/{total}) {name}…"

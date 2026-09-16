@@ -45,13 +45,14 @@ class ImportEditMixin:
         editing = self._import_edit_active()
         if editing:
             self.import_edit_btn.pack_forget()
-            self.import_save_btn.pack(side=tk.LEFT)
-            self.import_cancel_btn.pack(side=tk.LEFT, padx=(4, 0))
+            self.import_save_btn.pack_forget()
+            self.import_cancel_btn.pack_forget()
             dirty = bool(self._import_edit_draft and self._import_edit_draft.dirty)
-            self.import_save_btn.configure(
-                state=tk.NORMAL if dirty else tk.DISABLED
-            )
+            if dirty:
+                self.import_save_btn.configure(state=tk.NORMAL)
+                self.import_save_btn.pack(side=tk.LEFT)
             self.import_cancel_btn.configure(state=tk.NORMAL)
+            self.import_cancel_btn.pack(side=tk.LEFT, padx=(4, 0))
             lock = tk.DISABLED
             combo_state = "disabled"
             self.xml_entry.configure(state=lock)

@@ -473,6 +473,83 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_write_worker_shows_updating_import_xml_status(
+        self,
+    ) -> None:
+        """Given execute_prepared emits import_xml progress after convert:
+        When the write worker runs: Then status becomes Updating import XML…
+        (not Convert (n/n) Track…)."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        statuses: list[str] = []
+
+        root = None
+        try:
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "save_preferences": None,
+                        "prepare_batch": {
+                            "return_value": (mock_prepared_conversion(n_unique=2), [])
+                        },
+                        "execute_prepared": {"create": True},
+                        "show_centered_message": None,
+                        "threading.Thread": {"side_effect": run_inline_thread},
+                    },
+                )
+            ) as mocks, patch.object(
+                ConverterApp, "_selected_playlists", return_value=[("ROOT", "Test")]
+            ), patch.object(
+                ConverterApp, "_show_conversion_preview"
+            ), patch.object(
+                ConverterApp, "_show_done_dialog"
+            ):
+                execute = mocks["execute_prepared"]
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app.xml_var.set("/tmp/test.xml")
+                seed_track_selection(app)
+
+                def execute_with_import_xml_progress(*_args, **kwargs):
+                    on_progress = kwargs.get("on_progress")
+                    self.assertIsNotNone(on_progress)
+                    on_progress(1, 2, "convert", "first.wav")
+                    on_progress(2, 2, "convert", "last.wav")
+                    root.update_idletasks()
+                    for _ in range(10):
+                        root.update()
+                    on_progress(2, 2, "import_xml", "")
+                    root.update_idletasks()
+                    for _ in range(10):
+                        root.update()
+                    statuses.append(app.status_var.get())
+                    return ConvertStats(
+                        converted=2,
+                        succeeded={("a", "wav"), ("b", "wav")},
+                        appended_by_plan=[2],
+                    )
+
+                execute.side_effect = execute_with_import_xml_progress
+                mark_output_folder_valid(app)
+                start_convert_and_confirm(app, root)
+
+                self.assertEqual(statuses, ["Updating import XML…"])
+                self.assertNotRegex(
+                    statuses[0],
+                    r"^Convert \(\d+/\d+\)",
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
 class MissingFilesDialogTests(unittest.TestCase):
     def test_finish_no_conversions_lists_missing_paths_in_report(self) -> None:
         if not tk_available():

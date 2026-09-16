@@ -8,7 +8,7 @@ from tkinter import ttk
 from typing import Any
 
 from gui.layout import ACTION_BUTTON_WIDTH, HoverTooltip, bind_wraplength, tree_with_yscroll
-from gui.tracklist import TRACKLIST_VALUE_COLUMNS
+from gui.tracklist import TRACKLIST_VALUE_COLUMNS, tracklist_display_columns
 
 
 def build_menubar(
@@ -92,9 +92,20 @@ def build_tracklist_pane(
         selectmode="extended",
         height=12,
     )
+    tracklist_tree.heading("#0", text="")
     tracklist_tree.heading(
-        "#0", text="#", anchor="center", command=lambda: on_sort("#0")
+        "missing",
+        text="!",
+        anchor="center",
+        command=lambda: on_sort("missing"),
     )
+    tracklist_tree.heading(
+        "index",
+        text="#",
+        anchor="center",
+        command=lambda: on_sort("index"),
+    )
+    tracklist_tree.heading("twisty", text="", anchor="center")
     tracklist_tree.heading(
         "track",
         text="Track",
@@ -125,12 +136,26 @@ def build_tracklist_pane(
         anchor="w",
         command=lambda: on_sort("rating"),
     )
-    tracklist_tree.column("#0", width=40, stretch=False, anchor="center", minwidth=40)
+    # Native #0 expander stays left of every value column; collapse it and use
+    # a twisty value column after # so the arrow sits after the id.
+    tracklist_tree.column("#0", width=0, stretch=False, anchor="center", minwidth=0)
+    tracklist_tree.column(
+        "missing", width=28, stretch=False, anchor="center", minwidth=28
+    )
+    tracklist_tree.column(
+        "index", width=48, stretch=False, anchor="center", minwidth=48
+    )
+    tracklist_tree.column(
+        "twisty", width=22, stretch=False, anchor="center", minwidth=22
+    )
     tracklist_tree.column("track", stretch=True, minwidth=120)
     tracklist_tree.column("format", width=70, stretch=False, anchor="center")
     tracklist_tree.column("bit_depth", width=90, stretch=False, anchor="center")
     tracklist_tree.column("sample_rate", width=90, stretch=False, anchor="center")
     tracklist_tree.column("rating", width=90, stretch=False, anchor="w")
+    tracklist_tree.configure(
+        displaycolumns=tracklist_display_columns(show_missing=False)
+    )
     tracklist_tree.tag_configure(
         header_selected_tag,
         background=header_selected_bg,

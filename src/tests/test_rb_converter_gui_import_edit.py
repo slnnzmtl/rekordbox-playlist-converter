@@ -182,7 +182,7 @@ class GuiImportEditModeTests(unittest.TestCase):
 
     def test_edit_mode_preserves_source_and_locks_convert(self) -> None:
         """Given source XML loaded: When enter edit mode: Then source root stays,
-        view shows import playlists, Convert is hidden, Save disabled until dirty."""
+        view shows import playlists, Convert is hidden, Save hidden until dirty."""
         if not tk_available():
             self.skipTest("_tkinter not available")
         import tkinter as tk
@@ -213,11 +213,13 @@ class GuiImportEditModeTests(unittest.TestCase):
                 ]
                 self.assertEqual(names, ["Night Set [WAV]"])
                 self.assertEqual(app.convert_btn.winfo_manager(), "")
-                self.assertEqual(str(app.import_save_btn.cget("state")), "disabled")
+                self.assertEqual(app.import_save_btn.winfo_manager(), "")
+                self.assertTrue(str(app.import_cancel_btn.winfo_manager()))
                 self.assertEqual(str(app.xml_browse_btn.cget("state")), "disabled")
-                # Dirty then Save enables.
+                # Dirty then Save appears.
                 app._import_edit_draft.mark_dirty()
                 app._sync_import_edit_chrome()
+                self.assertEqual(app.import_save_btn.winfo_manager(), "pack")
                 self.assertEqual(str(app.import_save_btn.cget("state")), "normal")
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
@@ -319,7 +321,9 @@ class GuiImportEditMenusTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def test_missing_track_prefixed_in_edit_mode(self) -> None:
+    def test_missing_track_marked_in_status_column_in_edit_mode(self) -> None:
+        """Given edit mode with a dangling key: When painting the tracklist:
+        Then missing shows ! in the status column and the title is unmarked."""
         if not tk_available():
             self.skipTest("_tkinter not available")
         import tkinter as tk
@@ -352,11 +356,15 @@ class GuiImportEditMenusTests(unittest.TestCase):
                         app.playlist_tree.selection_set(iid)
                         break
                 app._refresh_tracklist_preview()
-                labels = [
-                    app.tracklist_tree.item(iid, "values")[0]
+                rows = [
+                    app.tracklist_tree.item(iid, "values")
                     for iid in app._tracklist_iids
                 ]
-                self.assertTrue(any(lab.startswith("! ") for lab in labels))
+                self.assertTrue(any(row[0] == "!" for row in rows))
+                self.assertTrue(
+                    all(not str(row[3]).startswith("! ") for row in rows)
+                )
+                self.assertIn("missing", app.tracklist_tree.cget("displaycolumns"))
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:
@@ -477,7 +485,7 @@ class GuiImportEditMenusTests(unittest.TestCase):
                 app.playlist_tree.selection_set(unknown_iid)
                 app._refresh_tracklist_preview()
                 labels = [
-                    app.tracklist_tree.item(iid, "values")[0]
+                    app.tracklist_tree.item(iid, "values")[3]
                     for iid in app._tracklist_iids
                 ]
                 self.assertIn("Artist - Track", labels)

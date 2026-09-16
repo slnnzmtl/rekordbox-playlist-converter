@@ -58,6 +58,13 @@ class ProgressStatusHintTests(unittest.TestCase):
             "Convert (357/1958) 0190 - Posij - Sun Tracker.wav…",
         )
 
+    def test_progress_action_status_hint_import_xml_phase(self) -> None:
+        """Finalize phase reads Updating import XML… (not Import_xml (n/n) …)."""
+        self.assertEqual(
+            progress_action_status_hint("import_xml", 1315, 1315, ""),
+            "Updating import XML…",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

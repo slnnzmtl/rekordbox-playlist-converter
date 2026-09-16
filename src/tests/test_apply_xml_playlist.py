@@ -301,6 +301,71 @@ class ApplyXmlPlaylistSyncTests(unittest.TestCase):
             self.assertEqual(result.appended, 0)
             self.assertEqual(result.removed, 0)
 
+    def test_apply_xml_sets_size_bitrate_sample_rate_without_ffprobe(self) -> None:
+        """Given a new dest of known size and planned 16-bit/44100: When
+        apply_xml runs: Then COLLECTION TRACK gets Size/BitRate/SampleRate
+        from dest stat + recipe, and run_ffprobe is never called."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir(parents=True)
+            payload = b"x" * 100
+            dest.write_bytes(payload)
+            item = PlannedTrack(
+                source_el=ET.Element(
+                    "TRACK",
+                    {
+                        "Name": "A",
+                        "Artist": "A",
+                        "Location": encode_location(Path("/music/A.flac")),
+                    },
+                ),
+                source_path=Path("/music/A.flac"),
+                dest_path=dest,
+                dest_location=encode_location(dest),
+                dest_name=dest.name,
+                codec=None,
+                passthrough=True,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            output_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                output_root, "PRODUCT", {"Name": "rekordbox", "Version": "6.8.5"}
+            )
+            ET.SubElement(output_root, "COLLECTION", {"Entries": "0"})
+            playlists = ET.SubElement(output_root, "PLAYLISTS")
+            ET.SubElement(
+                playlists, "NODE", {"Type": "0", "Name": "ROOT", "Count": "0"}
+            )
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=root / "WAV",
+                output=root / "import.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=ET.Element("DJ_PLAYLISTS"),
+                output_root=output_root,
+                output_existed=False,
+                output_format="wav",
+            )
+            success = {(source_key(item.source_path), "wav")}
+
+            def _ffprobe_must_not_run(*_a: object, **_k: object) -> object:
+                raise AssertionError("run_ffprobe must not be called during apply_xml")
+
+            with patch("ffmpeg_tools.run_ffprobe", side_effect=_ffprobe_must_not_run):
+                apply_xml(plan, success)
+            track = plan.output_root.find("COLLECTION/TRACK")
+            assert track is not None
+            self.assertEqual(track.get("Size"), "100")
+            self.assertEqual(track.get("SampleRate"), "44100")
+            self.assertEqual(track.get("BitRate"), "1411")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-TRACKLIST_VALUE_COLUMNS = ("track", "format", "bit_depth", "sample_rate", "rating")
+TRACKLIST_VALUE_COLUMNS = (
+    "missing",
+    "index",
+    "twisty",
+    "track",
+    "format",
+    "bit_depth",
+    "sample_rate",
+    "rating",
+)
 
-_NUMBERED_SORT_COLUMNS = frozenset({"#0", "bit_depth", "sample_rate", "rating"})
+TRACKLIST_TWISTY_OPEN = "▼"
+TRACKLIST_TWISTY_CLOSED = "▶"
+
+_NUMBERED_SORT_COLUMNS = frozenset({"index", "bit_depth", "sample_rate", "rating"})
 _VALUE_COLUMN_INDEX = {
     name: i for i, name in enumerate(TRACKLIST_VALUE_COLUMNS)
 }
@@ -22,6 +34,40 @@ def playlist_row_text(kind: str, name: str, count: int) -> str:
     if kind == "folder":
         return name
     return f"{name} ({count} tracks)"
+
+
+def tracklist_twisty_mark(*, is_open: bool) -> str:
+    return TRACKLIST_TWISTY_OPEN if is_open else TRACKLIST_TWISTY_CLOSED
+
+
+def tracklist_group_values(group_text: str, *, is_open: bool = True) -> tuple[str, ...]:
+    """Playlist group header values: twisty after index, title in track."""
+    values = [""] * len(TRACKLIST_VALUE_COLUMNS)
+    values[_VALUE_COLUMN_INDEX["twisty"]] = tracklist_twisty_mark(is_open=is_open)
+    values[_VALUE_COLUMN_INDEX["track"]] = group_text
+    return tuple(values)
+
+
+def tracklist_display_columns(*, show_missing: bool) -> tuple[str, ...]:
+    """Value columns to show; omit missing when no row is marked."""
+    if show_missing:
+        return TRACKLIST_VALUE_COLUMNS
+    return tuple(c for c in TRACKLIST_VALUE_COLUMNS if c != "missing")
+
+
+def tracklist_display_column_id(
+    column_token: str, displaycolumns: Sequence[str]
+) -> str | None:
+    """Map Treeview identify_column token (#1…) to a value-column id."""
+    if not column_token or column_token == "#0":
+        return None
+    try:
+        index = int(column_token.lstrip("#")) - 1
+    except ValueError:
+        return None
+    if index < 0 or index >= len(displaycolumns):
+        return None
+    return str(displaycolumns[index])
 
 
 def rekordbox_star_rating(raw: object) -> str:
@@ -64,13 +110,8 @@ def track_search_haystack(label: str, fmt: str, path: Path | None) -> str:
 
 
 def tracklist_sort_key(text: str, values: list[Any], column: str):
-    """Sort key for a tracklist leaf: tree text (# index) plus column values."""
-    if column == "#0":
-        raw = str(text or "")
-        try:
-            return (0, int(raw))
-        except ValueError:
-            return (1, 0)
+    """Sort key for a tracklist leaf column values (tree #0 is expander-only)."""
+    del text  # expander column is not used for leaf data
     idx = _VALUE_COLUMN_INDEX.get(column)
     if idx is None or idx >= len(values):
         return ""

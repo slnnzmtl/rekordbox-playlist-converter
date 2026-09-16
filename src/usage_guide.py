@@ -105,7 +105,8 @@ Editing a generated library (GUI):
   playlists or tracks from the right-click menus, or Reveal in Finder for a
   track file. Shift/Command-click to select several tracks, then right-click to
   remove them together. Tracks left in the collection with no playlist appear
-  under Unknown. Missing tracks show a ! prefix.
+  under Unknown. Missing tracks show ! in a status column (click the header to
+  sort).
 • Changes stay in a draft until Save. Save shows a preview of pending removals
   (move to Trash), then updates the Import XML and
   manifest and moves deleted managed audio to the Trash. Cancel discards the

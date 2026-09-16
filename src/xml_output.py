@@ -120,6 +120,17 @@ def probe_dest_tech(path: Path) -> tuple[str, str, str]:
     return size, bitrate, rate or "0"
 
 
+def dest_tech_from_recipe(
+    path: Path, *, bit_depth: int, sample_rate: int, channels: int = 2
+) -> tuple[str, str, str]:
+    """Size from dest file; BitRate/SampleRate from stereo PCM recipe."""
+    size = str(path.stat().st_size)
+    sr = int(sample_rate)
+    depth = int(bit_depth)
+    bitrate = str(int(sr * depth * channels / 1000)) if sr else "0"
+    return size, bitrate, str(sr)
+
+
 def clone_track(
     source_el: ET.Element,
     track_id: str,
@@ -127,9 +138,16 @@ def clone_track(
     dest_location: str,
     *,
     output_format: str = "wav",
+    bit_depth: int | None = None,
+    sample_rate: int | None = None,
 ) -> ET.Element:
     clone = copy.deepcopy(source_el)
-    size, bitrate, sample_rate = probe_dest_tech(dest_path)
+    if bit_depth is not None and sample_rate is not None:
+        size, bitrate, sample_rate_s = dest_tech_from_recipe(
+            dest_path, bit_depth=bit_depth, sample_rate=sample_rate
+        )
+    else:
+        size, bitrate, sample_rate_s = probe_dest_tech(dest_path)
     clone.set("TrackID", track_id)
     clone.set("Location", dest_location)
     kind = (
@@ -138,7 +156,7 @@ def clone_track(
     clone.set("Kind", kind)
     clone.set("Size", size)
     clone.set("BitRate", bitrate)
-    clone.set("SampleRate", sample_rate)
+    clone.set("SampleRate", sample_rate_s)
     return clone
 
 
@@ -149,12 +167,20 @@ def refresh_track(
     dest_location: str,
     *,
     output_format: str = "wav",
+    bit_depth: int | None = None,
+    sample_rate: int | None = None,
 ) -> None:
     """Update an existing collection TRACK from source_el; keep TrackID."""
     tid = existing.get("TrackID", "")
     # Replace children and attributes from a fresh clone, then restore TrackID.
     refreshed = clone_track(
-        source_el, tid, dest_path, dest_location, output_format=output_format
+        source_el,
+        tid,
+        dest_path,
+        dest_location,
+        output_format=output_format,
+        bit_depth=bit_depth,
+        sample_rate=sample_rate,
     )
     existing.clear()
     existing.attrib.update(refreshed.attrib)
@@ -211,6 +237,8 @@ def apply_xml(plan: Plan, success: set[tuple[str, str]]) -> PlaylistApplyResult:
                 item.dest_path,
                 item.dest_location,
                 output_format=item.output_format,
+                bit_depth=item.bit_depth,
+                sample_rate=item.sample_rate,
             )
             dest_to_id[item.dest_location] = existing.get("TrackID", "")
             continue
@@ -222,6 +250,8 @@ def apply_xml(plan: Plan, success: set[tuple[str, str]]) -> PlaylistApplyResult:
             item.dest_path,
             item.dest_location,
             output_format=item.output_format,
+            bit_depth=item.bit_depth,
+            sample_rate=item.sample_rate,
         )
         collection.append(clone)
         dest_to_id[item.dest_location] = tid

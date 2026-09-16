@@ -245,7 +245,7 @@ class PlaylistsMixin:
         self._refresh_tracklist_preview()
 
     def _on_tracklist_button1(self, event: object) -> str | None:
-        """Expand/collapse arrow on a playlist group must not change selection."""
+        """Expand/collapse on a playlist group must not change selection."""
         if self._busy:
             return None
         tree = self.tracklist_tree
@@ -257,19 +257,37 @@ class PlaylistsMixin:
         if not row or row not in self._tracklist_group_iids:
             return None
         element = tree.identify("element", x, y)
-        if element != "Treeitem.indicator":
+        display = tree.cget("displaycolumns")
+        if display in ("", "#all") or display == ("#all",):
+            display_cols = list(tree.cget("columns"))
+        else:
+            display_cols = list(display)
+        clicked = gui_tracklist.tracklist_display_column_id(
+            tree.identify_column(x), display_cols
+        )
+        if element != "Treeitem.indicator" and clicked != "twisty":
             return None
         is_open = not bool(tree.item(row, "open"))
         tree.item(row, open=is_open)
-        self._tracklist_group_open[self._tracklist_group_iids[row]] = is_open
+        self._set_tracklist_group_open(row, is_open)
         return "break"
+
+    def _set_tracklist_group_open(self, group_iid: str, is_open: bool) -> None:
+        key = self._tracklist_group_iids.get(group_iid)
+        if key is None:
+            return
+        self._tracklist_group_open[key] = is_open
+        values = list(self.tracklist_tree.item(group_iid, "values"))
+        twisty_idx = gui_tracklist.TRACKLIST_VALUE_COLUMNS.index("twisty")
+        if twisty_idx < len(values):
+            values[twisty_idx] = gui_tracklist.tracklist_twisty_mark(is_open=is_open)
+            self.tracklist_tree.item(group_iid, values=values)
 
     def _remember_tracklist_group_open(self, _event: object = None) -> None:
         iid = self.tracklist_tree.focus()
-        key = self._tracklist_group_iids.get(iid)
-        if key is not None:
-            self._tracklist_group_open[key] = bool(
-                self.tracklist_tree.item(iid, "open")
+        if iid in self._tracklist_group_iids:
+            self._set_tracklist_group_open(
+                iid, bool(self.tracklist_tree.item(iid, "open"))
             )
 
     def _on_tracklist_select(self, _event: object = None) -> None:
@@ -393,6 +411,11 @@ class PlaylistsMixin:
             self._tracklist_group_open.clear()
             self._tracklist_painted_playlists = []
             self._set_preview_scan_active(False)
+            self.tracklist_tree.configure(
+                displaycolumns=gui_tracklist.tracklist_display_columns(
+                    show_missing=False
+                )
+            )
             self._set_idle_status()
             return
         selected = self._selected_playlists(unique_names=False)
@@ -400,6 +423,11 @@ class PlaylistsMixin:
             self._tracklist_group_open.clear()
             self._tracklist_painted_playlists = []
             self._set_preview_scan_active(False)
+            self.tracklist_tree.configure(
+                displaycolumns=gui_tracklist.tracklist_display_columns(
+                    show_missing=False
+                )
+            )
             self._set_idle_status()
             return
         selected_keys = set(selected)
@@ -415,12 +443,15 @@ class PlaylistsMixin:
         paths: list[Path] = []
         seen_paths: set[Path] = set()
         editing = self._import_edit_active()
+        any_missing = False
         for folder, name in selected:
             node = self._playlist_node(folder, name)
             if node is None:
                 continue
             key_type = node.get("KeyType", "0")
-            matched: list[tuple[str, str, tuple[str, str, str, str, str], Path | None]] = []
+            matched: list[
+                tuple[str, tuple[str, ...], Path | None]
+            ] = []
             for playlist_index, entry in enumerate(node.findall("TRACK"), start=1):
                 key = entry.get("Key") or ""
                 track = None
@@ -432,10 +463,11 @@ class PlaylistsMixin:
                 label, fmt, depth, rate, rating = self._track_preview_row(track)
                 loc = (track.get("Location") or "") if track is not None else ""
                 path = runtime.decode_location(loc) if loc else None
+                status = ""
                 if editing:
                     missing = track is None or path is None or not path.is_file()
-                    if missing and not label.startswith("! "):
-                        label = f"! {label}"
+                    if missing:
+                        status = "!"
                 if query and query not in gui_tracklist.track_search_haystack(
                     label, fmt, path
                 ):
@@ -444,6 +476,8 @@ class PlaylistsMixin:
                     track, supported_ext=runtime.SUPPORTED_LOSSLESS_EXT
                 ):
                     continue
+                if status == "!":
+                    any_missing = True
                 if path is not None:
                     hit, bits = peek_cached_preview_bit_depth(
                         path,
@@ -458,8 +492,16 @@ class PlaylistsMixin:
                 matched.append(
                     (
                         key,
-                        str(playlist_index),
-                        (label, fmt, depth, rate, rating),
+                        (
+                            status,
+                            str(playlist_index),
+                            "",
+                            label,
+                            fmt,
+                            depth,
+                            rate,
+                            rating,
+                        ),
                         path,
                     )
                 )
@@ -468,8 +510,8 @@ class PlaylistsMixin:
             group_key = (folder, name)
             is_open = self._tracklist_group_open.setdefault(group_key, True)
             group_text = f"{name} ({len(matched)} tracks)"
-            group_values = (group_text,) + ("",) * (
-                len(gui_tracklist.TRACKLIST_VALUE_COLUMNS) - 1
+            group_values = gui_tracklist.tracklist_group_values(
+                group_text, is_open=is_open
             )
             group_iid = self.tracklist_tree.insert(
                 "",
@@ -481,9 +523,9 @@ class PlaylistsMixin:
             )
             self._tracklist_group_iids[group_iid] = group_key
             painted += 1
-            for key, index_text, values, path in matched:
+            for key, values, path in matched:
                 leaf_iid = self.tracklist_tree.insert(
-                    group_iid, tk.END, text=index_text, values=values
+                    group_iid, tk.END, text="", values=values
                 )
                 self._tracklist_iids[leaf_iid] = TrackLeafRef(
                     folder=folder, name=name, key=key
@@ -491,6 +533,11 @@ class PlaylistsMixin:
                 if path is not None:
                     self._tracklist_paths[leaf_iid] = path
                 leaf_iids.append(leaf_iid)
+        self.tracklist_tree.configure(
+            displaycolumns=gui_tracklist.tracklist_display_columns(
+                show_missing=any_missing
+            )
+        )
         if not painted:
             self._set_preview_scan_active(False)
             self._set_idle_status()

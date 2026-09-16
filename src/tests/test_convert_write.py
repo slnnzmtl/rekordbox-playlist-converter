@@ -89,6 +89,71 @@ class ExecutePreparedTests(XmlFixtureBase):
         self.assertEqual(names, ["Untitled Intelligent List [WAV]"])
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
 
+    def test_execute_prepared_reports_import_xml_progress_after_convert(
+        self,
+    ) -> None:
+        """Given on_progress: When execute_prepared finishes audio jobs: Then
+        it emits an import_xml progress tick before writing Import XML."""
+        progress_actions: list[str] = []
+        apply_seen = False
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        def on_progress(
+            current: int, total: int, action: str, name: str
+        ) -> None:
+            progress_actions.append(action)
+            if action == "import_xml":
+                self.assertFalse(
+                    apply_seen,
+                    "import_xml progress must fire before apply_xml",
+                )
+
+        real_apply = xml_output.apply_xml
+
+        def apply_and_mark(plan, success):
+            nonlocal apply_seen
+            apply_seen = True
+            self.assertIn(
+                "import_xml",
+                progress_actions,
+                "import_xml progress must fire before apply_xml",
+            )
+            return real_apply(plan, success)
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ), patch.object(xml_output, "apply_xml", side_effect=apply_and_mark):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            execute_prepared(
+                prepared, force=False, progress=False, on_progress=on_progress
+            )
+
+        self.assertIn("import_xml", progress_actions)
+        self.assertTrue(apply_seen)
+        convert_idxs = [
+            i for i, a in enumerate(progress_actions) if a == "convert"
+        ]
+        import_idxs = [
+            i for i, a in enumerate(progress_actions) if a == "import_xml"
+        ]
+        self.assertTrue(convert_idxs)
+        self.assertTrue(import_idxs)
+        self.assertGreater(import_idxs[0], convert_idxs[-1])
+
     def test_execute_prepared_aborts_when_manifest_replaced_after_prepare(
         self,
     ) -> None:

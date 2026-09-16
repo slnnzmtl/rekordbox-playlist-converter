@@ -916,6 +916,9 @@ def execute_prepared(
             pending_assignments=pending,
             decisions=decisions,
         )
+        total = len(prepared.items)
+        if on_progress is not None:
+            on_progress(total, total, "import_xml", "")
         playlists_by_dest: dict[Path, list[str]] = {}
         for one_plan in plans:
             for track in one_plan.tracks:

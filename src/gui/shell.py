@@ -718,7 +718,7 @@ class ShellMixin:
         else:
             pct = min(100.0, 100.0 * current / total)
         self._animate_progress_to(pct)
-        if action and name:
+        if action:
             self.status_var.set(
                 progress_action_status_hint(action, current, total, name)
             )
