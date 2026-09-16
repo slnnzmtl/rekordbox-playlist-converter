@@ -74,10 +74,11 @@ conversion results.
    converting, Cancel replaces Convert in that spot. Cancel stops in-flight
    encodes (up to 4 at once); files already written are kept and Import XML
    includes tracks already in the success set (re-run Convert to finish the
-   rest). The Done report lists converted, copied, PCM-rebuilt,
-   metadata-refreshed, reused, recreated, missing, conflicting, and failed
-   tracks together (successes stay visible if some tracks fail). After a
-   finished run, Reveal output folder opens the chosen output folder.
+   rest). The Done report uses the same Done / Partial / Failed / Cancelled
+   titles as the CLI, with playlist status lines and per-track statuses
+   (converted, copied, PCM-rebuilt, metadata-refreshed, reused, recreated,
+   missing, conflicting, failed); successes stay visible if some tracks fail.
+   After a finished run, Reveal output folder opens the chosen output folder.
 
 What you get:
 • Audio files in <output folder>/WAV/ or …/AIFF/ as <artist> - <track>

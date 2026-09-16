@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- GUI and CLI share the same Done / Partial / Failed / Cancelled batch title;
+  finish-table Failed Detail uses `source → dest: error` like the CLI Failed
+  list; playlist accordion headers include missing-skipped counts.
+- Done / Partial finish reports show a resizable track-status table grouped by
+  playlist (status line as tree header, collapsed by default; wide Track column),
+  with import steps below; reports without per-track results still use a
+  scrollable line list.
 - Conversion preview lists missing source files in the table (Missing /
   Source file is missing), disables Convert when there is nothing to convert,
   and shows about how much disk space audio writes need when space is OK.

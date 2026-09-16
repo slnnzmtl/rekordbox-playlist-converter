@@ -12,8 +12,13 @@ from typing import Callable
 
 from cli_error import CancelledError
 from convert import plan as plan_module
-from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PlannedTrack
-from convert.plan import MISSING_SOURCE_FILE_PREFIX
+from convert.models import (
+    ConversionPreview,
+    ConversionPreviewItem,
+    MISSING_SOURCE_FILE_PREFIX,
+    Plan,
+    PlannedTrack,
+)
 from convert.rerun import (
     ACTION_WRITE_KIND,
     WRITE_KIND_LABELS,

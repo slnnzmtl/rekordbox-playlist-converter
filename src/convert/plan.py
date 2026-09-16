@@ -18,7 +18,7 @@ from convert.encode import (
     write_aiff_output as _encode_write_aiff_output,
 )
 from convert.format_policy import classify_source, inplace_noop_and_error
-from convert.models import Plan, PlannedTrack
+from convert.models import MISSING_SOURCE_FILE_PREFIX, Plan, PlannedTrack
 from convert.paths import (
     abs_path,
     format_media_dir,
@@ -39,8 +39,6 @@ DEFAULT_WAV_DIR = Path("output")
 DEFAULT_OUTPUT = Path("output") / "rekordbox-import.xml"
 WAV_SUFFIX = " [WAV]"
 AIFF_SUFFIX = " [AIFF]"
-
-MISSING_SOURCE_FILE_PREFIX = "missing source file: "
 
 CONVERT_WORKERS_MIN = 2
 CONVERT_WORKERS_MAX = 4

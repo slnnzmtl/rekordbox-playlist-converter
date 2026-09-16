@@ -21,6 +21,7 @@ from convert import (
 )
 from convert.models import (
     conversion_exit_code,
+    conversion_report_title,
     format_conversion_counts,
     format_import_guidance,
     format_playlist_report,
@@ -339,6 +340,13 @@ def run_convert_batch(
             force=force,
             progress=sys.stderr.isatty(),
         )
+        print(
+            conversion_report_title(
+                stats,
+                missing=sum(len(plan.warnings) for plan in plans),
+            )
+        )
+        print()
         playlist_pairs: list[tuple[str, object]] = []
         for i, plan in enumerate(plans):
             if len(plans) > 1:

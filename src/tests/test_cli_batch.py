@@ -709,6 +709,105 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(rc, 1)
         self.assertIn("disk full writing manifest", err_buf.getvalue())
 
+    def test_run_convert_batch_prints_report_title_before_summary(self) -> None:
+        """Given mixed item_results: When run_convert_batch finishes: Then
+        stdout starts with the same Done/Partial title as the GUI dialog."""
+        from convert.models import (
+            ConversionPreview,
+            ConversionPreviewItem,
+            ConvertStats,
+            ItemResult,
+            Plan,
+            PreparedConversion,
+        )
+        import convert.write as convert_write
+
+        plan = Plan(
+            playlist_name="P",
+            wav_playlist_name="P [WAV]",
+            library_dir=self.wav_dir,
+            media_dir=self.wav_dir / "WAV",
+            output=self.output,
+            tracks=[],
+            unique=[],
+            source_root=ET.Element("DJ_PLAYLISTS"),
+            output_root=ET.Element("DJ_PLAYLISTS"),
+            output_existed=False,
+            warnings=["missing source file: /music/gone.flac"],
+        )
+        preview = ConversionPreview(
+            selected=2,
+            resolved=1,
+            unique_outputs=1,
+            duplicates=0,
+            missing=1,
+            items=[
+                ConversionPreviewItem(
+                    relative_dest="WAV/A.wav",
+                    action="transcode",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=1000,
+                    size_display="0.0 MB",
+                    source_display="a.flac",
+                    write_kind="audio",
+                    output_format="wav",
+                ),
+            ],
+        )
+        prepared = PreparedConversion(
+            plans=[plan],
+            items=[],
+            manifest=converter_manifest.empty_manifest(),
+            preview=preview,
+            library_dir=self.wav_dir,
+            output=self.output,
+            skipped=[],
+        )
+        stats = ConvertStats(
+            converted=1,
+            item_results=[
+                ItemResult(
+                    source=Path("/music/a.flac"),
+                    destination=self.wav_dir / "WAV" / "a.wav",
+                    action="transcode",
+                    outcome="succeeded",
+                    write="transcode",
+                    playlists=("P [WAV]",),
+                ),
+                ItemResult(
+                    source=Path("/music/b.flac"),
+                    destination=self.wav_dir / "WAV" / "b.wav",
+                    action="transcode",
+                    outcome="failed",
+                    error="ffmpeg exited 1",
+                    playlists=("P [WAV]",),
+                ),
+            ],
+            errors=["b.flac → WAV/b.wav: ffmpeg exited 1"],
+            appended_by_plan=[0],
+            playlist_results=[],
+        )
+
+        out_buf = io.StringIO()
+        with patch.object(rb, "prepare_batch", return_value=(prepared, [])), patch(
+            "sys.stdout", out_buf
+        ), patch.object(convert_write, "execute_prepared", return_value=stats):
+            rc = rb.run_convert_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+                force=False,
+                dry_run=False,
+            )
+        self.assertEqual(rc, 1)
+        lines = [line for line in out_buf.getvalue().splitlines() if line.strip()]
+        self.assertTrue(lines, "expected conversion report on stdout")
+        self.assertEqual(lines[0], "Partial")
+        self.assertIn("1 converted", out_buf.getvalue())
+        self.assertIn("1 missing skipped", out_buf.getvalue())
+
     def test_main_omitted_output_writes_import_xml_under_wav_dir(self) -> None:
         """Given no --output: When main converts: Then import XML is
         <wav_dir>/rekordbox-import.xml."""

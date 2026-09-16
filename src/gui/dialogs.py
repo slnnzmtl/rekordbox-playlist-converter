@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import scrolledtext, ttk
 from typing import Any
 
+from convert.models import FinishResultGroup
 from gui.layout import (
     ACTION_BUTTON_WIDTH,
     bind_wraplength,
@@ -427,14 +428,86 @@ def show_done_dialog(
     on_open_guide: Callable[[], None],
     place_over: Callable[[tk.Toplevel], None],
     title: str = "Done",
+    result_rows: list[Any] | None = None,
+    result_groups: list[Any] | None = None,
+    guidance: str | None = None,
 ) -> None:
-    """Finish report dialog with optional Reveal / usage-guide actions."""
-    dlg, frm = make_dialog(parent, title, grab=True, resizable=False)
-    msg_label = ttk.Label(frm, text=message, justify=tk.LEFT)
-    msg_label.grid(row=0, column=0, columnspan=2, sticky="w")
-    bind_wraplength(msg_label, frm, inset=32)
+    """Finish report with optional track-status table, or a scrollable line list."""
+    dlg, frm = make_dialog(parent, title, grab=True, resizable=True)
+    dlg.minsize(900, 420)
+    frm.columnconfigure(0, weight=1)
+
+    row = 0
+    groups = result_groups
+    if groups is None and result_rows:
+        groups = [FinishResultGroup(header="", rows=list(result_rows))]
+
+    if groups:
+        frm.rowconfigure(row, weight=1)
+        table_frame = ttk.Frame(frm)
+        table_frame.grid(row=row, column=0, sticky="nsew")
+        table_frame.columnconfigure(0, weight=1)
+        table_frame.rowconfigure(0, weight=1)
+        leaf_count = sum(len(g.rows) for g in groups)
+        table, yscroll = tree_with_yscroll(
+            table_frame,
+            columns=("status", "detail"),
+            show="tree headings",
+            selectmode="browse",
+            height=min(16, max(6, leaf_count + len(groups))),
+        )
+        table.heading("#0", text="Track", anchor="w")
+        table.heading("status", text="Status", anchor="w")
+        table.heading("detail", text="Detail", anchor="w")
+        # Wide #0 so playlist status-line headers fit; Status/Detail stay compact.
+        table.column("#0", width=520, stretch=True, minwidth=360)
+        table.column("status", width=120, stretch=False, anchor="w", minwidth=100)
+        table.column("detail", width=200, stretch=True, minwidth=120)
+        table.grid(row=0, column=0, sticky="nsew")
+        yscroll.grid(row=0, column=1, sticky="ns")
+        for group in groups:
+            if group.header:
+                parent = table.insert(
+                    "",
+                    tk.END,
+                    text=group.header,
+                    values=("", ""),
+                    open=False,
+                )
+            else:
+                parent = ""
+            for item in group.rows:
+                table.insert(
+                    parent,
+                    tk.END,
+                    text=item.track,
+                    values=(item.status, item.detail),
+                )
+        row += 1
+
+        if guidance:
+            guide_label = ttk.Label(frm, text=guidance, justify=tk.LEFT)
+            guide_label.grid(row=row, column=0, sticky="w", pady=(8, 0))
+            bind_wraplength(guide_label, frm, inset=32)
+            row += 1
+    else:
+        lines = message.splitlines() or [""]
+        frm.rowconfigure(row, weight=1)
+        list_frame = ttk.Frame(frm)
+        list_frame.grid(row=row, column=0, sticky="nsew")
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+        listbox, scroll = listbox_with_yscroll(
+            list_frame, height=min(12, max(4, len(lines))), width=72
+        )
+        listbox.grid(row=0, column=0, sticky="nsew")
+        scroll.grid(row=0, column=1, sticky="ns")
+        for line in lines:
+            listbox.insert(tk.END, line)
+        row += 1
+
     btns = ttk.Frame(frm)
-    btns.grid(row=1, column=0, columnspan=2, sticky="e", pady=(16, 0))
+    btns.grid(row=row, column=0, sticky="e", pady=(16, 0))
 
     def close() -> None:
         dlg.destroy()
