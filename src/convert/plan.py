@@ -40,8 +40,6 @@ DEFAULT_OUTPUT = Path("output") / "rekordbox-import.xml"
 WAV_SUFFIX = " [WAV]"
 AIFF_SUFFIX = " [AIFF]"
 
-MISSING_SOURCE_FILE_PREFIX = "missing source file: "
-
 CONVERT_WORKERS_MIN = 2
 CONVERT_WORKERS_MAX = 4
 
