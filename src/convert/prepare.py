@@ -148,25 +148,12 @@ def prepare_batch(
         raise CancelledError("conversion cancelled")
 
     if manifest is None:
-        man_path = converter_manifest.manifest_path(wav_dir)
-        if man_path.is_file():
-            try:
-                manifest, fingerprint = converter_manifest.load_manifest_with_fingerprint(
-                    wav_dir
-                )
-            except CliError as exc:
-                return None, [str(exc)]
-        else:
-            try:
-                manifest = converter_manifest.load_manifest(wav_dir)
-            except CliError as exc:
-                return None, [str(exc)]
-            if fingerprint is None:
-                fingerprint = converter_manifest.ManifestFingerprint.capture(man_path)
-    elif fingerprint is None:
-        fingerprint = converter_manifest.ManifestFingerprint.capture(
-            converter_manifest.manifest_path(wav_dir)
-        )
+        try:
+            manifest, fingerprint = converter_manifest.snapshot_library_manifest(
+                wav_dir
+            )
+        except CliError as exc:
+            return None, [str(exc)]
 
     reservation = converter_manifest.ReservationContext.scanned(wav_dir)
 

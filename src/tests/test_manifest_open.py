@@ -145,6 +145,46 @@ class ManifestLoadValidationTests(unittest.TestCase):
         )
         self.assertEqual(opened.fingerprint.size, len(body_a.encode("utf-8")))
 
+    def test_open_library_does_not_pair_empty_tracks_with_new_file_fingerprint(
+        self,
+    ) -> None:
+        """Given no manifest: When a file appears after the absence probe: Then
+        open_library does not return empty tracks with that file's fingerprint."""
+        path = self.wav_dir / cm.MANIFEST_NAME
+        self.assertFalse(path.exists())
+        newer = cm.empty_manifest()
+        newer.set_dest("/new", "wav", "WAV/New.wav")
+        probes = {"n": 0}
+        real_is_file = Path.is_file
+        wav_dir = self.wav_dir
+
+        def is_file_then_create(self: Path) -> bool:
+            try:
+                same = self == path or self.resolve() == path.resolve()
+            except OSError:
+                same = self == path
+            if same:
+                probes["n"] += 1
+                if probes["n"] == 1:
+                    return False
+                if not path.exists():
+                    cm.save_manifest(newer, wav_dir)
+            return real_is_file(self)
+
+        with patch.object(Path, "is_file", is_file_then_create):
+            opened = cm.open_library(self.wav_dir)
+        self.assertIsNone(opened.error)
+        assert opened.manifest is not None
+        assert opened.fingerprint is not None
+        self.assertIn("/new", opened.manifest.tracks)
+        self.assertNotEqual(list(opened.manifest.tracks), [])
+        self.assertTrue(opened.fingerprint.exists)
+        self.assertTrue(opened.fingerprint.matches_disk())
+        self.assertEqual(
+            opened.manifest.get_dest("/new", "wav"),
+            "WAV/New.wav",
+        )
+
     def test_open_library_fails_when_manifest_mutates_during_read(self) -> None:
         """Given a valid manifest: When fd stats change during the read: Then
         open_library reports an error instead of pairing mixed content."""

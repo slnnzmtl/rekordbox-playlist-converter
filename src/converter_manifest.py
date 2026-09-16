@@ -495,15 +495,7 @@ def load_manifest_with_fingerprint(
 
 def load_manifest(wav_dir: Path) -> ConverterManifest:
     """Load and validate manifest from wav_dir, or return empty if missing."""
-    path = manifest_path(wav_dir)
-    if not path.is_file():
-        return empty_manifest()
-    try:
-        manifest, _fp = load_manifest_with_fingerprint(wav_dir)
-    except ManifestError:
-        raise
-    except OSError as exc:
-        raise ManifestError(f"cannot read converter manifest: {path}: {exc}") from exc
+    manifest, _fp = snapshot_library_manifest(wav_dir)
     return manifest
 
 
@@ -538,6 +530,39 @@ class ManifestFingerprint:
             and current.mtime_ns == self.mtime_ns
             and current.sha256 == self.sha256
         )
+
+
+def snapshot_library_manifest(
+    wav_dir: Path,
+) -> tuple[ConverterManifest, ManifestFingerprint]:
+    """Return parsed tracks plus fingerprint from one stable path observation.
+
+    Empty tracks are returned only with a fingerprint that still shows the
+    path as absent. If the file appears or vanishes mid-open, retry.
+    """
+    path = manifest_path(wav_dir)
+    last_error: ManifestError | None = None
+    for _ in range(_UNSTABLE_READ_RETRIES):
+        if not path.is_file():
+            fingerprint = ManifestFingerprint(
+                path=path, exists=False, size=0, mtime_ns=0, sha256=""
+            )
+            if path.is_file():
+                last_error = ManifestError(
+                    f"converter manifest appeared while opening: {path}"
+                )
+                continue
+            return empty_manifest(), fingerprint
+        try:
+            return load_manifest_with_fingerprint(wav_dir)
+        except ManifestError as exc:
+            last_error = exc
+            if not path.is_file():
+                continue
+            raise
+    raise last_error or ManifestError(
+        f"converter manifest changed while opening: {path}"
+    )
 
 
 @dataclass(frozen=True)
@@ -575,20 +600,19 @@ def open_library(wav_dir: Path) -> OpenLibraryResult:
                 fingerprint=ManifestFingerprint.capture(man_path),
             )
 
-    if expanded.is_dir() and (expanded / MANIFEST_NAME).is_file():
-        try:
-            manifest, fingerprint = load_manifest_with_fingerprint(expanded)
-        except ManifestError as exc:
-            return OpenLibraryResult(
-                error=f"Converter manifest is invalid: {exc}",
-                manifest=None,
-                fingerprint=ManifestFingerprint.capture(man_path),
-            )
+    try:
+        manifest, fingerprint = snapshot_library_manifest(expanded)
+    except ManifestError as exc:
+        return OpenLibraryResult(
+            error=f"Converter manifest is invalid: {exc}",
+            manifest=None,
+            fingerprint=ManifestFingerprint.capture(man_path),
+        )
+    if fingerprint.exists:
         return OpenLibraryResult(
             error=None, manifest=manifest, fingerprint=fingerprint
         )
 
-    fingerprint = ManifestFingerprint.capture(man_path)
     if expanded.is_dir() and _has_legacy_library_content(expanded):
         return OpenLibraryResult(
             error=(
@@ -601,7 +625,7 @@ def open_library(wav_dir: Path) -> OpenLibraryResult:
         )
 
     return OpenLibraryResult(
-        error=None, manifest=empty_manifest(), fingerprint=fingerprint
+        error=None, manifest=manifest, fingerprint=fingerprint
     )
 
 

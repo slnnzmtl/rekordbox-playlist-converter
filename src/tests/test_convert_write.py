@@ -131,6 +131,32 @@ class ExecutePreparedTests(XmlFixtureBase):
             "WAV/Other - Track.wav",
         )
 
+    def test_prepare_batch_does_not_attach_disk_fingerprint_to_supplied_manifest(
+        self,
+    ) -> None:
+        """Given a caller-supplied manifest and no fingerprint: When disk
+        already has different tracks: Then prepare does not invent a
+        fingerprint for that unrelated in-memory object."""
+        on_disk = converter_manifest.empty_manifest()
+        on_disk.set_dest("/new", "wav", "WAV/New.wav")
+        converter_manifest.save_manifest(on_disk, self.wav_dir)
+        supplied = converter_manifest.empty_manifest()
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+                manifest=supplied,
+            )
+        self.assertEqual(errors, [])
+        assert prepared is not None
+        self.assertIsNone(prepared.fingerprint)
+        self.assertNotIn("/new", prepared.manifest.tracks)
+
     def test_execute_prepared_aborts_on_alternate_case_sibling_after_prepare(
         self,
     ) -> None:
