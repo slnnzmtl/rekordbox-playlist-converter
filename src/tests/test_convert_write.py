@@ -32,10 +32,10 @@ from convert.freshness import (
     source_signature,
 )
 from convert.models import ConversionPreview, Plan, PlannedTrack, PreparedConversion
-from convert.paths import source_key
+from convert.paths import collision_key, source_key
 from convert.prepare import prepare_batch
 from convert.rerun import classify_item
-from convert.write import convert_unique, execute_prepared
+from convert.write import ManifestPersistError, convert_unique, execute_prepared
 from convert_fixtures import XmlFixtureTests as XmlFixtureBase, write_pcm_wav
 from rekordbox_xml import encode_location, iter_playlists, skeleton_from
 
@@ -88,6 +88,203 @@ class ExecutePreparedTests(XmlFixtureBase):
         names = [name for _folder, name, _node in iter_playlists(out)]
         self.assertEqual(names, ["Untitled Intelligent List [WAV]"])
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
+
+    def test_execute_prepared_aborts_when_manifest_replaced_after_prepare(
+        self,
+    ) -> None:
+        """Given a prepared batch: When the manifest file is replaced before
+        execute: Then convert aborts, newer assignments stay on disk, and
+        Import XML is not written."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            other = converter_manifest.empty_manifest()
+            other.set_dest("/other/source.flac", "wav", "WAV/Other - Track.wav")
+            converter_manifest.save_manifest(other, self.wav_dir)
+            with self.assertRaises(CliError) as ctx:
+                execute_prepared(prepared, force=False, progress=False)
+        self.assertRegex(str(ctx.exception).casefold(), r"re-prepare|changed")
+        self.assertEqual(encoded, [])
+        self.assertFalse(self.output.exists())
+        on_disk = converter_manifest.load_manifest(self.wav_dir)
+        self.assertEqual(
+            on_disk.get_dest("/other/source.flac", "wav"),
+            "WAV/Other - Track.wav",
+        )
+
+    def test_prepare_batch_does_not_attach_disk_fingerprint_to_supplied_manifest(
+        self,
+    ) -> None:
+        """Given a caller-supplied manifest and no fingerprint: When disk
+        already has different tracks: Then prepare does not invent a
+        fingerprint for that unrelated in-memory object."""
+        on_disk = converter_manifest.empty_manifest()
+        on_disk.set_dest("/new", "wav", "WAV/New.wav")
+        converter_manifest.save_manifest(on_disk, self.wav_dir)
+        supplied = converter_manifest.empty_manifest()
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+                manifest=supplied,
+            )
+        self.assertEqual(errors, [])
+        assert prepared is not None
+        self.assertIsNone(prepared.fingerprint)
+        self.assertNotIn("/new", prepared.manifest.tracks)
+
+    def test_execute_prepared_aborts_on_alternate_case_sibling_after_prepare(
+        self,
+    ) -> None:
+        """Given a reserved dest: When an alternate-case sibling appears before
+        execute: Then there is no encode, a conflict, and no Import XML."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            dest = next(
+                item.dest_path
+                for item in prepared.items
+                if "Bestial" in item.dest_path.name
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            sibling = dest.with_name("absl - bestial.wav")
+            sibling.write_bytes(b"UNRELATED")
+            if sibling.exists() and dest.exists() and sibling.samefile(dest):
+                self.skipTest("filesystem is case-insensitive")
+            with self.assertRaises(CliError) as ctx:
+                execute_prepared(prepared, force=False, progress=False)
+        self.assertRegex(str(ctx.exception).casefold(), r"conflict|collision")
+        self.assertEqual(encoded, [])
+        self.assertFalse(self.output.exists())
+        self.assertFalse(dest.exists())
+        self.assertEqual(sibling.read_bytes(), b"UNRELATED")
+
+    def test_execute_prepared_aborts_when_refreshed_inventory_has_collision_sibling(
+        self,
+    ) -> None:
+        """Given a reserved dest: When refresh sees another file with the same
+        collision_key that is not the dest: Then execute aborts before encode."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            assert prepared.reservation is not None
+            dest = prepared.items[0].dest_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            extra = dest.parent / "injected-collision.wav"
+            extra.write_bytes(b"UNRELATED")
+            key = collision_key(dest.name)
+            orig_refresh = prepared.reservation.refresh_inventory
+
+            def refresh_then_inject() -> None:
+                orig_refresh()
+                prepared.reservation.inventory[key] = prepared.reservation.inventory.get(
+                    key, ()
+                ) + (extra,)
+
+            prepared.reservation.refresh_inventory = refresh_then_inject
+            with self.assertRaises(CliError) as ctx:
+                execute_prepared(prepared, force=False, progress=False)
+        self.assertRegex(str(ctx.exception).casefold(), r"conflict|collision")
+        self.assertEqual(encoded, [])
+        self.assertFalse(self.output.exists())
+        self.assertFalse(dest.exists())
+        self.assertEqual(extra.read_bytes(), b"UNRELATED")
+
+    def test_execute_prepared_same_file_inventory_match_is_not_batch_conflict(
+        self,
+    ) -> None:
+        """Given the planned dest already on disk: When inventory refresh sees
+        only that file: Then execute does not abort as a dest collision."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            dest = prepared.items[0].dest_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"EXISTING")
+            stats = execute_prepared(prepared, force=False, progress=False)
+        self.assertIsNotNone(stats)
+        self.assertTrue(self.output.exists())
 
     def test_late_dest_change_after_pending_stays_complete_conflict(self) -> None:
         """Given a frozen transcode with pending incomplete: When dest changes
@@ -180,7 +377,7 @@ class ExecutePreparedTests(XmlFixtureBase):
             ), patch.object(
                 xml_output, "probe_dest_tech", return_value=("1", "1411", "44100")
             ):
-                stats = execute_prepared(prepared, force=True, checkpoint_every=0)
+                stats = execute_prepared(prepared, force=True, checkpoint_interval_s=0)
             self.assertEqual(
                 stats.conflicts, [f"{src.name} → {dest.parent.name}/{dest.name}"]
             )
@@ -597,6 +794,118 @@ class ExecutePreparedTests(XmlFixtureBase):
             plan.manifest = loaded
             self.assertEqual(classify_item(plan, item, False).action, "refresh_xml")
 
+    def test_post_xml_metadata_persist_failure_is_manifest_persist_error(self) -> None:
+        """Given refresh_xml: When the post-Import-XML urgent save fails: Then
+        ManifestPersistError is raised and Import XML remains on disk."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            src = root / "a.flac"
+            src.write_bytes(b"fLaC")
+            dest = root / "WAV" / "A.wav"
+            dest.parent.mkdir()
+            write_pcm_wav(dest)
+            el = ET.Element("TRACK", {"Name": "Old", "Artist": "DJ"})
+            loc = encode_location(dest)
+            item = PlannedTrack(
+                source_el=el,
+                source_path=src,
+                dest_path=dest,
+                dest_location=loc,
+                dest_name=dest.name,
+                codec="pcm_s16le",
+                passthrough=False,
+                noop=False,
+                bit_depth=16,
+                sample_rate=44100,
+                output_format="wav",
+            )
+            source_root = ET.Element("DJ_PLAYLISTS", {"Version": "1.0.0"})
+            ET.SubElement(
+                source_root,
+                "PRODUCT",
+                {"Name": "rekordbox", "Version": "6.8.5", "Company": "AlphaTheta"},
+            )
+            output_root = skeleton_from(source_root)
+            collection = output_root.find("COLLECTION")
+            assert collection is not None
+            ET.SubElement(
+                collection,
+                "TRACK",
+                {
+                    "TrackID": "99",
+                    "Name": "Old",
+                    "Artist": "DJ",
+                    "Location": loc,
+                    "Kind": "WAV File",
+                },
+            )
+            playlists = output_root.find("PLAYLISTS")
+            assert playlists is not None
+            root_node = playlists.find("NODE")
+            assert root_node is not None
+            playlist = ET.SubElement(
+                root_node,
+                "NODE",
+                {
+                    "Name": "P [WAV]",
+                    "Type": "1",
+                    "KeyType": "0",
+                    "Entries": "1",
+                },
+            )
+            ET.SubElement(playlist, "TRACK", {"Key": "99"})
+            manifest = converter_manifest.empty_manifest()
+            plan = Plan(
+                playlist_name="P",
+                wav_playlist_name="P [WAV]",
+                library_dir=root,
+                media_dir=dest.parent,
+                output=root / "o.xml",
+                tracks=[item],
+                unique=[item],
+                source_root=source_root,
+                output_root=output_root,
+                output_existed=True,
+                manifest=manifest,
+            )
+            bind_complete_assignment(manifest, item, "WAV/A.wav")
+            el.set("Name", "New")
+            prepared = PreparedConversion(
+                plans=[plan],
+                items=[item],
+                manifest=manifest,
+                preview=ConversionPreview(
+                    selected=1,
+                    resolved=1,
+                    unique_outputs=1,
+                    duplicates=0,
+                    missing=0,
+                ),
+                library_dir=root,
+                output=plan.output,
+                skipped=[],
+            )
+
+            real_save = converter_manifest.save_manifest_tracks
+            saves = {"n": 0}
+
+            def tracking_save(tracks, wav_dir):
+                saves["n"] += 1
+                # prebatch + final succeed; post-XML urgent fails
+                if saves["n"] >= 3:
+                    raise OSError("post-xml metadata save failed")
+                real_save(tracks, wav_dir)
+
+            with patch.object(
+                xml_output, "probe_dest_tech", return_value=("100", "1411", "44100")
+            ), patch.object(
+                converter_manifest, "save_manifest_tracks", side_effect=tracking_save
+            ):
+                with self.assertRaises(ManifestPersistError):
+                    execute_prepared(prepared, force=False)
+
+            self.assertTrue(plan.output.is_file())
+
     def test_failed_import_xml_does_not_advance_aiff_update_metadata(self) -> None:
         """Given update_metadata: When Import XML writing fails: Then dest
         output stats are stored, the old metadata signature remains, and the
@@ -886,11 +1195,11 @@ class ExecutePreparedTests(XmlFixtureBase):
         """Given planned recreates: When execute_prepared runs: Then the first
         manifest save marks those assignments incomplete before ffmpeg writes."""
         saves: list[dict] = []
-        real_save = converter_manifest.save_manifest
+        real_save = converter_manifest.save_manifest_tracks
 
-        def tracking_save(manifest, wav_dir):
-            saves.append(deepcopy(manifest.tracks))
-            real_save(manifest, wav_dir)
+        def tracking_save(tracks, wav_dir):
+            saves.append(deepcopy(tracks))
+            real_save(tracks, wav_dir)
 
         def fake_ffmpeg(
             source: Path, dest: Path, codec: str, force: bool, **_kwargs
@@ -903,7 +1212,7 @@ class ExecutePreparedTests(XmlFixtureBase):
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             cdj_wav, "is_cdj_safe_wav", return_value=False
         ), patch.object(
-            converter_manifest, "save_manifest", side_effect=tracking_save
+            converter_manifest, "save_manifest_tracks", side_effect=tracking_save
         ):
             prepared, errors = prepare_batch(
                 self.xml_path,
@@ -925,27 +1234,33 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertEqual(assignment_state(formats["wav"]), "complete")
 
     def test_execute_prepared_checkpoints_manifest_during_batch(self) -> None:
-        """Given several recreates: When execute_prepared runs with checkpoint
-        every completion: Then the manifest is saved between pre-batch and final."""
+        """Given several recreates: When execute_prepared runs with
+        checkpoint_interval_s and a fake clock that advances past the interval:
+        Then the manifest is saved between pre-batch and final."""
         saves: list[dict] = []
-        real_save = converter_manifest.save_manifest
+        real_save = converter_manifest.save_manifest_tracks
+        clock = {"t": 0.0}
 
-        def tracking_save(manifest, wav_dir):
-            saves.append(deepcopy(manifest.tracks))
-            real_save(manifest, wav_dir)
+        def now() -> float:
+            return clock["t"]
+
+        def tracking_save(tracks, wav_dir):
+            saves.append(deepcopy(tracks))
+            real_save(tracks, wav_dir)
 
         def fake_ffmpeg(
             source: Path, dest: Path, codec: str, force: bool, **_kwargs
         ) -> None:
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"RIFF")
+            clock["t"] += 10.0
 
         with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
             ffmpeg_tools, "run_ffprobe", side_effect=self._probe
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             cdj_wav, "is_cdj_safe_wav", return_value=False
         ), patch.object(
-            converter_manifest, "save_manifest", side_effect=tracking_save
+            converter_manifest, "save_manifest_tracks", side_effect=tracking_save
         ):
             prepared, errors = prepare_batch(
                 self.xml_path,
@@ -956,10 +1271,15 @@ class ExecutePreparedTests(XmlFixtureBase):
             self.assertEqual(errors, [])
             assert prepared is not None
             execute_prepared(
-                prepared, force=False, progress=False, checkpoint_every=1
+                prepared,
+                force=False,
+                progress=False,
+                workers=1,
+                checkpoint_interval_s=10.0,
+                clock=now,
             )
 
-        self.assertGreaterEqual(len(saves), 5)
+        self.assertGreaterEqual(len(saves), 3)
         completes = [
             sum(
                 1
@@ -1039,6 +1359,10 @@ class ExecutePreparedTests(XmlFixtureBase):
                 skipped=[],
             )
             writes = {"n": 0}
+            clock = {"t": 0.0}
+
+            def now() -> float:
+                return clock["t"]
 
             def fake_ffmpeg(
                 source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
@@ -1046,6 +1370,7 @@ class ExecutePreparedTests(XmlFixtureBase):
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 dest_path.write_bytes(b"NEW-" + source.name.encode())
                 writes["n"] += 1
+                clock["t"] += 10.0
                 if writes["n"] >= 2:
                     raise RuntimeError("crash after replace")
 
@@ -1061,7 +1386,8 @@ class ExecutePreparedTests(XmlFixtureBase):
                     force=True,
                     progress=False,
                     workers=1,
-                    checkpoint_every=1,
+                    checkpoint_interval_s=10.0,
+                    clock=now,
                 )
             self.assertTrue(stats.errors)
             loaded = converter_manifest.load_manifest(root)
@@ -1139,6 +1465,10 @@ class ExecutePreparedTests(XmlFixtureBase):
                 skipped=[],
             )
             crash = {"on": True, "n": 0}
+            clock = {"t": 0.0}
+
+            def now() -> float:
+                return clock["t"]
 
             def fake_ffmpeg(
                 source: Path, dest_path: Path, codec: str, force: bool, **_kwargs
@@ -1146,6 +1476,7 @@ class ExecutePreparedTests(XmlFixtureBase):
                 dest_path.parent.mkdir(parents=True, exist_ok=True)
                 dest_path.write_bytes(b"NEW-" + source.name.encode())
                 crash["n"] += 1
+                clock["t"] += 10.0
                 if crash["on"] and crash["n"] >= 2:
                     raise RuntimeError("crash after replace")
 
@@ -1161,7 +1492,8 @@ class ExecutePreparedTests(XmlFixtureBase):
                     force=True,
                     progress=False,
                     workers=1,
-                    checkpoint_every=1,
+                    checkpoint_interval_s=10.0,
+                    clock=now,
                 )
                 self.assertTrue(first.errors)
                 loaded = converter_manifest.load_manifest(root)
@@ -1173,6 +1505,7 @@ class ExecutePreparedTests(XmlFixtureBase):
                 )
                 crash["on"] = False
                 crash["n"] = 0
+                clock["t"] = 0.0
                 plan.manifest = loaded
                 prepared.manifest = loaded
                 prepared.decisions = {}
@@ -1181,7 +1514,8 @@ class ExecutePreparedTests(XmlFixtureBase):
                     force=False,
                     progress=False,
                     workers=1,
-                    checkpoint_every=1,
+                    checkpoint_interval_s=10.0,
+                    clock=now,
                 )
             self.assertEqual(second.errors, [])
             final = converter_manifest.load_manifest(root)

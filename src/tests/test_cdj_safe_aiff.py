@@ -4,6 +4,7 @@ from __future__ import annotations
 import struct
 import sys
 import tempfile
+import threading
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -724,7 +725,10 @@ class Id3AndConvertAiffTests(unittest.TestCase):
             self.assertEqual(stats.copied, 1)
             self.assertEqual(stats.recreated, 0)
             self.assertEqual(cover.call_count, 1)
-            cover.assert_called_with(src, cancel_event=None)
+            cover.assert_called_with(src, cancel_event=mock.ANY)
+            self.assertIsInstance(
+                cover.call_args.kwargs["cancel_event"], threading.Event
+            )
 
     def test_aiff_24_48_dest_does_not_skip_when_effective_is_16_44100(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

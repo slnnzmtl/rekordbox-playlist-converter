@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -197,7 +198,10 @@ def _validate_edit_consistency(
     library_dir: Path,
     manifest: cm.ConverterManifest,
 ) -> None:
-    """Raise CliError on fatal load-time problems. Dangling Keys are allowed."""
+    """Raise CliError on fatal load-time problems.
+
+    Dangling Keys and repeated playlist Keys (same track twice) are allowed.
+    """
     owners = build_dest_owner_index(manifest)
     collection = root.find("COLLECTION")
     if collection is None:
@@ -234,18 +238,12 @@ def _validate_edit_consistency(
             raise CliError(
                 f"playlist {name!r} KeyType must be 0, got {node.get('KeyType')!r}"
             )
-        keys_in_playlist: set[str] = set()
         for entry in node.findall("TRACK"):
             key = entry.get("Key")
             if key is None or key == "":
                 raise CliError(
                     f"playlist {name!r} has blank or missing Key"
                 )
-            if key in keys_in_playlist:
-                raise CliError(
-                    f"playlist {name!r} has duplicate Key {key!r}"
-                )
-            keys_in_playlist.add(key)
 
 
 def load_import_edit_draft(library_dir: Path) -> ImportEditDraft:
@@ -358,17 +356,6 @@ def track_id_reference_counts(root: ET.Element) -> dict[str, int]:
     return counts
 
 
-def _remove_manifest_assignment(
-    manifest: cm.ConverterManifest, *, source_key: str, output_format: str
-) -> None:
-    formats = manifest.tracks.get(source_key)
-    if not formats:
-        return
-    formats.pop(output_format, None)
-    if not formats:
-        manifest.tracks.pop(source_key, None)
-
-
 def _schedule_orphan_collection_removal(
     draft: ImportEditDraft,
     track: ET.Element,
@@ -387,11 +374,7 @@ def _schedule_orphan_collection_removal(
         impact.files_to_trash.append(owner.relative_dest)
     else:
         impact.missing_files_cleaned += 1
-    _remove_manifest_assignment(
-        draft.manifest,
-        source_key=owner.source_key,
-        output_format=owner.output_format,
-    )
+    draft.manifest.remove_assignment(owner.source_key, owner.output_format)
     collection = draft.root.find("COLLECTION")
     if collection is not None and track in list(collection):
         collection.remove(track)
@@ -438,9 +421,14 @@ def preview_save(draft: ImportEditDraft) -> list[EditPreviewRow]:
     rows: list[EditPreviewRow] = []
     for (folder, name), orig_keys in orig_playlists.items():
         label = playlist_label(folder, name)
-        remaining = set(curr_playlists.get((folder, name), []))
+        remaining = Counter(
+            k for k in curr_playlists.get((folder, name), []) if k
+        )
         for key in orig_keys:
-            if not key or key in remaining:
+            if not key:
+                continue
+            if remaining[key] > 0:
+                remaining[key] -= 1
                 continue
             dest = _original_relative_dest(draft, key)
             action = (
@@ -519,11 +507,15 @@ def remove_playlist(
     }
     parent.remove(node)
     refs = track_id_reference_counts(draft.root)
+    seen_orphans: set[str] = set()
     for key in keys:
         if not key:
             continue
         if refs.get(key, 0) > 0:
             continue
+        if key in seen_orphans:
+            continue
+        seen_orphans.add(key)
         track = by_id.get(key)
         if track is None:
             # Dangling Key: no collection/manifest cleanup.
