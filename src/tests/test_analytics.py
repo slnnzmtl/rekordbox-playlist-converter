@@ -51,8 +51,9 @@ class BuildInstallPayloadTests(unittest.TestCase):
 
 class BuildConversionPayloadTests(unittest.TestCase):
     def test_build_conversion_payload_has_exact_v1_fields(self) -> None:
-        """Given stats and PRODUCT Version: When build_conversion_payload runs:
-        Then the dict has only conversion_completed contract fields."""
+        """Given stats, PRODUCT Version, and empty source_paths: When
+        build_conversion_payload runs: Then the dict has conversion_completed
+        fields including zeroed input_file_types."""
         root = ET.Element("DJ_PLAYLISTS")
         ET.SubElement(
             root, "PRODUCT", {"Name": "rekordbox", "Version": "7.0.5", "Company": "X"}
@@ -66,6 +67,7 @@ class BuildConversionPayloadTests(unittest.TestCase):
             bit_depth=24,
             sample_rate=48000,
             stats=stats,
+            source_paths=(),
         )
         self.assertEqual(
             payload,
@@ -84,9 +86,73 @@ class BuildConversionPayloadTests(unittest.TestCase):
                     "skipped": 1,
                     "appended": 15,
                 },
+                "input_file_types": {
+                    "mp3": 0,
+                    "wav": 0,
+                    "aiff": 0,
+                    "flac": 0,
+                    "m4a": 0,
+                    "alac": 0,
+                    "other": 0,
+                },
                 "install_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             },
         )
+
+    def test_build_conversion_payload_buckets_source_extensions(self) -> None:
+        """Given mixed source paths including aliases: When build_conversion_payload
+        runs: Then input_file_types counts known buckets and other."""
+        stats = ConvertStats(converted=1)
+        payload = build_conversion_payload(
+            surface="gui",
+            install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            source_root=None,
+            output_format="wav",
+            bit_depth=24,
+            sample_rate=48000,
+            stats=stats,
+            source_paths=[
+                Path("/x/a.flac"),
+                Path("/x/b.WAV"),
+                Path("/x/c.wave"),
+                Path("/x/d.aif"),
+                Path("/x/e.aiff"),
+                Path("/x/f.mp3"),
+                Path("/x/g.m4a"),
+                Path("/x/h.alac"),
+                Path("/x/i.ogg"),
+                "/x/j.caf",
+            ],
+        )
+        self.assertEqual(
+            payload["input_file_types"],
+            {
+                "mp3": 1,
+                "wav": 2,
+                "aiff": 2,
+                "flac": 1,
+                "m4a": 1,
+                "alac": 1,
+                "other": 2,
+            },
+        )
+
+    def test_build_conversion_payload_clamps_input_file_type_counts(self) -> None:
+        """Given more than 10000 sources of one type: When build runs: Then
+        that bucket is clamped to 10000."""
+        stats = ConvertStats(converted=1)
+        paths = [Path(f"/x/{i}.flac") for i in range(10001)]
+        payload = build_conversion_payload(
+            surface="cli",
+            install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            source_root=None,
+            output_format="wav",
+            bit_depth=24,
+            sample_rate=48000,
+            stats=stats,
+            source_paths=paths,
+        )
+        self.assertEqual(payload["input_file_types"]["flac"], 10000)
 
 
 class PostEventTests(unittest.TestCase):
@@ -229,6 +295,7 @@ class EnqueueCacheTests(unittest.TestCase):
                 bit_depth=24,
                 sample_rate=48000,
                 stats=ConvertStats(converted=1),
+                source_paths=(),
             )
             queue_path = config.parent / "analytics_queue.json"
             queue_path.write_text(
@@ -271,6 +338,7 @@ class EnqueueCacheTests(unittest.TestCase):
                 bit_depth=24,
                 sample_rate=48000,
                 stats=ConvertStats(converted=1),
+                source_paths=(),
             )
             queue_path = config.parent / "analytics_queue.json"
             queue_path.write_text(
@@ -328,6 +396,7 @@ class EnqueueCacheTests(unittest.TestCase):
                 bit_depth=16,
                 sample_rate=44100,
                 stats=ConvertStats(converted=2),
+                source_paths=(),
             )
             queue_path = config.parent / "analytics_queue.json"
             queue_path.write_text(
@@ -405,6 +474,7 @@ class EnqueueCacheTests(unittest.TestCase):
                 bit_depth=24,
                 sample_rate=48000,
                 stats=ConvertStats(converted=1),
+                source_paths=(),
             )
             queue_path = config.parent / "analytics_queue.json"
             queue_path.write_text(
@@ -502,6 +572,7 @@ class EnableAnalyticsTests(unittest.TestCase):
                     bit_depth=24,
                     sample_rate=48000,
                     stats=ConvertStats(converted=1),
+                    source_paths=(),
                 )
             enqueue.assert_not_called()
 
@@ -534,11 +605,24 @@ class EnableAnalyticsTests(unittest.TestCase):
                     bit_depth=16,
                     sample_rate=44100,
                     stats=ConvertStats(converted=2, copied=1, skipped=0, appended=3),
+                    source_paths=[Path("/x/a.flac"), Path("/x/b.mp3")],
                 )
             self.assertEqual(len(posted), 1)
             self.assertEqual(posted[0]["event"], "conversion_completed")
             self.assertEqual(posted[0]["install_id"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
             self.assertEqual(posted[0]["surface"], "cli")
+            self.assertEqual(
+                posted[0]["input_file_types"],
+                {
+                    "mp3": 1,
+                    "wav": 0,
+                    "aiff": 0,
+                    "flac": 1,
+                    "m4a": 0,
+                    "alac": 0,
+                    "other": 0,
+                },
+            )
 
 
 if __name__ == "__main__":

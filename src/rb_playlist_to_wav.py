@@ -378,6 +378,7 @@ def run_convert_batch(
             bit_depth=max_bit_depth,
             sample_rate=max_sample_rate,
             stats=stats,
+            source_paths=[t.source_path for t in prepared.items],
         )
     return code
 

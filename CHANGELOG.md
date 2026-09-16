@@ -4,7 +4,8 @@
 
 - Opt-in anonymous usage analytics (default off): Help checkbutton or
   `--analytics on|off`; one `install` event on first opt-in and
-  `conversion_completed` after successful writes; failed POSTs are queued in
+  `conversion_completed` after successful writes (includes aggregate
+  `input_file_types` source-extension counts); failed POSTs are queued in
   `analytics_queue.json` beside preferences and retried until success (held
   while opted out; HTTP 4xx drops that event so the queue can advance); privacy
   docs in README, USAGE, SECURITY.

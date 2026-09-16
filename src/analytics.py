@@ -35,6 +35,9 @@ POST_OK = "ok"
 POST_RETRY = "retry"
 POST_REJECT = "reject"
 
+_INPUT_FILE_TYPE_KEYS = ("mp3", "wav", "aiff", "flac", "m4a", "alac", "other")
+_INPUT_EXT_ALIASES = {"aif": "aiff", "wave": "wav"}
+
 
 def _clamp_outcome(value: int) -> int:
     if value < 0:
@@ -51,6 +54,18 @@ def _rekordbox_version(source_root: ET.Element | None) -> str:
     if product is None:
         return ""
     return product.get("Version") or ""
+
+
+def _count_input_file_types(source_paths) -> dict[str, int]:
+    counts = {key: 0 for key in _INPUT_FILE_TYPE_KEYS}
+    for raw in source_paths:
+        ext = Path(raw).suffix.lower().lstrip(".")
+        ext = _INPUT_EXT_ALIASES.get(ext, ext)
+        if ext in counts and ext != "other":
+            counts[ext] += 1
+        else:
+            counts["other"] += 1
+    return {key: _clamp_outcome(counts[key]) for key in _INPUT_FILE_TYPE_KEYS}
 
 
 def _base_payload(*, surface: str, install_id: str, event: str) -> dict[str, Any]:
@@ -76,6 +91,7 @@ def build_conversion_payload(
     bit_depth: int | str,
     sample_rate: int | str,
     stats: ConvertStats,
+    source_paths,
 ) -> dict[str, Any]:
     payload = _base_payload(
         surface=surface, install_id=install_id, event="conversion_completed"
@@ -90,6 +106,7 @@ def build_conversion_payload(
         "skipped": _clamp_outcome(stats.skipped),
         "appended": _clamp_outcome(stats.appended),
     }
+    payload["input_file_types"] = _count_input_file_types(source_paths)
     return payload
 
 
@@ -297,6 +314,7 @@ def report_conversion(
     bit_depth: int | str,
     sample_rate: int | str,
     stats: ConvertStats,
+    source_paths,
     config_path=None,
 ) -> None:
     path = config_path or default_config_path()
@@ -315,6 +333,7 @@ def report_conversion(
             bit_depth=bit_depth,
             sample_rate=sample_rate,
             stats=stats,
+            source_paths=source_paths,
         ),
         config_path=path,
     )

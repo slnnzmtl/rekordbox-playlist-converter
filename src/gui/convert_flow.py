@@ -392,8 +392,9 @@ class ConvertFlowMixin:
                 missing=sum(len(plan.warnings) for plan in plans),
             )
             source_root = getattr(plans[0], "source_root", None) if plans else None
+            source_paths = [t.source_path for t in items]
             self._ui(
-                lambda s=summaries, o=out, folder=output.parent, t=title, p=playlist_pairs, st=batch_stats, root=source_root: self._finish_report(
+                lambda s=summaries, o=out, folder=output.parent, t=title, p=playlist_pairs, st=batch_stats, root=source_root, paths=source_paths: self._finish_report(
                     s,
                     o,
                     folder,
@@ -401,6 +402,7 @@ class ConvertFlowMixin:
                     playlists=p,
                     analytics_stats=st,
                     analytics_source_root=root,
+                    source_paths=paths,
                 )
             )
         except runtime.CliError as exc:
@@ -493,6 +495,7 @@ class ConvertFlowMixin:
         playlists: list[tuple[str, object]] | None = None,
         analytics_stats: ConvertStats | None = None,
         analytics_source_root=None,
+        source_paths=None,
     ) -> None:
         self._prepared_conversion = None
         self._confirm_prepared = None
@@ -505,6 +508,7 @@ class ConvertFlowMixin:
                 bit_depth=coerce_bit_depth(self.bit_depth_var.get()),
                 sample_rate=coerce_sample_rate(self.sample_rate_var.get()),
                 stats=analytics_stats,
+                source_paths=source_paths if source_paths is not None else (),
             )
         snap_progress = 0 if title in {"No conversions", "Failed"} else 100
         self._animate_progress_to(snap_progress, snap=True)

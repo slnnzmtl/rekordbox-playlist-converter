@@ -130,7 +130,7 @@ Analytics is **off until you opt in** (GUI: Help → **Share anonymous usage ana
 When enabled, the client may `POST` to `https://analytics.slnnzmtl.xyz/v1/events`:
 
 - One **`install`** event the first time you opt in (app version, GUI/CLI surface, random install UUID).
-- A **`conversion_completed`** event after a successful write (not dry-run, preview, cancel, or failure): app version, Rekordbox `PRODUCT@Version`, surface, selected format/quality ceiling, and aggregate converted/copied/skipped/appended counts, plus the same install UUID.
+- A **`conversion_completed`** event after a successful write (not dry-run, preview, cancel, or failure): app version, Rekordbox `PRODUCT@Version`, surface, selected format/quality ceiling, aggregate converted/copied/skipped/appended counts, aggregate `input_file_types` source-extension counts (no paths), plus the same install UUID.
 
 It does **not** send track titles, artists, paths, playlist names, XML, accounts, devices, or session ids. Posts use a short timeout and never change conversion results. Failed sends are stored in `analytics_queue.json` next to preferences and retried while analytics stays on (the queue is kept, not sent, while opted out). Permanent HTTP 4xx responses drop that event so later queued events can still send. The ingest URL is public (no secret in the app). See also [SECURITY.md](SECURITY.md).
 
