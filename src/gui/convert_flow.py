@@ -169,24 +169,6 @@ class ConvertFlowMixin:
                 label = f"{name} ({index + 1}/{total})"
                 self._ui(lambda l=label: self.status_var.set(f"Preparing {l}…"))
 
-            cached_manifest = None
-            cached_fingerprint = None
-            if (
-                self._cached_library_gen == self._wav_dir_validate_gen
-                and self._cached_library_path == handoff.wav_dir
-            ):
-                cached_manifest = self._cached_library_manifest
-                cached_fingerprint = self._cached_library_fingerprint
-            opened = runtime.converter_manifest.manifest_for_prepare(
-                handoff.wav_dir,
-                cached_manifest=cached_manifest,
-                cached_fingerprint=cached_fingerprint,
-            )
-            if opened.error is not None:
-                self._ui(lambda e=opened.error: self._finish_error(e))
-                return
-            manifest = opened.manifest
-
             prepared, errors = runtime.prepare_batch(
                 handoff.xml_path,
                 list(handoff.selected),
@@ -201,8 +183,6 @@ class ConvertFlowMixin:
                 cancel_event=self._cancel_event,
                 source_root=source_root,
                 on_playlist_preparing=on_playlist_preparing,
-                manifest=manifest,
-                fingerprint=opened.fingerprint,
             )
             if errors:
                 self._ui(lambda e=errors: self._finish_error(e))

@@ -148,7 +148,6 @@ def build_plan(
     cancel_event: threading.Event | None = None,
     manifest: converter_manifest.ConverterManifest | None = None,
     workers: int | None = None,
-    reservation: converter_manifest.ReservationContext | None = None,
 ) -> tuple[Plan | None, list[str]]:
     output_format = coerce_output_format(output_format)
     max_bit_depth = coerce_bit_depth(max_bit_depth)
@@ -186,7 +185,6 @@ def build_plan(
             preferred=preferred,
             wav_dir=wav_dir_abs,
             source_path=source_path,
-            reservation=reservation,
         )
         dest_path = wav_dir_abs.joinpath(*PurePosixPath(rel).parts)
         dest_name = dest_path.name

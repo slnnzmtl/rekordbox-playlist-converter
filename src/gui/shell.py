@@ -598,28 +598,17 @@ class ShellMixin:
         self._update_convert_enabled()
 
         def worker() -> None:
-            opened = runtime.converter_manifest.open_library(wav_dir)
+            error = runtime.converter_manifest.validate_library_folder(wav_dir)
 
             def on_ui() -> None:
                 if gen != self._wav_dir_validate_gen:
                     return
-                current_wav, _ = self._resolved_output_paths()
-                if current_wav != wav_dir:
-                    return
                 self._wav_dir_checking = False
-                if opened.error:
+                if error:
                     self._wav_dir_valid = False
-                    self._cached_library_manifest = None
-                    self._cached_library_fingerprint = None
-                    self._cached_library_path = None
-                    self._cached_library_gen = None
-                    self._set_wav_dir_error(opened.error)
+                    self._set_wav_dir_error(error)
                 else:
                     self._wav_dir_valid = True
-                    self._cached_library_manifest = opened.manifest
-                    self._cached_library_fingerprint = opened.fingerprint
-                    self._cached_library_path = wav_dir
-                    self._cached_library_gen = gen
                     self._set_wav_dir_error("")
                 self._update_convert_enabled()
 

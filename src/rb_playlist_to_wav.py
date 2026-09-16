@@ -268,9 +268,9 @@ def run_convert_batch(
     """Prepare all playlists, convert unique (source_key, format) once, apply XML."""
     if not playlist_refs:
         return 1
-    opened = converter_manifest.open_library(wav_dir)
-    if opened.error is not None:
-        print(opened.error, file=sys.stderr)
+    library_error = converter_manifest.validate_library_folder(wav_dir)
+    if library_error is not None:
+        print(library_error, file=sys.stderr)
         return 1
     if source_root is None:
         try:
@@ -289,8 +289,6 @@ def run_convert_batch(
         max_sample_rate=max_sample_rate,
         force=force,
         source_root=source_root,
-        manifest=opened.manifest,
-        fingerprint=opened.fingerprint,
     )
     if errors:
         print_errors(errors)

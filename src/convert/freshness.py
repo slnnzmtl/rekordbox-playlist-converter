@@ -136,4 +136,4 @@ def bind_complete_assignment(
         recipe=recipe_from_item(item),
     )
     fmt = coerce_output_format(item.output_format)
-    manifest.put_assignment(source_key(item.source_path), fmt, record)
+    manifest.tracks.setdefault(source_key(item.source_path), {})[fmt] = record

@@ -638,65 +638,6 @@ class XmlFixtureTests(XmlFixtureBase):
         execute.assert_not_called()
         self.assertFalse(self.output.exists())
 
-    def test_run_convert_batch_maps_manifest_persist_error_to_exit_1(self) -> None:
-        """Given execute_prepared raises ManifestPersistError: When
-        run_convert_batch runs: Then exit is 1, stderr is useful, and the
-        exception does not propagate."""
-        from convert.models import ConversionPreview, Plan, PreparedConversion
-        import convert.write as convert_write
-        from convert.write import ManifestPersistError
-
-        def fake_prepare(*_a, **_k):
-            plan = Plan(
-                playlist_name="P",
-                wav_playlist_name="P [WAV]",
-                library_dir=self.wav_dir,
-                media_dir=self.wav_dir / "WAV",
-                output=self.output,
-                tracks=[],
-                unique=[],
-                source_root=ET.Element("DJ_PLAYLISTS"),
-                output_root=ET.Element("DJ_PLAYLISTS"),
-                output_existed=False,
-            )
-            preview = ConversionPreview(
-                selected=0,
-                resolved=0,
-                unique_outputs=0,
-                duplicates=0,
-                missing=0,
-                items=[],
-            )
-            prepared = PreparedConversion(
-                plans=[plan],
-                items=[],
-                manifest=converter_manifest.empty_manifest(),
-                preview=preview,
-                library_dir=self.wav_dir,
-                output=self.output,
-                skipped=[],
-            )
-            return prepared, []
-
-        err_buf = io.StringIO()
-        with patch.object(rb, "prepare_batch", side_effect=fake_prepare), patch(
-            "sys.stderr", err_buf
-        ), patch.object(
-            convert_write,
-            "execute_prepared",
-            side_effect=ManifestPersistError("disk full writing manifest"),
-        ):
-            rc = rb.run_convert_batch(
-                self.xml_path,
-                [(None, "Untitled Intelligent List")],
-                self.wav_dir,
-                self.output,
-                force=False,
-                dry_run=False,
-            )
-        self.assertEqual(rc, 1)
-        self.assertIn("disk full writing manifest", err_buf.getvalue())
-
     def test_main_omitted_output_writes_import_xml_under_wav_dir(self) -> None:
         """Given no --output: When main converts: Then import XML is
         <wav_dir>/rekordbox-import.xml."""

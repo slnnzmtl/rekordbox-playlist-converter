@@ -9,13 +9,6 @@
 - Conversion preview omits Destination and Write columns (Action + Reason
   remain; Format directory still shown in CLI dry-run).
 - Save Import XML confirmation lists Unknown (no-playlist) tracks moved to Trash.
-- Manifest V2 planning and checkpoints scale better for large output libraries:
-  live dest-owner indexing, one disk inventory scan per batch, time-based
-  ordered checkpoint persistence, and single-load library open with content
-  fingerprints. Execute re-checks the fingerprint and dest inventory before
-  the prebatch save; persist failures surface as `CliError`; periodic
-  checkpoints are requested atomically; Import XML edit treats repeated Keys
-  as a multiset. Public JSON schema and durability rules are unchanged.
 
 ## 2.0.0
 

@@ -112,10 +112,6 @@ class ConverterApp(ImportEditMixin, ConvertFlowMixin, PlaylistsMixin, ShellMixin
         self._wav_dir_validate_gen = 0
         self._wav_dir_valid = False
         self._wav_dir_checking = False
-        self._cached_library_manifest = None
-        self._cached_library_fingerprint = None
-        self._cached_library_path: Path | None = None
-        self._cached_library_gen: int | None = None
         self.wav_dir_error_var = tk.StringVar(value="")
 
         self._build()
