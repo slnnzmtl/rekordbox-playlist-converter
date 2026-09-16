@@ -111,13 +111,11 @@ class ManifestPerfCallCountTests(unittest.TestCase):
         )
         tracks = {"/s": {"wav": {"dest": "WAV/A.wav", "state": "complete"}}}
         for _ in range(50):
-            if persister.should_schedule_periodic():
-                persister.request_periodic(tracks)
+            persister.request_periodic_if_due(tracks)
         persister.join()
         self.assertEqual(saves["n"], 0)
         clock["t"] = 10.0
-        self.assertTrue(persister.should_schedule_periodic())
-        persister.request_periodic(tracks)
+        self.assertTrue(persister.request_periodic_if_due(tracks))
         persister.join()
         self.assertEqual(saves["n"], 1)
 

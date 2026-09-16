@@ -151,6 +151,43 @@ class ManifestPersisterUnitTests(unittest.TestCase):
             mtime_after_newer,
         )
 
+    def test_request_periodic_if_due_schedules_only_once_at_due_boundary(self) -> None:
+        """Given several workers at the due boundary: When they all call
+        request_periodic_if_due: Then only one periodic save runs."""
+        saves = {"n": 0}
+
+        def save_tracks(tracks, wav_dir):
+            saves["n"] += 1
+
+        clock = _FakeClock(0.0)
+        persister = write_mod.ManifestPersister(
+            self.library_dir,
+            checkpoint_interval_s=10.0,
+            clock=clock,
+            save_tracks=save_tracks,
+        )
+        tracks = _marker_tracks("once")
+        clock.advance(10.0)
+        barrier = threading.Barrier(8)
+        errors: list[BaseException] = []
+
+        def worker() -> None:
+            try:
+                barrier.wait(timeout=5)
+                persister.request_periodic_if_due(tracks)
+            except BaseException as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=worker) for _ in range(8)]
+        for thread in workers:
+            thread.start()
+        for thread in workers:
+            thread.join(timeout=5)
+        persister.join()
+        persister.close()
+        self.assertEqual(errors, [])
+        self.assertEqual(saves["n"], 1)
+
     def test_urgent_save_waits_for_earlier_periodic_and_remains_newest(self) -> None:
         """Given a slow in-flight periodic: When urgent save runs: Then it
         waits, then disk ends with the urgent snapshot."""

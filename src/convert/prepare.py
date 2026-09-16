@@ -139,6 +139,7 @@ def prepare_batch(
     cancel_event: threading.Event | None = None,
     source_root: ET.Element | None = None,
     manifest: converter_manifest.ConverterManifest | None = None,
+    fingerprint: converter_manifest.ManifestFingerprint | None = None,
     on_playlist_preparing: Callable[[str, int, int], None] | None = None,
     workers: int | None = None,
 ) -> tuple[PreparedConversion | None, list[str]]:
@@ -147,10 +148,25 @@ def prepare_batch(
         raise CancelledError("conversion cancelled")
 
     if manifest is None:
-        try:
-            manifest = converter_manifest.load_manifest(wav_dir)
-        except CliError as exc:
-            return None, [str(exc)]
+        man_path = converter_manifest.manifest_path(wav_dir)
+        if man_path.is_file():
+            try:
+                manifest, fingerprint = converter_manifest.load_manifest_with_fingerprint(
+                    wav_dir
+                )
+            except CliError as exc:
+                return None, [str(exc)]
+        else:
+            try:
+                manifest = converter_manifest.load_manifest(wav_dir)
+            except CliError as exc:
+                return None, [str(exc)]
+            if fingerprint is None:
+                fingerprint = converter_manifest.ManifestFingerprint.capture(man_path)
+    elif fingerprint is None:
+        fingerprint = converter_manifest.ManifestFingerprint.capture(
+            converter_manifest.manifest_path(wav_dir)
+        )
 
     reservation = converter_manifest.ReservationContext.scanned(wav_dir)
 
@@ -222,6 +238,7 @@ def prepare_batch(
             skipped=skipped,
             decisions=dict(preview.decisions),
             reservation=reservation,
+            fingerprint=fingerprint,
         ),
         [],
     )

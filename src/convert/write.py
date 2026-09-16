@@ -41,7 +41,7 @@ from convert.models import (
     apply_item_result_aggregates,
 )
 from convert.progress import Progress
-from convert.paths import source_key
+from convert.paths import collision_key, same_file, source_key
 from convert.quality import coerce_output_format
 from convert.rerun import (
     Decision,
@@ -61,7 +61,7 @@ _MUTATING_ACTIONS = frozenset(
 )
 
 
-class ManifestPersistError(Exception):
+class ManifestPersistError(CliError):
     """Durable manifest write failed; abort before Import XML."""
 
 
@@ -211,10 +211,25 @@ class ManifestPersister:
         if not self.periodic_enabled():
             return False
         with self._meta_lock:
-            if self._inflight is not None and not self._inflight.done():
-                return False
+            return self._due_locked()
+
+    def _due_locked(self) -> bool:
+        if self._closed or not self.periodic_enabled():
+            return False
+        if self._inflight is not None and not self._inflight.done():
+            return False
         assert self._interval is not None
         return self._clock() - self._last_periodic_at >= self._interval
+
+    def request_periodic_if_due(self, tracks: dict) -> bool:
+        """Atomically recheck interval/inflight and submit at most one periodic."""
+        with self._meta_lock:
+            if not self._due_locked():
+                return False
+            seq = self._next_seq
+            self._next_seq += 1
+            self._inflight = self._executor.submit(self._run_periodic, seq, tracks)
+            return True
 
     def request_periodic(self, tracks: dict) -> None:
         with self._meta_lock:
@@ -244,10 +259,11 @@ class ManifestPersister:
         t0 = self._clock()
         self._save_tracks(tracks, self._library_dir)
         duration = self._clock() - t0
-        self._durable_seq = seq
-        if self._interval is not None:
-            self._interval = max(10.0, 10.0 * duration)
-        self._last_periodic_at = self._clock()
+        with self._meta_lock:
+            self._durable_seq = seq
+            if self._interval is not None:
+                self._interval = max(10.0, 10.0 * duration)
+            self._last_periodic_at = self._clock()
 
     def _save_sync(self, tracks: dict) -> None:
         with self._meta_lock:
@@ -328,7 +344,7 @@ class ManifestCheckpoint:
         if self.plan.manifest is None:
             return
         snapshot = _overlay_tracks(self.plan.manifest, pending_copy)
-        self.persister.request_periodic(snapshot)
+        self.persister.request_periodic_if_due(snapshot)
 
     def take_urgent_snapshot_keys(self, item: PlannedTrack) -> set[tuple[str, str]] | None:
         """Discard pending for item; return pending keys for overlay (no I/O)."""
@@ -828,6 +844,21 @@ def convert_unique(
     return stats
 
 
+def _inventory_conflict_for_prepared(prepared: PreparedConversion) -> Path | None:
+    """Return a planned dest that collides with a different inventory path."""
+    reservation = prepared.reservation
+    if reservation is None:
+        return None
+    for item in prepared.items:
+        dest = item.dest_path
+        key = collision_key(dest.name)
+        for path in reservation.inventory.get(key, ()):
+            if same_file(path, dest):
+                continue
+            return dest
+    return None
+
+
 def execute_prepared(
     prepared: PreparedConversion,
     *,
@@ -844,8 +875,21 @@ def execute_prepared(
     Encode cancel waits in-flight; successes still receive apply_xml + write.
     Hosts map cancel vs errors vs ok from the returned stats and cancel_event.
     """
+    if (
+        prepared.fingerprint is not None
+        and not prepared.fingerprint.matches_disk()
+    ):
+        raise CliError(
+            "Output library manifest changed since preview. Re-prepare conversion."
+        )
     if prepared.reservation is not None:
         prepared.reservation.refresh_inventory()
+        conflict = _inventory_conflict_for_prepared(prepared)
+        if conflict is not None:
+            raise CliError(
+                "Output destination conflict since preview "
+                f"({conflict.name}). Re-prepare conversion."
+            )
     decisions = _decisions_for_prepared(prepared, force)
     prepared.decisions = dict(decisions)
     pending = _mutating_assignment_keys(prepared, force, decisions)

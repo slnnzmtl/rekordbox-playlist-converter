@@ -290,6 +290,7 @@ def run_convert_batch(
         force=force,
         source_root=source_root,
         manifest=opened.manifest,
+        fingerprint=opened.fingerprint,
     )
     if errors:
         print_errors(errors)

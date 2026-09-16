@@ -32,7 +32,7 @@ from convert.freshness import (
     source_signature,
 )
 from convert.models import ConversionPreview, Plan, PlannedTrack, PreparedConversion
-from convert.paths import source_key
+from convert.paths import collision_key, source_key
 from convert.prepare import prepare_batch
 from convert.rerun import classify_item
 from convert.write import ManifestPersistError, convert_unique, execute_prepared
@@ -88,6 +88,177 @@ class ExecutePreparedTests(XmlFixtureBase):
         names = [name for _folder, name, _node in iter_playlists(out)]
         self.assertEqual(names, ["Untitled Intelligent List [WAV]"])
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 3)
+
+    def test_execute_prepared_aborts_when_manifest_replaced_after_prepare(
+        self,
+    ) -> None:
+        """Given a prepared batch: When the manifest file is replaced before
+        execute: Then convert aborts, newer assignments stay on disk, and
+        Import XML is not written."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            other = converter_manifest.empty_manifest()
+            other.set_dest("/other/source.flac", "wav", "WAV/Other - Track.wav")
+            converter_manifest.save_manifest(other, self.wav_dir)
+            with self.assertRaises(CliError) as ctx:
+                execute_prepared(prepared, force=False, progress=False)
+        self.assertRegex(str(ctx.exception).casefold(), r"re-prepare|changed")
+        self.assertEqual(encoded, [])
+        self.assertFalse(self.output.exists())
+        on_disk = converter_manifest.load_manifest(self.wav_dir)
+        self.assertEqual(
+            on_disk.get_dest("/other/source.flac", "wav"),
+            "WAV/Other - Track.wav",
+        )
+
+    def test_execute_prepared_aborts_on_alternate_case_sibling_after_prepare(
+        self,
+    ) -> None:
+        """Given a reserved dest: When an alternate-case sibling appears before
+        execute: Then there is no encode, a conflict, and no Import XML."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            dest = next(
+                item.dest_path
+                for item in prepared.items
+                if "Bestial" in item.dest_path.name
+            )
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            sibling = dest.with_name("absl - bestial.wav")
+            sibling.write_bytes(b"UNRELATED")
+            if sibling.exists() and dest.exists() and sibling.samefile(dest):
+                self.skipTest("filesystem is case-insensitive")
+            with self.assertRaises(CliError) as ctx:
+                execute_prepared(prepared, force=False, progress=False)
+        self.assertRegex(str(ctx.exception).casefold(), r"conflict|collision")
+        self.assertEqual(encoded, [])
+        self.assertFalse(self.output.exists())
+        self.assertFalse(dest.exists())
+        self.assertEqual(sibling.read_bytes(), b"UNRELATED")
+
+    def test_execute_prepared_aborts_when_refreshed_inventory_has_collision_sibling(
+        self,
+    ) -> None:
+        """Given a reserved dest: When refresh sees another file with the same
+        collision_key that is not the dest: Then execute aborts before encode."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            assert prepared.reservation is not None
+            dest = prepared.items[0].dest_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            extra = dest.parent / "injected-collision.wav"
+            extra.write_bytes(b"UNRELATED")
+            key = collision_key(dest.name)
+            orig_refresh = prepared.reservation.refresh_inventory
+
+            def refresh_then_inject() -> None:
+                orig_refresh()
+                prepared.reservation.inventory[key] = prepared.reservation.inventory.get(
+                    key, ()
+                ) + (extra,)
+
+            prepared.reservation.refresh_inventory = refresh_then_inject
+            with self.assertRaises(CliError) as ctx:
+                execute_prepared(prepared, force=False, progress=False)
+        self.assertRegex(str(ctx.exception).casefold(), r"conflict|collision")
+        self.assertEqual(encoded, [])
+        self.assertFalse(self.output.exists())
+        self.assertFalse(dest.exists())
+        self.assertEqual(extra.read_bytes(), b"UNRELATED")
+
+    def test_execute_prepared_same_file_inventory_match_is_not_batch_conflict(
+        self,
+    ) -> None:
+        """Given the planned dest already on disk: When inventory refresh sees
+        only that file: Then execute does not abort as a dest collision."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            dest = prepared.items[0].dest_path
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"EXISTING")
+            stats = execute_prepared(prepared, force=False, progress=False)
+        self.assertIsNotNone(stats)
+        self.assertTrue(self.output.exists())
 
     def test_late_dest_change_after_pending_stays_complete_conflict(self) -> None:
         """Given a frozen transcode with pending incomplete: When dest changes

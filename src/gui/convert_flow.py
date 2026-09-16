@@ -202,6 +202,7 @@ class ConvertFlowMixin:
                 source_root=source_root,
                 on_playlist_preparing=on_playlist_preparing,
                 manifest=manifest,
+                fingerprint=opened.fingerprint,
             )
             if errors:
                 self._ui(lambda e=errors: self._finish_error(e))

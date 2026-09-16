@@ -130,17 +130,6 @@ class ConverterManifest:
         if not formats:
             self.tracks.pop(source_key, None)
 
-    def dest_collision_keys(
-        self, *, exclude: tuple[str, str] | None = None
-    ) -> set[str]:
-        """collision_key of every assigned dest, optionally excluding one owner."""
-        keys: set[str] = set()
-        for ck, owner in self._dest_owners.items():
-            if exclude is not None and owner == exclude:
-                continue
-            keys.add(ck)
-        return keys
-
     def to_dict(self) -> dict[str, Any]:
         return _manifest_document(self.tracks)
 
@@ -432,24 +421,90 @@ def validate_manifest_data(data: object, wav_dir: Path) -> list[str]:
     return errors
 
 
+_UNSTABLE_READ_RETRIES = 3
+
+
+def _stat_tuple(st: os.stat_result) -> tuple[int, int, int, int]:
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def _read_stable_file_bytes(path: Path) -> tuple[bytes, os.stat_result]:
+    """Read path once; retry if fd stats change during the read."""
+    last_error: Exception | None = None
+    for _ in range(_UNSTABLE_READ_RETRIES):
+        try:
+            with path.open("rb") as fh:
+                fd = fh.fileno()
+                before = os.fstat(fd)
+                raw = fh.read()
+                after = os.fstat(fd)
+            if _stat_tuple(before) != _stat_tuple(after) or after.st_size != len(raw):
+                last_error = ManifestError(
+                    f"converter manifest changed while reading: {path}"
+                )
+                continue
+            return raw, after
+        except OSError as exc:
+            last_error = exc
+            continue
+    if isinstance(last_error, ManifestError):
+        raise last_error
+    if last_error is not None:
+        raise ManifestError(
+            f"cannot read converter manifest: {path}: {last_error}"
+        ) from last_error
+    raise ManifestError(f"cannot read converter manifest: {path}")
+
+
+def _fingerprint_from_bytes(
+    path: Path, raw: bytes, st: os.stat_result
+) -> ManifestFingerprint:
+    return ManifestFingerprint(
+        path=Path(path),
+        exists=True,
+        size=len(raw),
+        mtime_ns=st.st_mtime_ns,
+        sha256=hashlib.sha256(raw).hexdigest(),
+    )
+
+
+def _manifest_from_bytes(raw: bytes, path: Path, wav_dir: Path) -> ConverterManifest:
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ManifestError(
+            f"invalid converter manifest JSON: {path}: {exc}"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise ManifestError(f"cannot read converter manifest: {path}: {exc}") from exc
+    errors = validate_manifest_data(data, abs_path(wav_dir))
+    if errors:
+        raise ManifestError(errors[0])
+    return ConverterManifest(tracks=data["tracks"])
+
+
+def load_manifest_with_fingerprint(
+    wav_dir: Path,
+) -> tuple[ConverterManifest, ManifestFingerprint]:
+    """Load, validate, and fingerprint from one stable read of the manifest file."""
+    path = manifest_path(wav_dir)
+    raw, st = _read_stable_file_bytes(path)
+    manifest = _manifest_from_bytes(raw, path, wav_dir)
+    return manifest, _fingerprint_from_bytes(path, raw, st)
+
+
 def load_manifest(wav_dir: Path) -> ConverterManifest:
     """Load and validate manifest from wav_dir, or return empty if missing."""
     path = manifest_path(wav_dir)
     if not path.is_file():
         return empty_manifest()
     try:
-        raw = path.read_text(encoding="utf-8")
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ManifestError(
-            f"invalid converter manifest JSON: {path}: {exc}"
-        ) from exc
-    except (OSError, UnicodeDecodeError) as exc:
+        manifest, _fp = load_manifest_with_fingerprint(wav_dir)
+    except ManifestError:
+        raise
+    except OSError as exc:
         raise ManifestError(f"cannot read converter manifest: {path}: {exc}") from exc
-    errors = validate_manifest_data(data, abs_path(wav_dir))
-    if errors:
-        raise ManifestError(errors[0])
-    return ConverterManifest(tracks=data["tracks"])
+    return manifest
 
 
 @dataclass(frozen=True)
@@ -466,19 +521,14 @@ class ManifestFingerprint:
     def capture(cls, path: Path) -> ManifestFingerprint:
         path = Path(path)
         try:
-            st = path.stat()
+            if not path.is_file():
+                return cls(path=path, exists=False, size=0, mtime_ns=0, sha256="")
+            raw, st = _read_stable_file_bytes(path)
+        except ManifestError:
+            return cls(path=path, exists=True, size=-1, mtime_ns=-1, sha256="")
         except OSError:
             return cls(path=path, exists=False, size=0, mtime_ns=0, sha256="")
-        if not path.is_file():
-            return cls(path=path, exists=False, size=0, mtime_ns=0, sha256="")
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
-        return cls(
-            path=path,
-            exists=True,
-            size=st.st_size,
-            mtime_ns=st.st_mtime_ns,
-            sha256=digest,
-        )
+        return _fingerprint_from_bytes(path, raw, st)
 
     def matches_disk(self) -> bool:
         current = ManifestFingerprint.capture(self.path)
@@ -503,43 +553,42 @@ def open_library(wav_dir: Path) -> OpenLibraryResult:
     """Validate wav_dir and load the manifest once when present and valid."""
     expanded = wav_dir.expanduser()
     man_path = abs_path(expanded) / MANIFEST_NAME
-    fingerprint = ManifestFingerprint.capture(man_path)
 
     if expanded.exists() and not expanded.is_dir():
         return OpenLibraryResult(
             error="Output folder path exists and is not a directory.",
             manifest=None,
-            fingerprint=fingerprint,
+            fingerprint=ManifestFingerprint.capture(man_path),
         )
     if expanded.is_dir():
         if not _path_is_writable_dir(expanded):
             return OpenLibraryResult(
                 error="Output folder is not writable.",
                 manifest=None,
-                fingerprint=fingerprint,
+                fingerprint=ManifestFingerprint.capture(man_path),
             )
     else:
         if not _parent_writable_for_create(expanded):
             return OpenLibraryResult(
                 error="Output folder is not accessible or not writable.",
                 manifest=None,
-                fingerprint=fingerprint,
+                fingerprint=ManifestFingerprint.capture(man_path),
             )
 
     if expanded.is_dir() and (expanded / MANIFEST_NAME).is_file():
         try:
-            manifest = load_manifest(expanded)
+            manifest, fingerprint = load_manifest_with_fingerprint(expanded)
         except ManifestError as exc:
             return OpenLibraryResult(
                 error=f"Converter manifest is invalid: {exc}",
                 manifest=None,
-                fingerprint=fingerprint,
+                fingerprint=ManifestFingerprint.capture(man_path),
             )
-        fingerprint = ManifestFingerprint.capture(expanded / MANIFEST_NAME)
         return OpenLibraryResult(
             error=None, manifest=manifest, fingerprint=fingerprint
         )
 
+    fingerprint = ManifestFingerprint.capture(man_path)
     if expanded.is_dir() and _has_legacy_library_content(expanded):
         return OpenLibraryResult(
             error=(

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from convert.rerun import Decision
-    from converter_manifest import ConverterManifest, ReservationContext
+    from converter_manifest import ConverterManifest, ManifestFingerprint, ReservationContext
 
 
 @dataclass
@@ -492,3 +492,4 @@ class PreparedConversion:
     skipped: list[str]
     decisions: dict[tuple[str, str], Decision] = field(default_factory=dict)
     reservation: ReservationContext | None = None
+    fingerprint: ManifestFingerprint | None = None

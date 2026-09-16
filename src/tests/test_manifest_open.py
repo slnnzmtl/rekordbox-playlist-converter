@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -89,6 +90,87 @@ class ManifestLoadValidationTests(unittest.TestCase):
             any("outside" in e.lower() or "resolves" in e.lower() for e in errors),
             errors,
         )
+
+    def test_open_library_does_not_pair_stale_tracks_with_replaced_file_hash(
+        self,
+    ) -> None:
+        """Given a valid manifest: When the path is atomically replaced after
+        JSON parse: Then the returned fingerprint describes the parsed tracks,
+        not the replacement file."""
+        path = self.wav_dir / cm.MANIFEST_NAME
+        body_a = (
+            json.dumps(
+                {
+                    "version": 2,
+                    "layout": "format-flat",
+                    "tracks": {"/a": {"wav": {"dest": "WAV/A.wav"}}},
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        body_b = (
+            json.dumps(
+                {
+                    "version": 2,
+                    "layout": "format-flat",
+                    "tracks": {"/b": {"wav": {"dest": "WAV/B.wav"}}},
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        )
+        path.write_text(body_a, encoding="utf-8")
+        real_loads = json.loads
+
+        def loads_then_replace(raw, *args, **kwargs):
+            data = real_loads(raw, *args, **kwargs)
+            tmp = path.with_name(path.name + ".new")
+            tmp.write_text(body_b, encoding="utf-8")
+            tmp.replace(path)
+            return data
+
+        with patch.object(cm.json, "loads", side_effect=loads_then_replace):
+            opened = cm.open_library(self.wav_dir)
+        self.assertIsNone(opened.error)
+        assert opened.manifest is not None
+        assert opened.fingerprint is not None
+        self.assertIn("/a", opened.manifest.tracks)
+        self.assertNotIn("/b", opened.manifest.tracks)
+        self.assertEqual(
+            opened.fingerprint.sha256,
+            hashlib.sha256(body_a.encode("utf-8")).hexdigest(),
+        )
+        self.assertEqual(opened.fingerprint.size, len(body_a.encode("utf-8")))
+
+    def test_open_library_fails_when_manifest_mutates_during_read(self) -> None:
+        """Given a valid manifest: When fd stats change during the read: Then
+        open_library reports an error instead of pairing mixed content."""
+        m = cm.empty_manifest()
+        m.set_dest("/music/a.flac", "wav", "WAV/Artist - Track.wav")
+        cm.save_manifest(m, self.wav_dir)
+        real_fstat = os.fstat
+
+        def mutated_fstat(fd: int):
+            st = real_fstat(fd)
+            return type(
+                "Stat",
+                (),
+                {
+                    "st_dev": st.st_dev,
+                    "st_ino": st.st_ino,
+                    "st_size": st.st_size + 1,
+                    "st_mtime_ns": st.st_mtime_ns,
+                },
+            )()
+
+        with patch.object(cm.os, "fstat", side_effect=mutated_fstat):
+            opened = cm.open_library(self.wav_dir)
+        self.assertIsNotNone(opened.error)
+        self.assertIsNone(opened.manifest)
+        self.assertIn("changed while reading", (opened.error or "").lower())
 
     def test_open_library_returns_manifest_once(self) -> None:
         """Given a valid library: When open_library runs: Then error is None

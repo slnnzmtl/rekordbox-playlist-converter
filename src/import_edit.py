@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
@@ -420,9 +421,14 @@ def preview_save(draft: ImportEditDraft) -> list[EditPreviewRow]:
     rows: list[EditPreviewRow] = []
     for (folder, name), orig_keys in orig_playlists.items():
         label = playlist_label(folder, name)
-        remaining = set(curr_playlists.get((folder, name), []))
+        remaining = Counter(
+            k for k in curr_playlists.get((folder, name), []) if k
+        )
         for key in orig_keys:
-            if not key or key in remaining:
+            if not key:
+                continue
+            if remaining[key] > 0:
+                remaining[key] -= 1
                 continue
             dest = _original_relative_dest(draft, key)
             action = (
@@ -501,11 +507,15 @@ def remove_playlist(
     }
     parent.remove(node)
     refs = track_id_reference_counts(draft.root)
+    seen_orphans: set[str] = set()
     for key in keys:
         if not key:
             continue
         if refs.get(key, 0) > 0:
             continue
+        if key in seen_orphans:
+            continue
+        seen_orphans.add(key)
         track = by_id.get(key)
         if track is None:
             # Dangling Key: no collection/manifest cleanup.

@@ -12,7 +12,10 @@
 - Manifest V2 planning and checkpoints scale better for large output libraries:
   live dest-owner indexing, one disk inventory scan per batch, time-based
   ordered checkpoint persistence, and single-load library open with content
-  fingerprints. Public JSON schema and durability rules are unchanged.
+  fingerprints. Execute re-checks the fingerprint and dest inventory before
+  the prebatch save; persist failures surface as `CliError`; periodic
+  checkpoints are requested atomically; Import XML edit treats repeated Keys
+  as a multiset. Public JSON schema and durability rules are unchanged.
 
 ## 2.0.0
 

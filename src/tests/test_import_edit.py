@@ -451,6 +451,30 @@ class RemovePlaylistTests(unittest.TestCase):
         self.assertIn("aiff", draft.manifest.tracks["/source/a.flac"])
         self.assertIn("WAV/Artist - Track.wav", draft.trash_relative_dests)
 
+    def test_remove_playlist_with_repeated_keys_orphans_once(self) -> None:
+        """Given a playlist that lists the same Key twice and nowhere else:
+        When remove_playlist: Then collection_removed is 1 and trash lists
+        the dest once; playlist_entries_removed stays 2."""
+        library = _valid_library(self.root)
+        xml_path = library / "rekordbox-import.xml"
+        text = xml_path.read_text(encoding="utf-8")
+        text = text.replace(
+            '<TRACK Key="1"/>',
+            '<TRACK Key="1"/><TRACK Key="1"/>',
+        )
+        text = text.replace(
+            'Name="Night Set [WAV]" Type="1" KeyType="0" Entries="1"',
+            'Name="Night Set [WAV]" Type="1" KeyType="0" Entries="2"',
+        )
+        xml_path.write_text(text, encoding="utf-8")
+        draft = import_edit.load_import_edit_draft(library)
+        impact = import_edit.remove_playlist(
+            draft, folder="", name="Night Set [WAV]"
+        )
+        self.assertEqual(impact.playlist_entries_removed, 2)
+        self.assertEqual(impact.collection_removed, 1)
+        self.assertEqual(impact.files_to_trash, ["WAV/Artist - Track.wav"])
+
     def test_remove_playlist_preserves_shared_collection_track(self) -> None:
         library = self.root / "lib"
         (library / "WAV").mkdir(parents=True)
@@ -719,6 +743,30 @@ class EditPreviewRowTests(unittest.TestCase):
         rows = import_edit.preview_save(draft)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].track, "Artist - Track")
+        self.assertEqual(rows[0].action, import_edit.ACTION_REMOVE_FROM_PLAYLIST)
+        self.assertEqual(rows[0].playlist, "Night Set [WAV]")
+
+    def test_preview_save_removing_one_repeated_key_lists_one_row(self) -> None:
+        """Given a playlist that lists the same track twice: When one Key is
+        removed: Then preview lists one Remove from playlist row."""
+        library = _valid_library(self.root)
+        xml_path = library / "rekordbox-import.xml"
+        text = xml_path.read_text(encoding="utf-8")
+        text = text.replace(
+            '<TRACK Key="1"/>',
+            '<TRACK Key="1"/><TRACK Key="1"/>',
+        )
+        text = text.replace(
+            'Name="Night Set [WAV]" Type="1" KeyType="0" Entries="1"',
+            'Name="Night Set [WAV]" Type="1" KeyType="0" Entries="2"',
+        )
+        xml_path.write_text(text, encoding="utf-8")
+        draft = import_edit.load_import_edit_draft(library)
+        import_edit.remove_track_from_playlist(
+            draft, folder="", name="Night Set [WAV]", track_id="1"
+        )
+        rows = import_edit.preview_save(draft)
+        self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].action, import_edit.ACTION_REMOVE_FROM_PLAYLIST)
         self.assertEqual(rows[0].playlist, "Night Set [WAV]")
 
