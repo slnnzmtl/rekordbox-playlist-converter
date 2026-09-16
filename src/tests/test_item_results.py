@@ -28,6 +28,8 @@ from convert.models import (
     conversion_exit_code,
     conversion_report_title,
     format_conversion_counts,
+    format_finish_result_groups,
+    format_finish_result_rows,
     format_import_guidance,
     format_playlist_report,
     stats_for_playlist,
@@ -393,6 +395,114 @@ class ItemResultDeriveTests(unittest.TestCase):
         self.assertIn("Morning [WAV]", text)
         self.assertIn("safe to import", text.casefold())
         self.assertNotIn("Night [WAV]", text.split("Import Playlist")[-1])
+
+    def test_format_finish_result_rows_statuses_and_missing(self) -> None:
+        """Given succeeded/failed/conflict items and missing warnings: When
+        formatting finish rows: Then Failed/Conflict Detail reuse CLI
+        association strings; success Detail stays dest-only."""
+        rows = format_finish_result_rows(
+            [
+                ItemResult(
+                    source=Path("/music/a.flac"),
+                    destination=Path("/out/WAV/a.wav"),
+                    action="transcode",
+                    outcome="succeeded",
+                    write="transcode",
+                ),
+                ItemResult(
+                    source=Path("/music/b.flac"),
+                    destination=Path("/out/WAV/b.wav"),
+                    action="reuse",
+                    outcome="succeeded",
+                ),
+                ItemResult(
+                    source=Path("/music/c.flac"),
+                    destination=Path("/out/WAV/c.wav"),
+                    action="transcode",
+                    outcome="failed",
+                    error="ffmpeg exited 1",
+                ),
+                ItemResult(
+                    source=Path("/music/d.flac"),
+                    destination=Path("/out/WAV/d.wav"),
+                    action="transcode",
+                    outcome="conflict",
+                ),
+            ],
+            missing=["missing source file: /music/gone.flac"],
+        )
+        by_track = {row.track: row for row in rows}
+        self.assertEqual(by_track["a.flac"].status, "Converted")
+        self.assertEqual(by_track["a.flac"].detail, "WAV/a.wav")
+        self.assertEqual(by_track["b.flac"].status, "Reused")
+        self.assertEqual(by_track["c.flac"].status, "Failed")
+        self.assertEqual(
+            by_track["c.flac"].detail, "c.flac → WAV/c.wav: ffmpeg exited 1"
+        )
+        self.assertEqual(by_track["d.flac"].status, "Conflict")
+        self.assertEqual(by_track["d.flac"].detail, "d.flac → WAV/d.wav")
+        self.assertEqual(by_track["gone.flac"].status, "Missing")
+        self.assertEqual(by_track["gone.flac"].detail, "/music/gone.flac")
+
+    def test_format_finish_result_groups_use_status_line_headers(self) -> None:
+        """Given two playlists: When grouping finish rows: Then each status
+        line is a group header with that playlist's tracks underneath."""
+        morning_parts = format_conversion_counts(
+            ConvertStats(
+                item_results=[
+                    ItemResult(
+                        source=Path("/music/a.flac"),
+                        destination=Path("/out/WAV/a.wav"),
+                        action="transcode",
+                        outcome="succeeded",
+                        write="transcode",
+                        playlists=("Morning [WAV]",),
+                    ),
+                ]
+            ),
+            missing=1,
+        )
+        morning_header = format_playlist_report(
+            "Morning [WAV]",
+            PlaylistApplyResult(appended=1),
+            count_parts=morning_parts,
+            missing=None,
+        )[0]
+        groups = format_finish_result_groups(
+            [
+                ItemResult(
+                    source=Path("/music/a.flac"),
+                    destination=Path("/out/WAV/a.wav"),
+                    action="transcode",
+                    outcome="succeeded",
+                    write="transcode",
+                    playlists=("Night [WAV]", "Morning [WAV]"),
+                ),
+                ItemResult(
+                    source=Path("/music/b.flac"),
+                    destination=Path("/out/WAV/b.wav"),
+                    action="reuse",
+                    outcome="succeeded",
+                    playlists=("Night [WAV]",),
+                ),
+            ],
+            playlist_summaries=[
+                ("Night [WAV]", "Night [WAV]: 1 converted, 1 reused"),
+                ("Morning [WAV]", morning_header),
+            ],
+            missing_by_playlist={
+                "Morning [WAV]": ["missing source file: /music/gone.flac"],
+            },
+        )
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0].header, "Night [WAV]: 1 converted, 1 reused")
+        self.assertEqual(
+            [row.track for row in groups[0].rows], ["a.flac", "b.flac"]
+        )
+        self.assertIn("1 missing skipped", groups[1].header)
+        self.assertEqual(
+            [row.track for row in groups[1].rows], ["a.flac", "gone.flac"]
+        )
 
 
 if __name__ == "__main__":

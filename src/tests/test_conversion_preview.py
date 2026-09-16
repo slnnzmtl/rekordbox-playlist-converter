@@ -24,6 +24,7 @@ from convert.preview import (
     format_preview_summary,
     insufficient_output_space_message,
     preview_block_message,
+    preview_dialog_footer,
     preview_write_bytes,
 )
 import converter_manifest
@@ -515,7 +516,14 @@ class ConversionPreviewTests(unittest.TestCase):
             by_dest = {it.relative_dest: it for it in preview.items}
             self.assertIn("WAV/Same - Song.wav", by_dest)
             self.assertIn("WAV/Same - Song (2).wav", by_dest)
+            missing_rows = [
+                it for it in preview.items if it.action == "missing_source"
+            ]
+            self.assertEqual(len(missing_rows), 1)
+            self.assertEqual(missing_rows[0].source_display, missing.name)
             for it in preview.items:
+                if it.action == "missing_source":
+                    continue
                 self.assertEqual(it.action, "recreate_missing")
                 self.assertEqual(it.reason_code, "not_converted")
                 self.assertEqual(it.reason, "Not converted yet")
@@ -756,6 +764,79 @@ class ConversionPreviewTests(unittest.TestCase):
         )
         self.assertEqual(row.action_label, "Convert")
         self.assertEqual(row.reason, "Not converted yet")
+
+    def test_preview_dialog_footer_info_when_space_ok(self) -> None:
+        """Given audio write bytes and enough free space: When footer runs:
+        Then info is set and block is None."""
+        from types import SimpleNamespace
+
+        preview = ConversionPreview(
+            selected=1,
+            resolved=1,
+            unique_outputs=1,
+            duplicates=0,
+            missing=0,
+            items=[
+                ConversionPreviewItem(
+                    relative_dest="WAV/A.wav",
+                    action="transcode",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=5_000_000,
+                    size_display="≈ 4.8 MB",
+                    write_kind="audio",
+                ),
+            ],
+        )
+        info, block = preview_dialog_footer(
+            preview,
+            Path("/tmp"),
+            disk_usage=lambda _p: SimpleNamespace(free=10_000_000),
+        )
+        self.assertIsNone(block)
+        self.assertIsNotNone(info)
+        assert info is not None
+        self.assertIn("needed after conversion", info)
+        self.assertIn("available", info)
+
+    def test_preview_dialog_footer_no_info_when_nothing_to_write(self) -> None:
+        """Given no audio write bytes: When footer runs: Then no info line."""
+        preview = ConversionPreview(
+            selected=1,
+            resolved=1,
+            unique_outputs=1,
+            duplicates=0,
+            missing=0,
+            items=[
+                ConversionPreviewItem(
+                    relative_dest="WAV/A.wav",
+                    action="reuse",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=1000,
+                    size_display="0.0 MB",
+                    write_kind="none",
+                ),
+            ],
+        )
+        info, block = preview_dialog_footer(preview, Path("/tmp"))
+        self.assertIsNone(info)
+        self.assertIsNone(block)
+
+    def test_preview_dialog_footer_blocks_when_unique_outputs_zero(self) -> None:
+        """Given no unique dest outputs: When footer runs: Then block says
+        nothing to convert and no info."""
+        preview = ConversionPreview(
+            selected=45,
+            resolved=0,
+            unique_outputs=0,
+            duplicates=0,
+            missing=45,
+            items=[],
+        )
+        info, block = preview_dialog_footer(preview, Path("/tmp"))
+        self.assertIsNone(info)
+        self.assertEqual(block, "Nothing to convert.")
 
     def test_preview_block_message_reports_conflicts_before_space(self) -> None:
         """Given unresolved conflicts: When preview_block_message runs: Then

@@ -18,7 +18,7 @@ from convert.encode import (
     write_aiff_output as _encode_write_aiff_output,
 )
 from convert.format_policy import classify_source, inplace_noop_and_error
-from convert.models import Plan, PlannedTrack
+from convert.models import MISSING_SOURCE_FILE_PREFIX, Plan, PlannedTrack
 from convert.paths import (
     abs_path,
     format_media_dir,
@@ -171,7 +171,7 @@ def build_plan(
             continue
         resolved = resolve_existing_file(source_path)
         if resolved is None:
-            warnings.append(f"missing source file: {source_path}")
+            warnings.append(f"{MISSING_SOURCE_FILE_PREFIX}{source_path}")
             continue
         source_path = resolved
         preferred = preferred_relative_dest(

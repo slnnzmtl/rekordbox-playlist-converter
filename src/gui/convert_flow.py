@@ -13,6 +13,7 @@ from convert.models import (
     PreparedConversion,
     conversion_report_title,
     format_conversion_counts,
+    format_finish_result_groups,
     format_import_guidance,
     format_playlist_report,
     stats_for_playlist,
@@ -228,7 +229,7 @@ class ConvertFlowMixin:
         self._close_preview_dialog()
         preview = prepared.preview
         summary = format_preview_summary(preview)
-        space_issue = runtime.preview_block_message(
+        info_message, block_message = runtime.preview_dialog_footer(
             preview,
             prepared.library_dir,
         )
@@ -239,7 +240,8 @@ class ConvertFlowMixin:
             action_labels=ACTION_LABELS,
             bit_depth_labels=constants.BIT_DEPTH_LABELS,
             sample_rate_labels=constants.SAMPLE_RATE_LABELS,
-            space_issue=space_issue,
+            info_message=info_message,
+            block_message=block_message,
             on_back=self._discard_prepared_conversion,
             on_convert=self._confirm_prepared_conversion,
             place_over=self._place_dialog_over_app,
@@ -274,12 +276,12 @@ class ConvertFlowMixin:
         prepared = self._prepared_conversion
         if prepared is None:
             return
-        space_issue = runtime.preview_block_message(
+        block_message = runtime.preview_block_message(
             prepared.preview,
             prepared.library_dir,
         )
-        if space_issue:
-            runtime.show_centered_message(self.root, "Cannot convert", space_issue)
+        if block_message:
+            runtime.show_centered_message(self.root, "Cannot convert", block_message)
             return
         self._close_preview_dialog()
         self._prepared_conversion = None
@@ -337,6 +339,9 @@ class ConvertFlowMixin:
                 return
 
             playlist_pairs: list[tuple[str, object]] = []
+            playlist_summaries: list[tuple[str, str]] = []
+            missing_by_playlist: dict[str, list[str]] = {}
+            missing_warnings: list[str] = []
             for i, plan in enumerate(plans):
                 appended = (
                     batch_stats.appended_by_plan[i]
@@ -354,32 +359,41 @@ class ConvertFlowMixin:
                     plan.wav_playlist_name,
                     appended=appended,
                 )
-                parts = format_conversion_counts(plan_stats, missing=0)
-                summaries.extend(
-                    format_playlist_report(
-                        plan.wav_playlist_name,
-                        playlist_result,
-                        count_parts=parts,
-                        missing=list(plan.warnings),
-                    )
+                parts = format_conversion_counts(
+                    plan_stats, missing=len(plan.warnings)
                 )
-                if plan_stats.state_changed:
-                    summaries.append("State changed (refresh preview):")
-                    summaries.extend(plan_stats.state_changed)
-                if plan_stats.errors:
-                    summaries.append("Failed:")
-                    summaries.extend(plan_stats.errors)
-                if plan_stats.conflicts:
-                    summaries.append("Conflicts:")
-                    summaries.extend(plan_stats.conflicts)
-            # Batch-level skipped (deduped across plans) only when not already
-            # listed under a playlist via plan.warnings.
+                use_result_table = bool(batch_stats.item_results)
+                report_lines = format_playlist_report(
+                    plan.wav_playlist_name,
+                    playlist_result,
+                    count_parts=parts,
+                    missing=None if use_result_table else list(plan.warnings),
+                )
+                summaries.extend(report_lines)
+                if report_lines:
+                    playlist_summaries.append(
+                        (plan.wav_playlist_name, report_lines[0])
+                    )
+                missing_by_playlist[plan.wav_playlist_name] = list(plan.warnings)
+                missing_warnings.extend(plan.warnings)
+                if not use_result_table:
+                    if plan_stats.state_changed:
+                        summaries.append("State changed (refresh preview):")
+                        summaries.extend(plan_stats.state_changed)
+                    if plan_stats.errors:
+                        summaries.append("Failed:")
+                        summaries.extend(plan_stats.errors)
+                    if plan_stats.conflicts:
+                        summaries.append("Conflicts:")
+                        summaries.extend(plan_stats.conflicts)
+            extra_missing: list[str] = []
             if skipped:
-                already = {w for plan in plans for w in plan.warnings}
-                extra = [s for s in skipped if s not in already]
-                if extra:
+                already = set(missing_warnings)
+                extra_missing = [s for s in skipped if s not in already]
+                missing_warnings.extend(extra_missing)
+                if not batch_stats.item_results and extra_missing:
                     summaries.append("Missing skipped:")
-                    summaries.extend(extra)
+                    summaries.extend(extra_missing)
 
             if total == 0:
                 self._ui(lambda: self._set_progress(0, 0))
@@ -389,12 +403,12 @@ class ConvertFlowMixin:
             title = conversion_report_title(
                 batch_stats,
                 cancelled=self._cancel_event.is_set(),
-                missing=sum(len(plan.warnings) for plan in plans),
+                missing=len(missing_warnings),
             )
             source_root = getattr(plans[0], "source_root", None) if plans else None
             source_paths = [t.source_path for t in items]
             self._ui(
-                lambda s=summaries, o=out, folder=output.parent, t=title, p=playlist_pairs, st=batch_stats, root=source_root, paths=source_paths: self._finish_report(
+                lambda s=summaries, o=out, folder=output.parent, t=title, p=playlist_pairs, st=batch_stats, root=source_root, paths=source_paths, miss=missing_warnings, psum=playlist_summaries, mbp=missing_by_playlist, em=extra_missing: self._finish_report(
                     s,
                     o,
                     folder,
@@ -403,6 +417,10 @@ class ConvertFlowMixin:
                     analytics_stats=st,
                     analytics_source_root=root,
                     source_paths=paths,
+                    missing_warnings=miss,
+                    playlist_summaries=psum,
+                    missing_by_playlist=mbp,
+                    extra_missing=em,
                 )
             )
         except runtime.CliError as exc:
@@ -496,6 +514,10 @@ class ConvertFlowMixin:
         analytics_stats: ConvertStats | None = None,
         analytics_source_root=None,
         source_paths=None,
+        missing_warnings: list[str] | None = None,
+        playlist_summaries: list[tuple[str, str]] | None = None,
+        missing_by_playlist: dict[str, list[str]] | None = None,
+        extra_missing: list[str] | None = None,
     ) -> None:
         self._prepared_conversion = None
         self._confirm_prepared = None
@@ -513,13 +535,40 @@ class ConvertFlowMixin:
         snap_progress = 0 if title in {"No conversions", "Failed"} else 100
         self._animate_progress_to(snap_progress, snap=True)
         body = "\n".join(summaries)
+        result_groups = None
+        guidance = None
+        if analytics_stats is not None and analytics_stats.item_results:
+            result_groups = format_finish_result_groups(
+                analytics_stats.item_results,
+                playlist_summaries=playlist_summaries or [],
+                missing_by_playlist=missing_by_playlist,
+                extra_missing=extra_missing,
+            )
+            if output:
+                guidance = format_import_guidance(
+                    Path(output),
+                    output_format=self.format_var.get().strip().lower(),
+                    playlists=playlists,
+                )
         if title == "No conversions":
             self.status_var.set("Finished with no audio files converted or copied.")
-            self._show_done_dialog(body, output_folder, title=title)
+            self._show_done_dialog(
+                body,
+                output_folder,
+                title=title,
+                result_groups=result_groups,
+                guidance=guidance,
+            )
             return
         if title == "Failed":
             self.status_var.set("Failed.")
-            self._show_done_dialog(body, output_folder, title=title)
+            self._show_done_dialog(
+                body,
+                output_folder,
+                title=title,
+                result_groups=result_groups,
+                guidance=guidance,
+            )
             return
         if title == "Cancelled":
             self.status_var.set("Cancelled.")
@@ -527,12 +576,21 @@ class ConvertFlowMixin:
             self._cancelled_clear_id = self.root.after(
                 constants.CANCELLED_STATUS_CLEAR_MS, self._clear_cancelled_status
             )
-            message = (
-                self._import_xml_instructions(body, output, playlists)
-                if output
-                else body
+            if result_groups is None:
+                message = (
+                    self._import_xml_instructions(body, output, playlists)
+                    if output
+                    else body
+                )
+            else:
+                message = ""
+            self._show_done_dialog(
+                message,
+                output_folder,
+                title=title,
+                result_groups=result_groups,
+                guidance=guidance,
             )
-            self._show_done_dialog(message, output_folder, title=title)
             return
         if title == "Partial":
             if output:
@@ -547,12 +605,21 @@ class ConvertFlowMixin:
             )
         else:
             self.status_var.set(f"{title}.")
-        message = (
-            self._import_xml_instructions(body, output, playlists)
-            if output
-            else body
+        if result_groups is None:
+            message = (
+                self._import_xml_instructions(body, output, playlists)
+                if output
+                else body
+            )
+        else:
+            message = ""
+        self._show_done_dialog(
+            message,
+            output_folder,
+            title=title,
+            result_groups=result_groups,
+            guidance=guidance,
         )
-        self._show_done_dialog(message, output_folder, title=title)
 
     def _show_list_dialog(
         self,
@@ -579,6 +646,9 @@ class ConvertFlowMixin:
         output_folder: Path | None = None,
         *,
         title: str = "Done",
+        result_rows=None,
+        result_groups=None,
+        guidance: str | None = None,
     ) -> None:
         gui_dialogs.show_done_dialog(
             self.root,
@@ -588,6 +658,9 @@ class ConvertFlowMixin:
             on_open_guide=self._show_usage_guide,
             place_over=self._place_dialog_over_app,
             title=title,
+            result_rows=result_rows,
+            result_groups=result_groups,
+            guidance=guidance,
         )
 
 

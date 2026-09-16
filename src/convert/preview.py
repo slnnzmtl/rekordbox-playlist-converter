@@ -12,7 +12,13 @@ from typing import Callable
 
 from cli_error import CancelledError
 from convert import plan as plan_module
-from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PlannedTrack
+from convert.models import (
+    ConversionPreview,
+    ConversionPreviewItem,
+    MISSING_SOURCE_FILE_PREFIX,
+    Plan,
+    PlannedTrack,
+)
 from convert.rerun import (
     ACTION_WRITE_KIND,
     WRITE_KIND_LABELS,
@@ -55,6 +61,17 @@ def format_preview_summary(preview: ConversionPreview) -> str:
 
 def format_preview_row(item: ConversionPreviewItem) -> PreviewRow:
     """User-facing labels for one ConversionPreviewItem."""
+    if item.action == "missing_source":
+        return PreviewRow(
+            source_display=item.source_display,
+            relative_dest="—",
+            output_format="—",
+            action_label=preview_action_label(item.action, item.reason_code),
+            reason=item.reason,
+            write_kind_label="—",
+            quality="—",
+            size_display="—",
+        )
     fmt = coerce_output_format(item.output_format or "wav")
     depth = _BIT_DEPTH_LABELS.get(str(item.bit_depth), f"{item.bit_depth}-bit")
     rate = _SAMPLE_RATE_LABELS.get(
@@ -91,6 +108,42 @@ def preview_size(item: PlannedTrack, write_kind: str) -> tuple[int | None, str]:
     return estimated, _format_size_mb(estimated, approximate=True)
 
 
+def _missing_paths_from_plans(plans: list[Plan]) -> list[Path]:
+    seen: set[str] = set()
+    paths: list[Path] = []
+    for plan in plans:
+        for warning in plan.warnings:
+            if not warning.startswith(MISSING_SOURCE_FILE_PREFIX):
+                continue
+            path = Path(warning[len(MISSING_SOURCE_FILE_PREFIX) :])
+            key = str(path)
+            if key in seen:
+                continue
+            seen.add(key)
+            paths.append(path)
+    return paths
+
+
+def _missing_source_preview_items(plans: list[Plan]) -> list[ConversionPreviewItem]:
+    items: list[ConversionPreviewItem] = []
+    for path in _missing_paths_from_plans(plans):
+        items.append(
+            ConversionPreviewItem(
+                relative_dest="—",
+                action="missing_source",
+                bit_depth=0,
+                sample_rate=0,
+                size_display="—",
+                source_display=path.name,
+                reason=preview_reason("missing_source", "source_missing"),
+                write_kind="none",
+                reason_code="source_missing",
+                output_format="",
+            )
+        )
+    return items
+
+
 def build_conversion_preview(
     plans: list[Plan],
     items: list[PlannedTrack],
@@ -116,6 +169,7 @@ def build_conversion_preview(
     unique_outputs = len(items)
     duplicates = resolved - unique_outputs
     library_dir = plans[0].library_dir
+    missing_items = _missing_source_preview_items(plans)
     total = len(items)
     if total == 0:
         return ConversionPreview(
@@ -124,7 +178,7 @@ def build_conversion_preview(
             unique_outputs=unique_outputs,
             duplicates=duplicates,
             missing=missing,
-            items=[],
+            items=missing_items,
         )
 
     plan_by_item: dict[int, Plan] = {}
@@ -197,6 +251,7 @@ def build_conversion_preview(
     preview_items = [item for item in results if item is not None]
     if len(preview_items) != total:
         raise CancelledError("conversion cancelled during preview")
+    preview_items.extend(missing_items)
     return ConversionPreview(
         selected=selected,
         resolved=resolved,
@@ -240,13 +295,13 @@ def _disk_usage_path(path: Path) -> Path:
         candidate = parent
 
 
-def insufficient_output_space_message(
+def _disk_space_needed_available(
     path: Path,
     required_bytes: int,
     *,
     disk_usage: Callable[[str | Path], object] | None = None,
-) -> str | None:
-    """Return an issue message when free space on path is below required_bytes."""
+) -> tuple[str, str, int] | None:
+    """Return (needed_display, available_display, free_bytes) or None if probe fails."""
     if required_bytes <= 0:
         return None
     probe = disk_usage if disk_usage is not None else shutil.disk_usage
@@ -255,23 +310,38 @@ def insufficient_output_space_message(
         free = int(getattr(usage, "free"))
     except (OSError, TypeError, ValueError, AttributeError):
         return None
-    if free >= required_bytes:
-        return None
     needed = _format_size_mb(required_bytes, approximate=True)
     available = _format_size_mb(free)
+    return needed, available, free
+
+
+def insufficient_output_space_message(
+    path: Path,
+    required_bytes: int,
+    *,
+    disk_usage: Callable[[str | Path], object] | None = None,
+) -> str | None:
+    """Return an issue message when free space on path is below required_bytes."""
+    summary = _disk_space_needed_available(
+        path, required_bytes, disk_usage=disk_usage
+    )
+    if summary is None:
+        return None
+    needed, available, free = summary
+    if free >= required_bytes:
+        return None
     return (
         "Not enough free space in the output folder. "
         f"About {needed.removeprefix('≈ ')} needed, {available} available."
     )
 
 
-def preview_block_message(
+def _preview_block_message_impl(
     preview: ConversionPreview,
     path: Path,
     *,
     disk_usage: Callable[[str | Path], object] | None = None,
 ) -> str | None:
-    """Block confirm when conflicts remain or the output volume is too small."""
     n = sum(
         1
         for item in preview.items
@@ -283,8 +353,44 @@ def preview_block_message(
             f"{n} unresolved {noun}. "
             "Destination files were changed outside this app."
         )
+    if preview.unique_outputs == 0:
+        return "Nothing to convert."
     return insufficient_output_space_message(
         path,
         preview_write_bytes(preview),
         disk_usage=disk_usage,
+    )
+
+
+def preview_block_message(
+    preview: ConversionPreview,
+    path: Path,
+    *,
+    disk_usage: Callable[[str | Path], object] | None = None,
+) -> str | None:
+    """Block confirm when conflicts remain or the output volume is too small."""
+    return _preview_block_message_impl(preview, path, disk_usage=disk_usage)
+
+
+def preview_dialog_footer(
+    preview: ConversionPreview,
+    path: Path,
+    *,
+    disk_usage: Callable[[str | Path], object] | None = None,
+) -> tuple[str | None, str | None]:
+    """Return (info_message, block_message) for the conversion preview footer."""
+    block = _preview_block_message_impl(preview, path, disk_usage=disk_usage)
+    if block is not None:
+        return None, block
+    required = preview_write_bytes(preview)
+    summary = _disk_space_needed_available(path, required, disk_usage=disk_usage)
+    if summary is None or required <= 0:
+        return None, None
+    needed, available, free = summary
+    if free < required:
+        return None, None
+    return (
+        f"About {needed.removeprefix('≈ ')} needed after conversion, "
+        f"{available} available.",
+        None,
     )

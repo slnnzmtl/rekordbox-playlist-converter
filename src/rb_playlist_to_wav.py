@@ -21,6 +21,7 @@ from convert import (
 )
 from convert.models import (
     conversion_exit_code,
+    conversion_report_title,
     format_conversion_counts,
     format_import_guidance,
     format_playlist_report,
@@ -33,6 +34,7 @@ from convert.preview import (
     format_preview_summary,
     insufficient_output_space_message,
     preview_block_message,
+    preview_dialog_footer,
     preview_write_bytes,
 )
 from gui_prefs import import_xml_path
@@ -320,12 +322,14 @@ def run_convert_batch(
 
     if dry_run:
         print_conversion_preview(plans, preview)
-        block = preview_block_message(preview, wav_dir)
+        info, block = preview_dialog_footer(preview, wav_dir)
+        if info:
+            print(info)
         if block is not None:
             print(block, file=sys.stderr)
         return 0
 
-    block = preview_block_message(preview, wav_dir)
+    _info, block = preview_dialog_footer(preview, wav_dir)
     if block is not None:
         print(block, file=sys.stderr)
         return 1
@@ -336,6 +340,13 @@ def run_convert_batch(
             force=force,
             progress=sys.stderr.isatty(),
         )
+        print(
+            conversion_report_title(
+                stats,
+                missing=sum(len(plan.warnings) for plan in plans),
+            )
+        )
+        print()
         playlist_pairs: list[tuple[str, object]] = []
         for i, plan in enumerate(plans):
             if len(plans) > 1:

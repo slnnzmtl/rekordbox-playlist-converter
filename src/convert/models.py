@@ -433,6 +433,159 @@ def format_playlist_report(
     return lines
 
 
+@dataclass(frozen=True)
+class FinishResultRow:
+    """One track row for the GUI Done/Partial result table."""
+
+    track: str
+    status: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class FinishResultGroup:
+    """Playlist group for the Done dialog: status-line header + track rows."""
+
+    header: str
+    rows: list[FinishResultRow]
+
+
+_OUTCOME_STATUS = {
+    "failed": "Failed",
+    "conflict": "Conflict",
+    "state_changed": "State changed",
+    "cancelled": "Cancelled",
+}
+
+
+MISSING_SOURCE_FILE_PREFIX = "missing source file: "
+
+
+def _succeeded_status(result: ItemResult) -> str:
+    if result.action == "recreate_missing":
+        if result.reason == "not_converted":
+            return "Copied" if result.write == "copy" else "Converted"
+        return "Recreated"
+    if result.action == "rewrite_container":
+        return "Rebuilt"
+    if result.action in {"refresh_xml", "update_metadata"}:
+        return "Metadata refreshed"
+    if result.action in {"reuse", "in_place_noop"}:
+        return "Reused"
+    if result.action == "copy" or result.write == "copy":
+        return "Copied"
+    return "Converted"
+
+
+def _row_from_item_result(result: ItemResult) -> FinishResultRow:
+    status = _OUTCOME_STATUS.get(result.outcome)
+    if status is None:
+        if result.outcome != "succeeded":
+            status = result.outcome.replace("_", " ").capitalize()
+        else:
+            status = _succeeded_status(result)
+    if result.outcome == "failed":
+        detail = _item_error_line(result)
+    elif result.outcome in {"conflict", "state_changed"}:
+        detail = _item_ref(result)
+    elif result.destination.name:
+        dest = result.destination
+        detail = (
+            f"{dest.parent.name}/{dest.name}" if dest.parent.name else dest.name
+        )
+    else:
+        detail = ""
+    return FinishResultRow(
+        track=result.source.name,
+        status=status,
+        detail=detail,
+    )
+
+
+def _rows_from_missing(missing: list[str] | None) -> list[FinishResultRow]:
+    rows: list[FinishResultRow] = []
+    seen: set[str] = set()
+    for warning in missing or ():
+        path_text = warning
+        if warning.startswith(MISSING_SOURCE_FILE_PREFIX):
+            path_text = warning[len(MISSING_SOURCE_FILE_PREFIX) :]
+        if path_text in seen:
+            continue
+        seen.add(path_text)
+        path = Path(path_text)
+        rows.append(
+            FinishResultRow(
+                track=path.name or path_text,
+                status="Missing",
+                detail=path_text,
+            )
+        )
+    return rows
+
+
+def format_finish_result_rows(
+    results: list[ItemResult],
+    *,
+    missing: list[str] | None = None,
+    playlist: str | None = None,
+) -> list[FinishResultRow]:
+    """Build Done-dialog table rows from item results and missing-source warnings.
+
+    When *playlist* is set, only results that list that playlist are included.
+    """
+    rows: list[FinishResultRow] = []
+    for result in results:
+        if playlist is not None and playlist not in result.playlists:
+            continue
+        rows.append(_row_from_item_result(result))
+    rows.extend(_rows_from_missing(missing))
+    return rows
+
+
+def format_finish_result_groups(
+    results: list[ItemResult],
+    *,
+    playlist_summaries: list[tuple[str, str]],
+    missing_by_playlist: dict[str, list[str]] | None = None,
+    extra_missing: list[str] | None = None,
+) -> list[FinishResultGroup]:
+    """Group finish rows under playlist status-line headers (tracklist-style)."""
+    missing_map = missing_by_playlist or {}
+    groups: list[FinishResultGroup] = []
+    claimed: set[int] = set()
+    for playlist_name, header in playlist_summaries:
+        rows = format_finish_result_rows(
+            results,
+            missing=missing_map.get(playlist_name),
+            playlist=playlist_name,
+        )
+        for result in results:
+            if playlist_name in result.playlists:
+                claimed.add(id(result))
+        groups.append(FinishResultGroup(header=header, rows=rows))
+    orphans = [result for result in results if id(result) not in claimed]
+    if orphans and groups:
+        groups[0] = FinishResultGroup(
+            header=groups[0].header,
+            rows=list(groups[0].rows)
+            + [_row_from_item_result(r) for r in orphans],
+        )
+    elif orphans:
+        groups.append(
+            FinishResultGroup(
+                header="Converted",
+                rows=[_row_from_item_result(r) for r in orphans],
+            )
+        )
+    if extra_missing:
+        extra_rows = _rows_from_missing(extra_missing)
+        if extra_rows:
+            groups.append(
+                FinishResultGroup(header="Missing skipped", rows=extra_rows)
+            )
+    return groups
+
+
 def format_import_guidance(
     output: Path,
     *,
