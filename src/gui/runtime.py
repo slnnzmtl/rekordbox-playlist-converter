@@ -34,6 +34,7 @@ from analytics import (
     enable_analytics,
     flush_pending,
     report_conversion,
+    report_failure,
 )
 from import_edit import load_import_edit_draft, save_import_edit_draft
 from rekordbox_xml import (
@@ -88,6 +89,7 @@ __all__ = [
     "disable_analytics",
     "flush_pending",
     "report_conversion",
+    "report_failure",
     "resolve_startup_paths",
     "find_rekordbox_xml_via_child",
     "probe_path_via_child",

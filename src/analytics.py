@@ -6,6 +6,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 import uuid
@@ -26,7 +27,8 @@ _QUEUE_FILENAME = "analytics_queue.json"
 _BASE_EVENT_KEYS = frozenset(
     {"schema_version", "event", "app_version", "surface", "install_id"}
 )
-_KNOWN_EVENTS = frozenset({"install", "conversion_completed"})
+_KNOWN_EVENTS = frozenset({"install", "conversion_completed", "conversion_failed"})
+_FAILURE_REASONS = frozenset({"xml_parse", "encode", "config", "unknown"})
 
 _queue_lock = threading.Lock()
 _flush_in_flight = False
@@ -80,6 +82,16 @@ def _base_payload(*, surface: str, install_id: str, event: str) -> dict[str, Any
 
 def build_install_payload(*, surface: str, install_id: str) -> dict[str, Any]:
     return _base_payload(surface=surface, install_id=install_id, event="install")
+
+
+def build_failure_payload(
+    *, surface: str, install_id: str, reason: str
+) -> dict[str, Any]:
+    payload = _base_payload(
+        surface=surface, install_id=install_id, event="conversion_failed"
+    )
+    payload["reason"] = reason if reason in _FAILURE_REASONS else "unknown"
+    return payload
 
 
 def build_conversion_payload(
@@ -257,6 +269,30 @@ def _start_flush(config_path=None) -> None:
     threading.Thread(target=_flush_queue, args=(path,), daemon=True).start()
 
 
+def _flush_sync(config_path=None) -> None:
+    """Flush the queue on this thread so short-lived CLI exits still POST."""
+    global _flush_in_flight
+    path = _prefs_path(config_path)
+    # Wait for any daemon flush started earlier in this process (e.g. CLI
+    # flush_pending on startup) so we do not no-op while _flush_in_flight.
+    deadline = time.monotonic() + POST_TIMEOUT_SECONDS + 1.0
+    while time.monotonic() < deadline:
+        with _queue_lock:
+            busy = _flush_in_flight
+        if not busy:
+            break
+        time.sleep(0.05)
+    with _queue_lock:
+        if _flush_in_flight:
+            return
+        if not analytics_enabled(config_path=path):
+            return
+        if _peek_head(path) is None:
+            return
+        _flush_in_flight = True
+    _flush_queue(path)
+
+
 def enqueue(payload: dict[str, Any], *, config_path=None) -> None:
     """Append payload to the durable queue and flush when consent is on."""
     path = _prefs_path(config_path)
@@ -337,3 +373,24 @@ def report_conversion(
         ),
         config_path=path,
     )
+
+
+def report_failure(*, surface: str, reason: str, config_path=None) -> None:
+    path = config_path or default_config_path()
+    prefs = load_preferences(config_path=path)
+    if prefs.get("analytics") != "on":
+        return
+    install_id = prefs.get("install_id")
+    if not install_id:
+        return
+    payload = build_failure_payload(
+        surface=surface, install_id=install_id, reason=reason
+    )
+    try:
+        with _queue_lock:
+            _append_event(payload, path)
+    except OSError:
+        return
+    # Sync flush: CLI can exit immediately after a failed job and would kill a
+    # daemon flush thread before POST completes (event stuck in the local queue).
+    _flush_sync(path)

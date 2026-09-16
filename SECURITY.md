@@ -12,7 +12,8 @@ purposes:
    Help → Check for Updates….
 2. **Usage analytics (opt-in, default off).** When enabled, a fire-and-forget
    `POST` to `https://analytics.slnnzmtl.xyz/v1/events` after first opt-in
-   (`install`) and after a successful conversion (`conversion_completed`). No
+   (`install`), after a successful conversion (`conversion_completed`), and
+   after a failed conversion job (`conversion_failed` with a closed reason). No
    client secret is embedded; failures never change conversion results. Failed
    events are queued in `analytics_queue.json` beside preferences and retried
    until a successful send (held without transmitting while analytics is off).

@@ -21,6 +21,7 @@ from analytics import (
     POST_RETRY,
     POST_TIMEOUT_SECONDS,
     build_conversion_payload,
+    build_failure_payload,
     build_install_payload,
     enqueue,
     post_event,
@@ -47,6 +48,48 @@ class BuildInstallPayloadTests(unittest.TestCase):
                 "install_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
             },
         )
+
+
+class BuildFailurePayloadTests(unittest.TestCase):
+    def test_build_failure_payload_has_exact_v1_fields(self) -> None:
+        """Given surface, install_id, and reason: When build_failure_payload runs:
+        Then the dict has only the slim conversion_failed contract fields."""
+        payload = build_failure_payload(
+            surface="gui",
+            install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            reason="xml_parse",
+        )
+        self.assertEqual(
+            payload,
+            {
+                "schema_version": 1,
+                "event": "conversion_failed",
+                "app_version": __version__,
+                "surface": "gui",
+                "install_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "reason": "xml_parse",
+            },
+        )
+        for key in (
+            "rekordbox_version",
+            "output_format",
+            "bit_depth",
+            "sample_rate",
+            "outcomes",
+            "input_file_types",
+        ):
+            self.assertNotIn(key, payload)
+
+    def test_build_failure_payload_unknown_reason_clamps_to_unknown(self) -> None:
+        """Given an invalid reason: When build_failure_payload runs: Then reason
+        is unknown."""
+        payload = build_failure_payload(
+            surface="cli",
+            install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            reason="not-a-reason",
+        )
+        self.assertEqual(payload["reason"], "unknown")
+        self.assertEqual(payload["event"], "conversion_failed")
 
 
 class BuildConversionPayloadTests(unittest.TestCase):
@@ -623,6 +666,100 @@ class EnableAnalyticsTests(unittest.TestCase):
                     "other": 0,
                 },
             )
+
+    def test_report_failure_noops_when_consent_off(self) -> None:
+        """Given analytics off: When report_failure runs: Then nothing is
+        enqueued."""
+        import analytics
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            with patch.object(analytics, "default_config_path", return_value=config), patch.object(
+                analytics, "_append_event"
+            ) as append, patch.object(analytics, "_flush_sync") as flush:
+                analytics.report_failure(surface="cli", reason="encode")
+            append.assert_not_called()
+            flush.assert_not_called()
+
+    def test_report_failure_enqueues_when_consent_on(self) -> None:
+        """Given analytics on with install_id: When report_failure runs:
+        Then conversion_failed is appended and flushed synchronously."""
+        import analytics
+        from gui_prefs import save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            save_preferences(
+                analytics="on",
+                install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                config_path=config,
+            )
+            posted: list[dict] = []
+
+            def capture(payload: dict, config_path=None) -> None:
+                posted.append(payload)
+
+            with patch.object(analytics, "default_config_path", return_value=config), patch.object(
+                analytics, "_append_event", side_effect=capture
+            ) as append, patch.object(analytics, "_flush_sync") as flush:
+                analytics.report_failure(surface="gui", reason="config")
+            append.assert_called_once()
+            flush.assert_called_once()
+            self.assertEqual(len(posted), 1)
+            self.assertEqual(posted[0]["event"], "conversion_failed")
+            self.assertEqual(posted[0]["reason"], "config")
+            self.assertEqual(posted[0]["install_id"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+            self.assertEqual(posted[0]["surface"], "gui")
+
+    def test_report_failure_sync_flush_posts_before_return(self) -> None:
+        """Given analytics on: When report_failure runs with a working POST:
+        Then the queue is empty after return (sync flush completed)."""
+        import analytics
+        from gui_prefs import save_preferences
+        from io import BytesIO
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            save_preferences(
+                analytics="on",
+                install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                config_path=config,
+            )
+            with patch.object(analytics, "default_config_path", return_value=config), patch(
+                "analytics.urllib.request.urlopen",
+                return_value=BytesIO(b'{"status":"accepted"}'),
+            ):
+                analytics.report_failure(surface="cli", reason="xml_parse")
+            queue_path = config.parent / "analytics_queue.json"
+            data = json.loads(queue_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["events"], [])
+
+    def test_queue_accepts_conversion_failed_event(self) -> None:
+        """Given a conversion_failed payload: When enqueue fails to POST: Then
+        the event remains in the durable queue."""
+        from gui_prefs import save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            save_preferences(
+                analytics="on",
+                install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                config_path=config,
+            )
+            payload = build_failure_payload(
+                surface="cli",
+                install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                reason="encode",
+            )
+            with patch(
+                "analytics.urllib.request.urlopen",
+                side_effect=OSError("offline"),
+            ), patch("analytics.threading.Thread", side_effect=_run_thread_inline):
+                enqueue(payload, config_path=config)
+
+            queue_path = config.parent / "analytics_queue.json"
+            data = json.loads(queue_path.read_text(encoding="utf-8"))
+            self.assertEqual(data["events"], [payload])
 
 
 if __name__ == "__main__":

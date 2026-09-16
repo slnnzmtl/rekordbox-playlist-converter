@@ -18,9 +18,9 @@ This app does not open Rekordbox’s internal database. It only reads an XML
 export. The GUI may check GitHub Releases for updates (Help → Check for
 Updates…). Anonymous usage analytics is off by default; enable or disable it
 with Help → Share anonymous usage analytics. When on, the app may send one
-install ping and later aggregate conversion counts (no track, path, or account
-data). Failed sends are queued locally and retried; they never change
-conversion results.
+install ping, later aggregate conversion counts, and closed-reason failure
+pings (no track, path, or account data). Failed sends are queued locally and
+retried; they never change conversion results.
 
 1. Open Rekordbox and wait until analysis has finished on the tracks you care
    about (cues and grids come from this export).

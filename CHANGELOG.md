@@ -13,12 +13,13 @@
   Source file is missing), disables Convert when there is nothing to convert,
   and shows about how much disk space audio writes need when space is OK.
 - Opt-in anonymous usage analytics (default off): Help checkbutton or
-  `--analytics on|off`; one `install` event on first opt-in and
+  `--analytics on|off`; one `install` event on first opt-in,
   `conversion_completed` after successful writes (includes aggregate
-  `input_file_types` source-extension counts); failed POSTs are queued in
-  `analytics_queue.json` beside preferences and retried until success (held
-  while opted out; HTTP 4xx drops that event so the queue can advance); privacy
-  docs in README, USAGE, SECURITY.
+  `input_file_types` source-extension counts), and `conversion_failed` after
+  a failed job with a closed reason (`xml_parse` / `encode` / `config` /
+  `unknown`); failed POSTs are queued in `analytics_queue.json` beside
+  preferences and retried until success (held while opted out; HTTP 4xx drops
+  that event so the queue can advance); privacy docs in README, USAGE, SECURITY.
 - Preview Action for a first conversion (dest reserved, never written) is
   **Convert** / Not converted yet; **Recreate missing** remains when a prior
   complete or incomplete assignment’s file is gone. The Done report counts

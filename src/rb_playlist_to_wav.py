@@ -44,6 +44,7 @@ from analytics import (
     enable_analytics,
     flush_pending,
     report_conversion,
+    report_failure,
 )
 from rekordbox_xml import (
     discover_xml_candidates,
@@ -285,16 +286,19 @@ def run_convert_batch(
 ) -> int:
     """Prepare all playlists, convert unique (source_key, format) once, apply XML."""
     if not playlist_refs:
+        report_failure(surface="cli", reason="config")
         return 1
     opened = converter_manifest.open_library(wav_dir)
     if opened.error is not None:
         print(opened.error, file=sys.stderr)
+        report_failure(surface="cli", reason="config")
         return 1
     if source_root is None:
         try:
             source_root = load_dj_playlists(xml_path)
         except CliError as exc:
             print(str(exc), file=sys.stderr)
+            report_failure(surface="cli", reason="xml_parse")
             return 1
 
     prepared, errors = prepare_batch(
@@ -312,6 +316,7 @@ def run_convert_batch(
     )
     if errors:
         print_errors(errors)
+        report_failure(surface="cli", reason="config")
         return 1
     assert prepared is not None
     if prepared.skipped:
@@ -332,6 +337,7 @@ def run_convert_batch(
     _info, block = preview_dialog_footer(preview, wav_dir)
     if block is not None:
         print(block, file=sys.stderr)
+        report_failure(surface="cli", reason="config")
         return 1
 
     try:
@@ -340,12 +346,11 @@ def run_convert_batch(
             force=force,
             progress=sys.stderr.isatty(),
         )
-        print(
-            conversion_report_title(
-                stats,
-                missing=sum(len(plan.warnings) for plan in plans),
-            )
+        title = conversion_report_title(
+            stats,
+            missing=sum(len(plan.warnings) for plan in plans),
         )
+        print(title)
         print()
         playlist_pairs: list[tuple[str, object]] = []
         for i, plan in enumerate(plans):
@@ -376,9 +381,11 @@ def run_convert_batch(
         )
     except OSError as exc:
         print(f"cannot write converter manifest: {exc}", file=sys.stderr)
+        report_failure(surface="cli", reason="config")
         return 1
     except CliError as exc:
         print(str(exc), file=sys.stderr)
+        report_failure(surface="cli", reason="encode")
         return 1
     code = conversion_exit_code(stats)
     if code == 0:
@@ -391,6 +398,8 @@ def run_convert_batch(
             stats=stats,
             source_paths=[t.source_path for t in prepared.items],
         )
+    elif title == "Failed":
+        report_failure(surface="cli", reason="encode")
     return code
 
 
@@ -519,6 +528,7 @@ def main(argv: list[str] | None = None) -> int:
             ) = prompt_wizard(args)
         except CliError as exc:
             print(str(exc), file=sys.stderr)
+            report_failure(surface="cli", reason="config")
             return 1
     else:
         assert args.xml is not None and args.playlist is not None
@@ -531,6 +541,7 @@ def main(argv: list[str] | None = None) -> int:
         shared_root = load_dj_playlists(xml_path)
     except CliError as exc:
         print(str(exc), file=sys.stderr)
+        report_failure(surface="cli", reason="xml_parse")
         return 1
 
     return run_convert_batch(

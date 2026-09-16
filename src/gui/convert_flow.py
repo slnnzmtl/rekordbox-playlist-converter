@@ -149,7 +149,9 @@ class ConvertFlowMixin:
                 try:
                     source_root = runtime.load_dj_playlists(handoff.xml_path)
                 except runtime.CliError as exc:
-                    self._ui(lambda e=[str(exc)]: self._finish_error(e))
+                    self._ui(
+                        lambda e=[str(exc)]: self._finish_error(e, reason="xml_parse")
+                    )
                     return
             else:
                 source_root = None
@@ -215,7 +217,7 @@ class ConvertFlowMixin:
         except runtime.CliError as exc:
             self._ui(lambda e=str(exc): self._finish_error(e))
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
-            self._ui(lambda e=str(exc): self._finish_error(e))
+            self._ui(lambda e=str(exc): self._finish_error(e, reason="unknown"))
 
     def _on_prepare_ready(self, prepared: PreparedConversion) -> None:
         if self._cancel_event.is_set():
@@ -424,9 +426,9 @@ class ConvertFlowMixin:
                 )
             )
         except runtime.CliError as exc:
-            self._ui(lambda e=str(exc): self._finish_error(e))
+            self._ui(lambda e=str(exc): self._finish_error(e, reason="encode"))
         except Exception as exc:  # noqa: BLE001 — show unexpected errors in UI
-            self._ui(lambda e=str(exc): self._finish_error(e))
+            self._ui(lambda e=str(exc): self._finish_error(e, reason="unknown"))
         finally:
             self._confirm_prepared = None
 
@@ -452,13 +454,14 @@ class ConvertFlowMixin:
         if errors:
             self._show_conversion_errors(errors)
 
-    def _finish_error(self, message: str | list[str]) -> None:
+    def _finish_error(self, message: str | list[str], *, reason: str = "config") -> None:
         self._close_preview_dialog()
         self._prepared_conversion = None
         self._confirm_prepared = None
         self._set_busy(False)
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Failed.")
+        runtime.report_failure(surface="gui", reason=reason)
         self._show_conversion_errors(message)
 
     def _finish_no_conversions(
@@ -532,6 +535,8 @@ class ConvertFlowMixin:
                 stats=analytics_stats,
                 source_paths=source_paths if source_paths is not None else (),
             )
+        elif title == "Failed":
+            runtime.report_failure(surface="gui", reason="encode")
         snap_progress = 0 if title in {"No conversions", "Failed"} else 100
         self._animate_progress_to(snap_progress, snap=True)
         body = "\n".join(summaries)

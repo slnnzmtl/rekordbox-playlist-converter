@@ -91,6 +91,7 @@ class GuiAnalyticsTests(unittest.TestCase):
             with app_patches(
                 **startup_patches(),
                 report_conversion=None,
+                report_failure=None,
             ) as mocks:
                 root = tk.Tk()
                 root.withdraw()
@@ -129,6 +130,7 @@ class GuiAnalyticsTests(unittest.TestCase):
             with app_patches(
                 **startup_patches(),
                 report_conversion=None,
+                report_failure=None,
             ) as mocks:
                 root = tk.Tk()
                 root.withdraw()
@@ -142,6 +144,136 @@ class GuiAnalyticsTests(unittest.TestCase):
                         analytics_stats=ConvertStats(converted=1),
                     )
                 mocks["report_conversion"].assert_not_called()
+                mocks["report_failure"].assert_not_called()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_finish_report_failed_reports_failure_encode(self) -> None:
+        """Given title Failed: When _finish_report runs: Then report_failure
+        reason=encode is called and report_conversion is not."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with app_patches(
+                **startup_patches(),
+                report_conversion=None,
+                report_failure=None,
+            ) as mocks:
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                with patch.object(app, "_show_done_dialog"):
+                    app._finish_report(
+                        ["failed"],
+                        output="/tmp/out.xml",
+                        output_folder=Path("/tmp"),
+                        title="Failed",
+                        analytics_stats=ConvertStats(errors=["boom"]),
+                    )
+                mocks["report_failure"].assert_called_once_with(
+                    surface="gui", reason="encode"
+                )
+                mocks["report_conversion"].assert_not_called()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_finish_error_reports_failure_config_by_default(self) -> None:
+        """Given _finish_error with no reason: When it runs: Then report_failure
+        reason=config is called."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with app_patches(
+                **startup_patches(),
+                report_failure=None,
+            ) as mocks:
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                with patch.object(app, "_show_conversion_errors"):
+                    app._finish_error("prepare boom")
+                mocks["report_failure"].assert_called_once_with(
+                    surface="gui", reason="config"
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_finish_error_honors_explicit_reason(self) -> None:
+        """Given _finish_error(reason=xml_parse): When it runs: Then that reason
+        is reported."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with app_patches(
+                **startup_patches(),
+                report_failure=None,
+            ) as mocks:
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                with patch.object(app, "_show_conversion_errors"):
+                    app._finish_error(["Invalid XML"], reason="xml_parse")
+                mocks["report_failure"].assert_called_once_with(
+                    surface="gui", reason="xml_parse"
+                )
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_finish_report_done_does_not_report_failure(self) -> None:
+        """Given title Done: When _finish_report runs: Then report_failure is
+        not called."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        root = None
+        try:
+            with app_patches(
+                **startup_patches(),
+                report_conversion=None,
+                report_failure=None,
+            ) as mocks:
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                with patch.object(app, "_show_done_dialog"):
+                    app._finish_report(
+                        ["1 converted"],
+                        output="/tmp/out.xml",
+                        output_folder=Path("/tmp"),
+                        title="Done",
+                        analytics_stats=ConvertStats(converted=1),
+                    )
+                mocks["report_failure"].assert_not_called()
         except tk.TclError:
             self.skipTest("tk.TclError: display not available")
         finally:

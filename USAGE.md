@@ -108,7 +108,7 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 
 ## Privacy
 
-Analytics is **off until you opt in**. In the GUI: Help → **Share anonymous usage analytics**. On the CLI: `--analytics on` (or `off`). The first opt-in sends one anonymous `install` ping; later successful conversions may send aggregate `conversion_completed` counts (format, quality ceiling, converted/copied/skipped/appended) plus a random install UUID. Nothing identifies tracks, playlists, files, or accounts. Failed POSTs are queued locally and retried until success; they never affect conversion. Details: [README.md](README.md#privacy) and [SECURITY.md](SECURITY.md).
+Analytics is **off until you opt in**. In the GUI: Help → **Share anonymous usage analytics**. On the CLI: `--analytics on` (or `off`). The first opt-in sends one anonymous `install` ping; later successful conversions may send aggregate `conversion_completed` counts (format, quality ceiling, converted/copied/skipped/appended); failed conversion jobs may send a slim `conversion_failed` ping with a closed reason (`xml_parse`, `encode`, `config`, or `unknown`) plus a random install UUID. Nothing identifies tracks, playlists, files, or accounts. Failed POSTs are queued locally and retried until success; they never affect conversion. Details: [README.md](README.md#privacy) and [SECURITY.md](SECURITY.md).
 
 ---
 

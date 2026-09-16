@@ -978,8 +978,8 @@ class XmlFixtureTests(XmlFixtureBase):
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             cdj_wav, "is_cdj_safe_wav", return_value=False
         ), patch.object(rb, "report_conversion") as report, patch.object(
-            sys, "stdout", io.StringIO()
-        ):
+            rb, "report_failure"
+        ) as fail, patch.object(sys, "stdout", io.StringIO()):
             rc = rb.main(
                 [
                     "--xml",
@@ -995,6 +995,7 @@ class XmlFixtureTests(XmlFixtureBase):
             )
         self.assertEqual(rc, 0)
         report.assert_not_called()
+        fail.assert_not_called()
 
     def test_successful_convert_reports_conversion_analytics(self) -> None:
         """Given a successful write: When main finishes: Then report_conversion
@@ -1008,8 +1009,8 @@ class XmlFixtureTests(XmlFixtureBase):
         ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
             cdj_wav, "is_cdj_safe_wav", return_value=False
         ), patch.object(rb, "report_conversion") as report, patch.object(
-            sys, "stdout", io.StringIO()
-        ):
+            rb, "report_failure"
+        ) as fail, patch.object(sys, "stdout", io.StringIO()):
             rc = rb.main(
                 [
                     "--xml",
@@ -1025,6 +1026,107 @@ class XmlFixtureTests(XmlFixtureBase):
         self.assertEqual(rc, 0)
         report.assert_called_once()
         self.assertEqual(report.call_args.kwargs["surface"], "cli")
+        fail.assert_not_called()
+
+    def test_invalid_xml_reports_failure_xml_parse(self) -> None:
+        """Given load_dj_playlists raises CliError: When main runs: Then
+        report_failure(reason=xml_parse) is called."""
+        from cli_error import CliError
+
+        with patch.object(
+            rb, "load_dj_playlists", side_effect=CliError("Invalid XML: broken")
+        ), patch.object(rb, "report_failure") as fail, patch.object(
+            rb, "report_conversion"
+        ) as report, patch.object(sys, "stderr", io.StringIO()):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 1)
+        fail.assert_called_once_with(surface="cli", reason="xml_parse")
+        report.assert_not_called()
+
+    def test_prepare_errors_report_failure_config(self) -> None:
+        """Given prepare_batch returns errors: When run_convert_batch runs: Then
+        report_failure(reason=config) is called."""
+        with patch.object(
+            rb, "prepare_batch", return_value=(None, ["prepare boom"])
+        ), patch.object(rb, "report_failure") as fail, patch.object(
+            rb, "report_conversion"
+        ) as report, patch.object(sys, "stderr", io.StringIO()):
+            rc = rb.run_convert_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+                force=False,
+                dry_run=False,
+            )
+        self.assertEqual(rc, 1)
+        fail.assert_called_once_with(surface="cli", reason="config")
+        report.assert_not_called()
+
+    def test_failed_batch_reports_failure_encode(self) -> None:
+        """Given execute finishes with all tracks failed: When run_convert_batch
+        runs: Then report_failure(reason=encode) is called."""
+        from convert.models import ConvertStats, ItemResult
+        from unittest.mock import MagicMock
+
+        failed_stats = ConvertStats(
+            item_results=[
+                ItemResult(
+                    source=Path("/x/a.flac"),
+                    destination=Path("/y/a.wav"),
+                    action="transcode",
+                    outcome="failed",
+                    error="boom",
+                )
+            ]
+        )
+        plan = MagicMock()
+        plan.warnings = []
+        plan.wav_playlist_name = "P [WAV]"
+        plan.output = self.output
+        prepared = MagicMock()
+        prepared.skipped = []
+        prepared.plans = [plan]
+        prepared.preview = MagicMock()
+        prepared.items = []
+        with patch.object(rb, "prepare_batch", return_value=(prepared, [])), patch.object(
+            rb.converter_manifest,
+            "open_library",
+            return_value=MagicMock(error=None, manifest=None, fingerprint=None),
+        ), patch.object(
+            rb, "preview_dialog_footer", return_value=(None, None)
+        ), patch.object(
+            rb.convert_write, "execute_prepared", return_value=failed_stats
+        ), patch.object(rb, "print_summary"), patch.object(
+            rb, "print_import_hints"
+        ), patch.object(rb, "stats_for_playlist", return_value=ConvertStats()), patch.object(
+            rb, "report_failure"
+        ) as fail, patch.object(rb, "report_conversion") as report, patch.object(
+            sys, "stdout", io.StringIO()
+        ), patch.object(sys, "stderr", io.StringIO()):
+            rc = rb.run_convert_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+                force=False,
+                dry_run=False,
+                source_root=ET.Element("DJ_PLAYLISTS"),
+            )
+        self.assertEqual(rc, 1)
+        fail.assert_called_once_with(surface="cli", reason="encode")
+        report.assert_not_called()
 
     def test_main_analytics_off_only_persists_and_exits_zero(self) -> None:
         """Given --analytics off with no convert args: When main runs: Then
