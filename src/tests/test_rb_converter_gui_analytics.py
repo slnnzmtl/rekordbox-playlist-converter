@@ -41,6 +41,8 @@ class GuiAnalyticsTests(unittest.TestCase):
                 app._on_analytics_toggle()
                 mocks["enable_analytics"].assert_called_once_with(surface="gui")
                 mocks["disable_analytics"].assert_not_called()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
         finally:
             if root is not None:
                 root.destroy()
@@ -69,6 +71,8 @@ class GuiAnalyticsTests(unittest.TestCase):
                 app._on_analytics_toggle()
                 mocks["disable_analytics"].assert_called_once_with()
                 mocks["enable_analytics"].assert_not_called()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
         finally:
             if root is not None:
                 root.destroy()
@@ -105,6 +109,8 @@ class GuiAnalyticsTests(unittest.TestCase):
                 kwargs = mocks["report_conversion"].call_args.kwargs
                 self.assertEqual(kwargs["surface"], "gui")
                 self.assertIs(kwargs["stats"], stats)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
         finally:
             if root is not None:
                 root.destroy()
@@ -136,6 +142,8 @@ class GuiAnalyticsTests(unittest.TestCase):
                         analytics_stats=ConvertStats(converted=1),
                     )
                 mocks["report_conversion"].assert_not_called()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
         finally:
             if root is not None:
                 root.destroy()
@@ -203,6 +211,8 @@ class GuiAnalyticsTests(unittest.TestCase):
                 self.assertIn("ffmpeg exited 1", statuses["Failed"].detail)
                 guidance = kwargs.get("guidance") or ""
                 self.assertIn("Import into Rekordbox", guidance)
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
         finally:
             if root is not None:
                 root.destroy()
