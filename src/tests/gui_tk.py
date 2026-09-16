@@ -65,6 +65,7 @@ def startup_patches(
         ),
         "show_centered_message": None,
         "ask_centered_yesno": {"return_value": True},
+        "flush_pending": None,
     }
     result.update(extra)
     return result

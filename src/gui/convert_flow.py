@@ -391,9 +391,16 @@ class ConvertFlowMixin:
                 cancelled=self._cancel_event.is_set(),
                 missing=sum(len(plan.warnings) for plan in plans),
             )
+            source_root = getattr(plans[0], "source_root", None) if plans else None
             self._ui(
-                lambda s=summaries, o=out, folder=output.parent, t=title, p=playlist_pairs: self._finish_report(
-                    s, o, folder, title=t, playlists=p
+                lambda s=summaries, o=out, folder=output.parent, t=title, p=playlist_pairs, st=batch_stats, root=source_root: self._finish_report(
+                    s,
+                    o,
+                    folder,
+                    title=t,
+                    playlists=p,
+                    analytics_stats=st,
+                    analytics_source_root=root,
                 )
             )
         except runtime.CliError as exc:
@@ -484,10 +491,21 @@ class ConvertFlowMixin:
         *,
         title: str,
         playlists: list[tuple[str, object]] | None = None,
+        analytics_stats: ConvertStats | None = None,
+        analytics_source_root=None,
     ) -> None:
         self._prepared_conversion = None
         self._confirm_prepared = None
         self._set_busy(False)
+        if title == "Done" and analytics_stats is not None:
+            runtime.report_conversion(
+                surface="gui",
+                source_root=analytics_source_root,
+                output_format=coerce_output_format(self.format_var.get()),
+                bit_depth=coerce_bit_depth(self.bit_depth_var.get()),
+                sample_rate=coerce_sample_rate(self.sample_rate_var.get()),
+                stats=analytics_stats,
+            )
         snap_progress = 0 if title in {"No conversions", "Failed"} else 100
         self._animate_progress_to(snap_progress, snap=True)
         body = "\n".join(summaries)

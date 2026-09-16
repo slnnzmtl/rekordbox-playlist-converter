@@ -136,6 +136,86 @@ class LoadPreferencesTests(unittest.TestCase):
             self.assertEqual(load_preferences(config_path=config), {})
 
 
+class AnalyticsPreferencesTests(unittest.TestCase):
+    def test_analytics_defaults_off_when_missing(self) -> None:
+        """Given prefs without analytics: When load_preferences runs:
+        Then analytics is absent (callers treat missing as off)."""
+        from gui_prefs import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            config.write_text(
+                json.dumps({"version": 1, "library_dir": "/tmp/x"}),
+                encoding="utf-8",
+            )
+            loaded = load_preferences(config_path=config)
+            self.assertNotIn("analytics", loaded)
+            self.assertNotIn("install_id", loaded)
+
+    def test_save_and_load_analytics_and_install_id(self) -> None:
+        """Given analytics on and an install_id: When save then load:
+        Then both keys round-trip."""
+        from gui_prefs import load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            save_preferences(
+                analytics="on",
+                install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                config_path=config,
+            )
+            loaded = load_preferences(config_path=config)
+            self.assertEqual(loaded["analytics"], "on")
+            self.assertEqual(
+                loaded["install_id"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            )
+            self.assertNotIn("library_dir", loaded)
+
+    def test_save_library_preserves_analytics_keys(self) -> None:
+        """Given analytics prefs stored: When save_preferences updates library:
+        Then analytics and install_id remain."""
+        from gui_prefs import load_preferences, save_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            wav_dir = Path(tmp) / "wav-out"
+            wav_dir.mkdir()
+            save_preferences(
+                analytics="on",
+                install_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                config_path=config,
+            )
+            save_preferences(wav_dir, config_path=config)
+            loaded = load_preferences(config_path=config)
+            self.assertEqual(loaded["library_dir"], str(wav_dir.resolve()))
+            self.assertEqual(loaded["analytics"], "on")
+            self.assertEqual(
+                loaded["install_id"], "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            )
+
+    def test_load_preferences_ignores_invalid_analytics_and_install_id(self) -> None:
+        """Given bad analytics/install_id values: When load: Then they are omitted."""
+        from gui_prefs import load_preferences
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "preferences.json"
+            config.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "library_dir": "/tmp/x",
+                        "analytics": "maybe",
+                        "install_id": "not-a-uuid",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            loaded = load_preferences(config_path=config)
+            self.assertEqual(loaded["library_dir"], "/tmp/x")
+            self.assertNotIn("analytics", loaded)
+            self.assertNotIn("install_id", loaded)
+
+
 class DefaultOutputPathsTests(unittest.TestCase):
     def test_default_output_paths_uses_documents_when_access_ok(self) -> None:
         from gui_prefs import default_output_paths

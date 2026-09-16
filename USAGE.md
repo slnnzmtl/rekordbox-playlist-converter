@@ -101,6 +101,13 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 | `--output` | `<wav-dir>/rekordbox-import.xml` | Optional override; default derived from `--wav-dir` |
 | `--force` | off | Rebuild files that already match the profile |
 | `--dry-run` | off | Print the conversion plan; write nothing |
+| `--analytics` | unset | `on` or `off`; persist consent (alone exits after saving) |
+
+---
+
+## Privacy
+
+Analytics is **off until you opt in**. In the GUI: Help → **Share anonymous usage analytics**. On the CLI: `--analytics on` (or `off`). The first opt-in sends one anonymous `install` ping; later successful conversions may send aggregate `conversion_completed` counts (format, quality ceiling, converted/copied/skipped/appended) plus a random install UUID. Nothing identifies tracks, playlists, files, or accounts. Failed POSTs are queued locally and retried until success; they never affect conversion. Details: [README.md](README.md#privacy) and [SECURITY.md](SECURITY.md).
 
 ---
 

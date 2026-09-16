@@ -833,6 +833,97 @@ class XmlFixtureTests(XmlFixtureBase):
         )
         self.assertEqual(args.output, Path("/tmp/custom-import.xml"))
 
+    def test_parse_args_analytics_default_none(self) -> None:
+        """Given no --analytics: When parse_args runs: Then analytics is None."""
+        args = rb.parse_args(["--xml", "in.xml", "--playlist", "P"])
+        self.assertIsNone(args.analytics)
+
+    def test_parse_args_analytics_on(self) -> None:
+        """Given --analytics on: When parse_args runs: Then analytics is on."""
+        args = rb.parse_args(["--analytics", "on"])
+        self.assertEqual(args.analytics, "on")
+
+    def test_main_analytics_on_only_persists_and_exits_zero(self) -> None:
+        """Given --analytics on with no convert args: When main runs: Then
+        enable_analytics is called and exit is 0 without converting."""
+        with patch.object(rb, "enable_analytics") as enable, patch.object(
+            rb, "run_convert_batch"
+        ) as batch:
+            rc = rb.main(["--analytics", "on"])
+        self.assertEqual(rc, 0)
+        enable.assert_called_once_with(surface="cli")
+        batch.assert_not_called()
+
+    def test_dry_run_does_not_report_conversion_analytics(self) -> None:
+        """Given --dry-run: When main converts: Then report_conversion is not called."""
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ), patch.object(rb, "report_conversion") as report, patch.object(
+            sys, "stdout", io.StringIO()
+        ):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                    "--dry-run",
+                ]
+            )
+        self.assertEqual(rc, 0)
+        report.assert_not_called()
+
+    def test_successful_convert_reports_conversion_analytics(self) -> None:
+        """Given a successful write: When main finishes: Then report_conversion
+        is called with surface cli."""
+        def fake_ffmpeg(source: Path, dest: Path, codec: str, force: bool, **_kwargs) -> None:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ), patch.object(rb, "report_conversion") as report, patch.object(
+            sys, "stdout", io.StringIO()
+        ):
+            rc = rb.main(
+                [
+                    "--xml",
+                    str(self.xml_path),
+                    "--playlist",
+                    "Untitled Intelligent List",
+                    "--wav-dir",
+                    str(self.wav_dir),
+                    "--output",
+                    str(self.output),
+                ]
+            )
+        self.assertEqual(rc, 0)
+        report.assert_called_once()
+        self.assertEqual(report.call_args.kwargs["surface"], "cli")
+
+    def test_main_analytics_off_only_persists_and_exits_zero(self) -> None:
+        """Given --analytics off with no convert args: When main runs: Then
+        disable_analytics is called and exit is 0."""
+        with patch.object(rb, "disable_analytics") as disable, patch.object(
+            rb, "run_convert_batch"
+        ) as batch:
+            rc = rb.main(["--analytics", "off"])
+        self.assertEqual(rc, 0)
+        disable.assert_called_once_with()
+        batch.assert_not_called()
+
     def test_prompt_paths_skips_xml_when_output_not_overridden(self) -> None:
         """Given no explicit --output: When prompt_paths runs: Then only the
         audio directory is prompted and XML is derived."""

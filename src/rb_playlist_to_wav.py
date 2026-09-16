@@ -36,6 +36,13 @@ from convert.preview import (
     preview_write_bytes,
 )
 from gui_prefs import import_xml_path
+from analytics import (
+    analytics_enabled,
+    disable_analytics,
+    enable_analytics,
+    flush_pending,
+    report_conversion,
+)
 from rekordbox_xml import (
     discover_xml_candidates,
     iter_playlists,
@@ -120,6 +127,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Validate and print the plan without converting or writing",
+    )
+    parser.add_argument(
+        "--analytics",
+        choices=("on", "off"),
+        default=None,
+        help=(
+            "Opt in or out of anonymous usage analytics "
+            "(persisted; alone exits after saving)"
+        ),
     )
     return parser.parse_args(argv)
 
@@ -353,7 +369,17 @@ def run_convert_batch(
     except CliError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    return conversion_exit_code(stats)
+    code = conversion_exit_code(stats)
+    if code == 0:
+        report_conversion(
+            surface="cli",
+            source_root=source_root,
+            output_format=output_format,
+            bit_depth=max_bit_depth,
+            sample_rate=max_sample_rate,
+            stats=stats,
+        )
+    return code
 
 
 def print_errors(errors: list[str]) -> None:
@@ -450,6 +476,14 @@ def print_summary(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.analytics == "on":
+        enable_analytics(surface="cli")
+    elif args.analytics == "off":
+        disable_analytics()
+    elif analytics_enabled():
+        flush_pending()
+    if args.analytics is not None and args.xml is None and args.playlist is None:
+        return 0
     need_wizard = args.xml is None or args.playlist is None
     output_format = args.format
     max_bit_depth = args.bit_depth

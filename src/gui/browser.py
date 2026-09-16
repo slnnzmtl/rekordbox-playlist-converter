@@ -17,6 +17,8 @@ def build_menubar(
     on_search_xml: Callable[[], None],
     on_usage: Callable[[], None],
     on_updates: Callable[[], None],
+    analytics_var: tk.BooleanVar,
+    on_analytics_toggle: Callable[[], None],
 ) -> tk.Menu:
     menubar = tk.Menu(root)
     file_menu = tk.Menu(menubar, tearoff=0)
@@ -34,6 +36,12 @@ def build_menubar(
     help_menu.add_command(
         label="Check for Updates…",
         command=on_updates,
+    )
+    help_menu.add_separator()
+    help_menu.add_checkbutton(
+        label="Share anonymous usage analytics",
+        variable=analytics_var,
+        command=on_analytics_toggle,
     )
     menubar.add_cascade(label="Help", menu=help_menu)
     root.config(menu=menubar)
@@ -88,11 +96,15 @@ def build_tracklist_pane(
     tracklist_tree, track_scroll = tree_with_yscroll(
         right,
         columns=TRACKLIST_VALUE_COLUMNS,
-        show="tree headings",
+        show="headings",
         selectmode="extended",
         height=12,
     )
-    tracklist_tree.heading("#0", text="")
+    # Nested leaves still indent under the first value column; zero that out so
+    # the ! / # columns stay narrow (groups still open/close via twisty).
+    style = ttk.Style(tracklist_tree)
+    style.configure("Tracklist.Treeview", indent=0)
+    tracklist_tree.configure(style="Tracklist.Treeview")
     tracklist_tree.heading(
         "missing",
         text="!",
@@ -136,9 +148,8 @@ def build_tracklist_pane(
         anchor="w",
         command=lambda: on_sort("rating"),
     )
-    # Native #0 expander stays left of every value column; collapse it and use
-    # a twisty value column after # so the arrow sits after the id.
-    tracklist_tree.column("#0", width=0, stretch=False, anchor="center", minwidth=0)
+    # show=headings hides the native #0 expander; the twisty value column
+    # after # is the only expand/collapse control.
     tracklist_tree.column(
         "missing", width=28, stretch=False, anchor="center", minwidth=28
     )

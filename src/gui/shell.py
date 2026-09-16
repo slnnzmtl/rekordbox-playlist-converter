@@ -312,12 +312,20 @@ class ShellMixin:
             on_search_xml=self._search_rekordbox_xml,
             on_usage=self._show_usage_guide,
             on_updates=self._check_for_updates_manual,
+            analytics_var=self.analytics_var,
+            on_analytics_toggle=self._on_analytics_toggle,
         )
         try:
             self.root.bind_all("<Command-?>", lambda _e: self._show_usage_guide())
             self.root.bind_all("<Command-Shift-/>", lambda _e: self._show_usage_guide())
         except tk.TclError:
             pass
+
+    def _on_analytics_toggle(self) -> None:
+        if self.analytics_var.get():
+            runtime.enable_analytics(surface="gui")
+        else:
+            runtime.disable_analytics()
 
     def _search_rekordbox_xml(self) -> None:
         if self._busy:

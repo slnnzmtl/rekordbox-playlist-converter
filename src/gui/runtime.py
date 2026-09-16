@@ -29,6 +29,12 @@ from gui_prefs import (
     resolve_startup_paths,
     save_preferences,
 )
+from analytics import (
+    disable_analytics,
+    enable_analytics,
+    flush_pending,
+    report_conversion,
+)
 from import_edit import load_import_edit_draft, save_import_edit_draft
 from rekordbox_xml import (
     collection_indexes,
@@ -78,6 +84,10 @@ __all__ = [
     "execute_prepared",
     "load_preferences",
     "save_preferences",
+    "enable_analytics",
+    "disable_analytics",
+    "flush_pending",
+    "report_conversion",
     "resolve_startup_paths",
     "find_rekordbox_xml_via_child",
     "probe_path_via_child",

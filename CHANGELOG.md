@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Opt-in anonymous usage analytics (default off): Help checkbutton or
+  `--analytics on|off`; one `install` event on first opt-in and
+  `conversion_completed` after successful writes; failed POSTs are queued in
+  `analytics_queue.json` beside preferences and retried until success (held
+  while opted out; HTTP 4xx drops that event so the queue can advance); privacy
+  docs in README, USAGE, SECURITY.
 - Preview Action for a first conversion (dest reserved, never written) is
   **Convert** / Not converted yet; **Recreate missing** remains when a prior
   complete or incomplete assignment’s file is gone. The Done report counts
@@ -46,8 +52,8 @@ new folder).
 - Recorded Rekordbox 6/7 compatibility and packaged-app smoke checks live in
   [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
   (empty = untested).
-- The GUI may contact GitHub Releases to check for updates. There is no
-  analytics client.
+- The GUI may contact GitHub Releases to check for updates. Optional
+  analytics (default off) is documented separately; see Unreleased.
 - Manifest **v2** is the first released converter-library contract. Unreleased v1
   and unknown future versions are refused; leftover managed audio still causes
   folder validation to reject the library, so recreate the whole development

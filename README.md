@@ -37,9 +37,10 @@ Download **Simple Rekordbox Converter.app** from [Releases](https://github.com/s
 
 1. **Download and first launch.** The app is ad-hoc signed: if Gatekeeper blocks it, right-click → **Open**. macOS may ask for Documents access; if you decline, the app still opens and defaults to `~/rekordbox-converter` (Browse… can prompt again in Documents).
 2. **Updates.** On launch the app may check [GitHub Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases) for a newer version (Help → **Check for Updates…**). See [SECURITY.md](SECURITY.md).
-3. **Rekordbox XML.** Export the collection from Rekordbox (File → Export Collection in xml format), then choose it in the app. Refresh the export after you change cues in Rekordbox. The app remembers the last XML and output folder. Defaults write to `~/Documents/rekordbox-converter`. Import XML is always `<output folder>/rekordbox-import.xml`.
-4. **Convert.** Select playlists and tracks, WAV or AIFF, and a quality ceiling. **Convert** opens a preview of destination, action, reason, and size. Unresolved **conflicts** (files changed outside the app) disable Convert. **Back** writes nothing. Progress can be **Cancel**led; the Done report still lists successes, failures, and Import XML steps, with **Reveal output folder**.
-5. **Import in Rekordbox.** Point **Imported Library** at that XML, refresh the rekordbox xml pane, then Import Playlist / drag the `[WAV]` or `[AIFF]` playlist. **Edit** on a generated library can remove playlists or tracks (Save moves owned audio to Trash; Cancel discards). Source Rekordbox XML stays read-only.
+3. **Analytics (optional).** Help → **Share anonymous usage analytics** is off by default. When enabled, the app sends one anonymous install ping and later aggregate conversion counts only. See [Privacy](#privacy).
+4. **Rekordbox XML.** Export the collection from Rekordbox (File → Export Collection in xml format), then choose it in the app. Refresh the export after you change cues in Rekordbox. The app remembers the last XML and output folder. Defaults write to `~/Documents/rekordbox-converter`. Import XML is always `<output folder>/rekordbox-import.xml`.
+5. **Convert.** Select playlists and tracks, WAV or AIFF, and a quality ceiling. **Convert** opens a preview of destination, action, reason, and size. Unresolved **conflicts** (files changed outside the app) disable Convert. **Back** writes nothing. Progress can be **Cancel**led; the Done report still lists successes, failures, and Import XML steps, with **Reveal output folder**.
+6. **Import in Rekordbox.** Point **Imported Library** at that XML, refresh the rekordbox xml pane, then Import Playlist / drag the `[WAV]` or `[AIFF]` playlist. **Edit** on a generated library can remove playlists or tracks (Save moves owned audio to Trash; Cancel discards). Source Rekordbox XML stays read-only.
 
 **Help → How to Use…** is the same click-path. Details: [USAGE.md](USAGE.md). Compatibility evidence: [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md).
 
@@ -117,9 +118,21 @@ Most people can ignore this and use the prompts.
 | `--output`   | `<wav-dir>/rekordbox-import.xml` | Optional override; default is derived from `--wav-dir`          |
 | `--force`    | off                                 | Rebuild even if dest already matches the profile                |
 | `--dry-run`  | off                                 | Print the conversion plan; write nothing                        |
+| `--analytics` | unset                              | `on` or `off`; persist consent (alone exits after saving)       |
 
 
 Layout is `WAV|AIFF/<artist> - <track>` (no Album or quality directories). Assignments are sticky per source and format; `(2)` / `(3)` suffixes apply only when different sources would share a name. If you delete a generated audio file, the next run recreates it at the same assignment. `--dry-run` prints the same plan the GUI Convert preview shows. Keep the output folder where it is after import — moving files later breaks the paths Rekordbox stored.
+
+## Privacy
+
+Analytics is **off until you opt in** (GUI: Help → **Share anonymous usage analytics**; CLI: `--analytics on`). Opting out again keeps your anonymous install id but stops further events.
+
+When enabled, the client may `POST` to `https://analytics.slnnzmtl.xyz/v1/events`:
+
+- One **`install`** event the first time you opt in (app version, GUI/CLI surface, random install UUID).
+- A **`conversion_completed`** event after a successful write (not dry-run, preview, cancel, or failure): app version, Rekordbox `PRODUCT@Version`, surface, selected format/quality ceiling, and aggregate converted/copied/skipped/appended counts, plus the same install UUID.
+
+It does **not** send track titles, artists, paths, playlist names, XML, accounts, devices, or session ids. Posts use a short timeout and never change conversion results. Failed sends are stored in `analytics_queue.json` next to preferences and retried while analytics stays on (the queue is kept, not sent, while opted out). Permanent HTTP 4xx responses drop that event so later queued events can still send. The ingest URL is public (no secret in the app). See also [SECURITY.md](SECURITY.md).
 
 ## Tests
 

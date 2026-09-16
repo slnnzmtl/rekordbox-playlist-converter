@@ -61,6 +61,9 @@ class ConverterApp(ImportEditMixin, ConvertFlowMixin, PlaylistsMixin, ShellMixin
         self.sample_rate_var = tk.StringVar(
             value=str(coerce_sample_rate(saved_prefs.get("sample_rate", "48000")))
         )
+        self.analytics_var = tk.BooleanVar(
+            value=saved_prefs.get("analytics") == "on"
+        )
         self.search_var = tk.StringVar()
         self.track_search_var = tk.StringVar()
         self._playlist_search = SearchPlaceholder(self.search_var, constants.SEARCH_PLACEHOLDER)
@@ -152,5 +155,7 @@ class ConverterApp(ImportEditMixin, ConvertFlowMixin, PlaylistsMixin, ShellMixin
         else:
             self._apply_documents_access(documents_accessible)
         self._start_update_check(manual=False)
+        if saved_prefs.get("analytics") == "on":
+            self.root.after_idle(runtime.flush_pending)
 
 
