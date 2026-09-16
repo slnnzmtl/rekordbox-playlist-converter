@@ -23,6 +23,7 @@ ACTION_LABELS = {
     "recreate_missing": "Recreate missing",
     "external_modification_conflict": "Conflict",
     "in_place_noop": "In-place skip",
+    "missing_source": "Missing",
 }
 
 REASON_LABELS = {
@@ -38,6 +39,7 @@ REASON_LABELS = {
     "revision_changed": "Converter revision requires a container rebuild",
     "metadata_changed": "Rekordbox metadata changed",
     "unchanged": "Output is already current",
+    "source_missing": "Source file is missing",
 }
 
 ACTION_WRITE_KIND = {
@@ -49,6 +51,7 @@ ACTION_WRITE_KIND = {
     "rewrite_container": "audio",
     "transcode": "audio",
     "recreate_missing": "audio",
+    "missing_source": "none",
 }
 
 WRITE_KIND_LABELS = {

@@ -126,7 +126,8 @@ def show_conversion_preview_dialog(
     action_labels: dict[str, str],
     bit_depth_labels: dict[str, str],
     sample_rate_labels: dict[str, str],
-    space_issue: str | None,
+    info_message: str | None,
+    block_message: str | None,
     on_back: Callable[[], None],
     on_convert: Callable[[], None],
     place_over: Callable[[tk.Toplevel], None],
@@ -196,11 +197,16 @@ def show_conversion_preview_dialog(
         )
 
     btn_row = 2
-    if space_issue:
-        issue_label = ttk.Label(frm, text=space_issue, foreground="#a40000")
-        issue_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
-        bind_wraplength(issue_label, frm, inset=32)
+    if info_message:
+        info_label = ttk.Label(frm, text=info_message)
+        info_label.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        bind_wraplength(info_label, frm, inset=32)
         btn_row = 3
+    if block_message:
+        issue_label = ttk.Label(frm, text=block_message, foreground="#a40000")
+        issue_label.grid(row=btn_row, column=0, sticky="w", pady=(8, 0))
+        bind_wraplength(issue_label, frm, inset=32)
+        btn_row += 1
 
     btns = ttk.Frame(frm)
     btns.grid(row=btn_row, column=0, sticky="ew", pady=(12, 0))
@@ -213,7 +219,7 @@ def show_conversion_preview_dialog(
         btns, text="Convert", command=on_convert, width=ACTION_BUTTON_WIDTH
     )
     convert_btn.grid(row=0, column=1, sticky="e")
-    if space_issue:
+    if block_message:
         convert_btn.configure(state=tk.DISABLED)
     dlg.protocol("WM_DELETE_WINDOW", on_back)
     dlg.bind("<Escape>", lambda _e: on_back())

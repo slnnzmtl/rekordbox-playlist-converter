@@ -576,6 +576,238 @@ class ConversionPreviewDialogTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_preview_shows_size_info_when_space_ok(self) -> None:
+        """Given enough free space and audio to write: When preview opens:
+        Then a neutral size info line is shown and Convert stays enabled."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import tkinter.ttk as ttk
+        from types import SimpleNamespace
+        from rb_converter_gui import ConverterApp
+
+        preview = ConversionPreview(
+            selected=1,
+            resolved=1,
+            unique_outputs=1,
+            duplicates=0,
+            missing=0,
+            items=[
+                ConversionPreviewItem(
+                    relative_dest="WAV/A - One.wav",
+                    action="transcode",
+                    bit_depth=16,
+                    sample_rate=44100,
+                    size_bytes=5_000_000,
+                    size_display="≈ 4.8 MB",
+                    source_display="one.flac",
+                    write_kind="audio",
+                    output_format="wav",
+                ),
+            ],
+        )
+        prepared = replace(mock_prepared_conversion(n_unique=1), preview=preview)
+
+        def find_toplevel(parent, title: str):
+            for child in parent.winfo_children():
+                if isinstance(child, tk.Toplevel):
+                    try:
+                        if child.title() == title:
+                            return child
+                    except tk.TclError:
+                        continue
+            return None
+
+        def find_label_with_text(widget, needle: str):
+            try:
+                if isinstance(widget, ttk.Label) and needle in str(widget.cget("text")):
+                    return widget
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                found = find_label_with_text(child, needle)
+                if found is not None:
+                    return found
+            return None
+
+        def find_convert_btn(widget):
+            try:
+                if (
+                    isinstance(widget, ttk.Button)
+                    and str(widget.cget("text")) == "Convert"
+                ):
+                    return widget
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                found = find_convert_btn(child)
+                if found is not None:
+                    return found
+            return None
+
+        root = None
+        try:
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "save_preferences": None,
+                        "prepare_batch": {"return_value": (prepared, [])},
+                        "threading.Thread": {"side_effect": run_inline_thread},
+                    },
+                )
+            ), patch.object(
+                ConverterApp,
+                "_selected_playlists",
+                return_value=[("ROOT", "Test")],
+            ), patch(
+                "convert.preview.shutil.disk_usage",
+                return_value=SimpleNamespace(free=10_000_000),
+            ):
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app.xml_var.set("/tmp/test.xml")
+                seed_track_selection(app)
+                mark_output_folder_valid(app)
+                app._start_convert()
+                pump_ui(root)
+
+                dlg = find_toplevel(root, "Conversion preview")
+                self.assertIsNotNone(dlg)
+                info = find_label_with_text(dlg, "needed after conversion")
+                self.assertIsNotNone(info)
+                convert_btn = find_convert_btn(dlg)
+                self.assertIsNotNone(convert_btn)
+                self.assertEqual(str(convert_btn.cget("state")), "normal")
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
+    def test_preview_disables_convert_when_nothing_to_convert(self) -> None:
+        """Given only missing sources: When preview opens: Then block message
+        is shown, missing rows appear, and Convert is disabled."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import tkinter.ttk as ttk
+        from rb_converter_gui import ConverterApp
+
+        preview = ConversionPreview(
+            selected=2,
+            resolved=0,
+            unique_outputs=0,
+            duplicates=0,
+            missing=2,
+            items=[
+                ConversionPreviewItem(
+                    relative_dest="—",
+                    action="missing_source",
+                    bit_depth=0,
+                    sample_rate=0,
+                    size_display="—",
+                    source_display="gone.flac",
+                    reason="Source file is missing",
+                    write_kind="none",
+                    reason_code="source_missing",
+                    output_format="",
+                ),
+            ],
+        )
+        prepared = replace(mock_prepared_conversion(n_unique=0), preview=preview)
+
+        def find_toplevel(parent, title: str):
+            for child in parent.winfo_children():
+                if isinstance(child, tk.Toplevel):
+                    try:
+                        if child.title() == title:
+                            return child
+                    except tk.TclError:
+                        continue
+            return None
+
+        def find_label_with_text(widget, needle: str):
+            try:
+                if isinstance(widget, ttk.Label) and needle in str(widget.cget("text")):
+                    return widget
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                found = find_label_with_text(child, needle)
+                if found is not None:
+                    return found
+            return None
+
+        def find_convert_btn(widget):
+            try:
+                if (
+                    isinstance(widget, ttk.Button)
+                    and str(widget.cget("text")) == "Convert"
+                ):
+                    return widget
+            except tk.TclError:
+                pass
+            for child in widget.winfo_children():
+                found = find_convert_btn(child)
+                if found is not None:
+                    return found
+            return None
+
+        def find_treeview(widget):
+            if isinstance(widget, ttk.Treeview):
+                return widget
+            for child in widget.winfo_children():
+                found = find_treeview(child)
+                if found is not None:
+                    return found
+            return None
+
+        root = None
+        try:
+            with app_patches(
+                merge_patches(
+                    startup_patches(),
+                    {
+                        "save_preferences": None,
+                        "prepare_batch": {"return_value": (prepared, [])},
+                        "threading.Thread": {"side_effect": run_inline_thread},
+                    },
+                )
+            ), patch.object(
+                ConverterApp,
+                "_selected_playlists",
+                return_value=[("ROOT", "Test")],
+            ):
+                root = tk.Tk()
+                root.withdraw()
+                app = ConverterApp(root, documents_accessible=False)
+                app.xml_var.set("/tmp/test.xml")
+                seed_track_selection(app)
+                mark_output_folder_valid(app)
+                app._start_convert()
+                pump_ui(root)
+
+                dlg = find_toplevel(root, "Conversion preview")
+                self.assertIsNotNone(dlg)
+                block = find_label_with_text(dlg, "Nothing to convert")
+                self.assertIsNotNone(block)
+                table = find_treeview(dlg)
+                self.assertIsNotNone(table)
+                rows = [table.item(iid, "text") for iid in table.get_children("")]
+                self.assertIn("gone.flac", rows)
+                convert_btn = find_convert_btn(dlg)
+                self.assertIsNotNone(convert_btn)
+                self.assertEqual(str(convert_btn.cget("state")), "disabled")
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        finally:
+            if root is not None:
+                root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -228,7 +228,7 @@ class ConvertFlowMixin:
         self._close_preview_dialog()
         preview = prepared.preview
         summary = format_preview_summary(preview)
-        space_issue = runtime.preview_block_message(
+        info_message, block_message = runtime.preview_dialog_footer(
             preview,
             prepared.library_dir,
         )
@@ -239,7 +239,8 @@ class ConvertFlowMixin:
             action_labels=ACTION_LABELS,
             bit_depth_labels=constants.BIT_DEPTH_LABELS,
             sample_rate_labels=constants.SAMPLE_RATE_LABELS,
-            space_issue=space_issue,
+            info_message=info_message,
+            block_message=block_message,
             on_back=self._discard_prepared_conversion,
             on_convert=self._confirm_prepared_conversion,
             place_over=self._place_dialog_over_app,
@@ -274,12 +275,12 @@ class ConvertFlowMixin:
         prepared = self._prepared_conversion
         if prepared is None:
             return
-        space_issue = runtime.preview_block_message(
+        block_message = runtime.preview_block_message(
             prepared.preview,
             prepared.library_dir,
         )
-        if space_issue:
-            runtime.show_centered_message(self.root, "Cannot convert", space_issue)
+        if block_message:
+            runtime.show_centered_message(self.root, "Cannot convert", block_message)
             return
         self._close_preview_dialog()
         self._prepared_conversion = None

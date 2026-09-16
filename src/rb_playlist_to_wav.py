@@ -33,6 +33,7 @@ from convert.preview import (
     format_preview_summary,
     insufficient_output_space_message,
     preview_block_message,
+    preview_dialog_footer,
     preview_write_bytes,
 )
 from gui_prefs import import_xml_path
@@ -320,12 +321,14 @@ def run_convert_batch(
 
     if dry_run:
         print_conversion_preview(plans, preview)
-        block = preview_block_message(preview, wav_dir)
+        info, block = preview_dialog_footer(preview, wav_dir)
+        if info:
+            print(info)
         if block is not None:
             print(block, file=sys.stderr)
         return 0
 
-    block = preview_block_message(preview, wav_dir)
+    _info, block = preview_dialog_footer(preview, wav_dir)
     if block is not None:
         print(block, file=sys.stderr)
         return 1

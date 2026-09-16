@@ -40,6 +40,8 @@ DEFAULT_OUTPUT = Path("output") / "rekordbox-import.xml"
 WAV_SUFFIX = " [WAV]"
 AIFF_SUFFIX = " [AIFF]"
 
+MISSING_SOURCE_FILE_PREFIX = "missing source file: "
+
 CONVERT_WORKERS_MIN = 2
 CONVERT_WORKERS_MAX = 4
 
@@ -171,7 +173,7 @@ def build_plan(
             continue
         resolved = resolve_existing_file(source_path)
         if resolved is None:
-            warnings.append(f"missing source file: {source_path}")
+            warnings.append(f"{MISSING_SOURCE_FILE_PREFIX}{source_path}")
             continue
         source_path = resolved
         preferred = preferred_relative_dest(

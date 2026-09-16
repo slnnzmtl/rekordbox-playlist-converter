@@ -547,8 +547,8 @@ class XmlFixtureTests(XmlFixtureBase):
         # unique input filenames + format + action label + reason + quality + size
         for src in (self.a, self.b):
             self.assertIn(src.name, stdout)
+        self.assertIn(self.c.name, stdout)
         self.assertNotIn(str(self.a), stdout)
-        self.assertNotIn(self.c.name, stdout)
         self.assertIn("WAV", stdout)
         self.assertIn("Convert", stdout)
         self.assertIn("Not converted yet", stdout)
@@ -642,7 +642,7 @@ class XmlFixtureTests(XmlFixtureBase):
         """Given execute_prepared raises ManifestPersistError: When
         run_convert_batch runs: Then exit is 1, stderr is useful, and the
         exception does not propagate."""
-        from convert.models import ConversionPreview, Plan, PreparedConversion
+        from convert.models import ConversionPreview, ConversionPreviewItem, Plan, PreparedConversion
         import convert.write as convert_write
         from convert.write import ManifestPersistError
 
@@ -660,12 +660,24 @@ class XmlFixtureTests(XmlFixtureBase):
                 output_existed=False,
             )
             preview = ConversionPreview(
-                selected=0,
-                resolved=0,
-                unique_outputs=0,
+                selected=1,
+                resolved=1,
+                unique_outputs=1,
                 duplicates=0,
                 missing=0,
-                items=[],
+                items=[
+                    ConversionPreviewItem(
+                        relative_dest="WAV/A.wav",
+                        action="transcode",
+                        bit_depth=16,
+                        sample_rate=44100,
+                        size_bytes=1000,
+                        size_display="0.0 MB",
+                        source_display="a.flac",
+                        write_kind="audio",
+                        output_format="wav",
+                    ),
+                ],
             )
             prepared = PreparedConversion(
                 plans=[plan],

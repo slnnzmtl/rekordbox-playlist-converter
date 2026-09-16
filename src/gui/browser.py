@@ -105,6 +105,7 @@ def build_tracklist_pane(
     style = ttk.Style(tracklist_tree)
     style.configure("Tracklist.Treeview", indent=0)
     tracklist_tree.configure(style="Tracklist.Treeview")
+    tracklist_tree.column("#0", width=0, stretch=False, minwidth=0)
     tracklist_tree.heading(
         "missing",
         text="!",
