@@ -107,8 +107,16 @@ class GuiTracklistTests(unittest.TestCase):
                         "rating",
                     ),
                 )
-                self.assertEqual(preview.heading("#0", "text"), "")
-                self.assertEqual(int(preview.column("#0", "width")), 0)
+                raw_show = preview.cget("show")
+                if isinstance(raw_show, str):
+                    show = tuple(raw_show.split())
+                else:
+                    show = tuple(str(part) for part in raw_show)
+                self.assertEqual(show, ("headings",))
+                style_name = str(preview.cget("style") or "Treeview")
+                self.assertEqual(style_name, "Tracklist.Treeview")
+                style = tk.ttk.Style(preview)
+                self.assertEqual(str(style.lookup(style_name, "indent")), "0")
                 self.assertEqual(preview.heading("missing", "text"), "!")
                 self.assertEqual(preview.heading("index", "text"), "#")
                 self.assertGreaterEqual(int(preview.column("index", "width")), 48)
