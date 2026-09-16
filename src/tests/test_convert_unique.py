@@ -249,8 +249,8 @@ class XmlFixtureTests(XmlFixtureBase):
         self,
     ) -> None:
         """Given one encode failure among three: When main converts: Then exit
-        is nonzero, import XML includes successful TRACK rows, and incomplete
-        sync skips the generated playlist NODE."""
+        is nonzero, import XML includes successful TRACK rows, and the
+        generated playlist NODE lists the successful Keys only."""
         fail_name = "Revelation.flac"
         failed_dest: list[Path] = []
 
@@ -288,7 +288,8 @@ class XmlFixtureTests(XmlFixtureBase):
         locations = [t.get("Location", "") for t in tracks]
         self.assertNotIn(encode_location(failed_dest[0]), locations)
         pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
-        self.assertEqual(len(pl), 0)
+        self.assertEqual(len(pl), 1)
+        self.assertEqual(len(pl[0].findall("TRACK")), 2)
 
     def test_run_ffmpeg_kills_process_when_cancel_event_set(self) -> None:
         import threading

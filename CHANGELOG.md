@@ -50,9 +50,11 @@ new folder).
   `--dry-run` share the same labels.
 - On a complete success rerun, generated `[WAV]`/`[AIFF]` playlist Keys are
   rewritten to the current source order (reorder, remove, insert, repeats).
-  Incomplete runs leave existing playlist Keys unchanged, title the report
-  Partial, and say the generated playlist was not created or refreshed. Mixed
-  batches name which playlists are safe to import.
+  Missing, failed, and conflicted tracks are omitted from the generated
+  playlist; the NODE is still created or refreshed from successful dests.
+  When no track succeeded, the playlist NODE is left unchanged (or not
+  created). Partial runs still title the report Partial. Mixed batches name
+  which playlists were written and are safe to import.
 - The conversion report counts converted, copied, PCM-rebuilt,
   metadata-refreshed, reused, recreated, missing, conflicting, and failed
   outputs; mixed batches keep successes visible.

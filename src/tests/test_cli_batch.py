@@ -63,10 +63,12 @@ class XmlFixtureTests(XmlFixtureBase):
         out = ET.parse(self.output).getroot()
         self.assertEqual(len(out.findall("COLLECTION/TRACK")), 2)
         pl = find_playlists_by_name(out, "Untitled Intelligent List [WAV]")
-        self.assertEqual(len(pl), 0)
+        self.assertEqual(len(pl), 1)
+        self.assertEqual(len(pl[0].findall("TRACK")), 2)
         printed = stdout.getvalue()
-        self.assertIn("generated playlist was not created or refreshed", printed)
-        self.assertNotIn("Import Playlist", printed)
+        self.assertIn("missing skipped", printed)
+        self.assertIn("Import Playlist", printed)
+        self.assertNotIn("generated playlist was not created or refreshed", printed)
 
     def test_invalid_manifest_fails_before_audio_or_xml(self) -> None:
         """Given a corrupt manifest on disk: When main converts: Then exit is

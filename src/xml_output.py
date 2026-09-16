@@ -257,17 +257,13 @@ def apply_xml(plan: Plan, success: set[tuple[str, str]]) -> PlaylistApplyResult:
         dest_to_id[item.dest_location] = tid
         by_location[item.dest_location] = clone
 
-    complete = (not plan.warnings) and all(
-        assignment_key(item) in success for item in plan.tracks
-    )
-    if not complete:
-        return PlaylistApplyResult(fully_synced=False)
-
     desired: list[str] = []
     for item in plan.tracks:
         if item.dest_location not in dest_to_id:
             continue
         desired.append(dest_to_id[item.dest_location])
+    if not desired:
+        return PlaylistApplyResult(fully_synced=False)
 
     wav_node, existed = find_or_create_wav_playlist(
         plan.output_root, plan.wav_playlist_name
