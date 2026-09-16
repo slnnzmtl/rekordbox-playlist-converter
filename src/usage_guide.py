@@ -65,9 +65,11 @@ conversion results.
    44.1 kHz/48 kHz). These are maxima, not targets: 16-bit tracks stay
    16-bit; 44.1 kHz tracks stay 44.1 kHz. Defaults are 24-bit / 48 kHz.
 6. Click Convert (beside the progress bar). A Conversion preview lists each
-   unique input, format, action, reason, quality, and size. Convert stays
-   disabled on unresolved destination conflicts or insufficient disk space.
-   Back (or Escape) writes nothing and
+   unique input (and Missing rows for sources not on disk), format, action,
+   reason, quality, and size. When space is sufficient, it also shows about
+   how much disk space new audio writes need. Convert stays disabled on
+   unresolved destination conflicts, insufficient disk space, or when there is
+   nothing to convert. Back (or Escape) writes nothing and
    returns to the main window. Confirm Convert to start encoding. While
    converting, Cancel replaces Convert in that spot. Cancel stops in-flight
    encodes (up to 4 at once); files already written are kept and Import XML
@@ -166,6 +168,7 @@ folder, refresh Imported Library, then import the new rows.
 
 Troubleshooting: if Convert is disabled, read the preview reason — conflicts
 mean a destination was edited outside this app; free some disk space if the
-output volume is full. Compatibility and packaged-app smoke notes:
+output volume is full; Nothing to convert means every selected track is
+missing on disk. Compatibility and packaged-app smoke notes:
 docs/rekordbox-xml-import-checklist.md (empty cells are untested).
 """

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Conversion preview lists missing source files in the table (Missing /
+  Source file is missing), disables Convert when there is nothing to convert,
+  and shows about how much disk space audio writes need when space is OK.
 - Opt-in anonymous usage analytics (default off): Help checkbutton or
   `--analytics on|off`; one `install` event on first opt-in and
   `conversion_completed` after successful writes (includes aggregate
