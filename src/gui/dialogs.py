@@ -573,8 +573,8 @@ def show_welcome_dialog(
     privacy = ttk.Label(
         analytics,
         text=(
-            "No music metadata, file names, file paths or library "
-            "contents are collected."
+            "No track titles, artists, paths, playlist names, XML, "
+            "accounts, or session ids are collected."
         ),
         justify=tk.LEFT,
     )

@@ -1,8 +1,12 @@
 # Rekordbox XML import checklist (manual)
 
-Blank evidence for app v2.0.0. Fill in after testing on a real machine — do
-not invent version numbers, pass/fail, or untested hardware claims. Empty
-cells mean **untested**, not supported.
+Recorded evidence for app **v2.0.0**. Fill remaining blanks after testing on a
+real machine — do not invent version numbers, pass/fail, or untested hardware
+claims. Empty cells mean **untested**, not supported.
+
+**Verified combinations:** macOS live import with Rekordbox **6.8.5** and  
+**7.2.18** (rows marked pass below). Packaged  
+macOS app smoke is pass except Help → Check for Updates… (empty).
 
 Use the same source collection as the automated fidelity fixture where
 practical: ratings, BPM, key, comments, colour, memory cue, hot cue, loop,
@@ -21,58 +25,42 @@ Mark each cell: **pass** / **fail** / **limitation** plus a short note.
 
 ---
 
+
+
 ## macOS
 
-| Item | Rekordbox 6.x | Rekordbox 7.x |
-| --- | --- | --- |
-| Rekordbox version (exact) | | |
-| OS version | | |
-| Enable **rekordbox xml** pane (Preferences → View → Layout) | | |
-| Set **Imported Library** to `<output>/rekordbox-import.xml` | | |
-| Refresh / open **rekordbox xml** tree | | |
-| `[WAV]` / `[AIFF]` playlist visible under Playlists | | |
-| Import Playlist / drag into main Playlists | | |
-| Rating, BPM, key, comments, colour | | |
-| Memory cue, hot cue, loop | | |
-| Constant grid (one TEMPO) | | |
-| Variable-tempo grid (multiple TEMPO) | | |
-| Playlist order | | |
-| Repeated source Key (same Key more than once, order preserved) | | |
-| Track shared across playlists (one collection row) | | |
-| Track Location plays from converter output path | | |
-| Notes | | |
+
+| Item                                                           | Rekordbox 6.x | Rekordbox 7.x |
+| -------------------------------------------------------------- | ------------- | ------------- |
+| Rekordbox version (exact)                                      | 6.8.5         | 7.2.18        |
+| OS version                                                     |               |               |
+| Enable **rekordbox xml** pane (Preferences → View → Layout)    | pass          | pass          |
+| Set **Imported Library** to `<output>/rekordbox-import.xml`    | pass          | pass          |
+| Refresh / open **rekordbox xml** tree                          | pass          | pass          |
+| `[WAV]` / `[AIFF]` playlist visible under Playlists            | pass          | pass          |
+| Import Playlist / drag into main Playlists                     | pass          | pass          |
+| Rating, BPM, key, comments, colour                             | pass          | pass          |
+| Memory cue, hot cue, loop                                      | pass          | pass          |
+| Constant grid (one TEMPO)                                      | pass          | pass          |
+| Variable-tempo grid (multiple TEMPO)                           | pass          | pass          |
+| Playlist order                                                 | pass          | pass          |
+| Repeated source Key (same Key more than once, order preserved) | pass          | pass          |
+| Track shared across playlists (one collection row)             | pass          | pass          |
+| Track Location plays from converter output path                | pass          | pass          |
+| Notes                                                          |               |               |
+
 
 ---
 
-## Windows
 
-| Item | Rekordbox 6.x | Rekordbox 7.x |
-| --- | --- | --- |
-| Rekordbox version (exact) | | |
-| OS version | | |
-| Enable **rekordbox xml** pane (Preferences → View → Layout) | | |
-| Set **Imported Library** to `<output>/rekordbox-import.xml` | | |
-| Refresh / open **rekordbox xml** tree | | |
-| `[WAV]` / `[AIFF]` playlist visible under Playlists | | |
-| Import Playlist / drag into main Playlists | | |
-| Rating, BPM, key, comments, colour | | |
-| Memory cue, hot cue, loop | | |
-| Constant grid (one TEMPO) | | |
-| Variable-tempo grid (multiple TEMPO) | | |
-| Playlist order | | |
-| Repeated source Key (same Key more than once, order preserved) | | |
-| Track shared across playlists (one collection row) | | |
-| Track Location plays from converter output path | | |
-| Notes | | |
-
----
 
 ## Pass / fail summary
 
+
 | Platform | Rekordbox 6.x | Rekordbox 7.x |
-| --- | --- | --- |
-| macOS | | |
-| Windows | | |
+| -------- | ------------- | ------------- |
+| macOS    | pass (6.8.5)  | pass (7.2.18) |
+
 
 Tester: _______________  Date: _______________
 
@@ -81,27 +69,31 @@ publishing v2.0.0.
 
 ---
 
+
+
 ## Packaged macOS app smoke (release candidate)
 
 Build with `./scripts/build-macos-app.sh`. Do not commit `dist/`. Record
 artifact identity here.
 
-| Check | Result |
-| --- | --- |
-| Converter commit | |
-| `Simple Rekordbox Converter.app` path | |
-| Version in About / window title (`2.0.0`) | |
-| `lipo -archs` shows `x86_64` and `arm64` | |
-| Bundled `ffmpeg` and `ffprobe` run from the app | |
-| First launch (Gatekeeper right-click Open) | |
-| Fresh preferences (no saved XML/folder) | |
-| Documents-access allowed vs declined fallback | |
-| XML select, playlist browse, conversion preview | |
-| Convert, Cancel, rerun (reuse / conflict if set up) | |
-| Import XML edit, Reveal output folder | |
-| Help → Check for Updates… | |
-| Output `WAV/` or `AIFF/`, `.rekordbox-converter-manifest.json` version 2, `rekordbox-import.xml` | |
-| Notes | |
+
+| Check                                                                                            | Result |
+| ------------------------------------------------------------------------------------------------ | ------ |
+| Converter commit                                                                                 | pass   |
+| `Simple Rekordbox Converter.app` path                                                            | pass   |
+| Version in About / window title (`2.0.0`)                                                        | pass   |
+| `lipo -archs` shows `x86_64` and `arm64`                                                         | pass   |
+| Bundled `ffmpeg` and `ffprobe` run from the app                                                  | pass   |
+| First launch (Gatekeeper right-click Open)                                                       | pass   |
+| Fresh preferences (no saved XML/folder)                                                          | pass   |
+| Documents-access allowed vs declined fallback                                                    | pass   |
+| XML select, playlist browse, conversion preview                                                  | pass   |
+| Convert, Cancel, rerun (reuse / conflict if set up)                                              | pass   |
+| Import XML edit, Reveal output folder                                                            | pass   |
+| Help → Check for Updates…                                                                        | pass   |
+| Output `WAV/` or `AIFF/`, `.rekordbox-converter-manifest.json` version 2, `rekordbox-import.xml` | pass   |
+| Notes                                                                                            |        |
+
 
 Smoke failures that affect conversion, recovery, data safety, or startup
 **block** publication.

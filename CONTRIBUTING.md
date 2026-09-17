@@ -32,8 +32,9 @@ Do not commit `dist/`, `build/`, `vendor/`, or `.venv/` (they are gitignored).
 - Keep changes focused; match existing style in `src/`.
 - Add or update tests under `src/tests/` when behavior changes.
 - Run the unittest suite before opening a PR.
-- After Import XML or library-layout changes, leave
+- After Import XML or library-layout changes, update
   [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
-  blank for humans to fill against latest Rekordbox 6.x / 7.x on macOS and
-  Windows (do not invent version numbers in CI or agent runs).
+  only from recorded human Rekordbox / packaged-app runs. Empty cells mean
+  **untested**, not supported. Do not invent version numbers, pass/fail, or
+  hardware claims in CI or agent runs.
 - This project is GPL-3.0-or-later; by contributing you agree your changes are licensed under the same terms.

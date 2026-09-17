@@ -64,15 +64,60 @@ You will be asked to:
 
 These quality settings are maxima, not targets. Defaults stay WAV / 24-bit / 48 kHz.
 
+**WAV profile:** uncompressed stereo `WAVE_FORMAT_PCM` (not extensible), `fmt ` + `data` only, at the effective depth/rate.
+
+**AIFF profile:** uncompressed `FORM`/`AIFF` (not AIFC), stereo PCM at the effective depth/rate, plus ID3v2.3 text from the Rekordbox XML and an optional JPEG cover from the source file.
+
 Your original files stay where they are. Re-running with the same output folder
 rewrites the generated playlist to successful dests in the current source order
 (missing, failed, and conflicted entries are omitted), and refreshes metadata
 for existing dest paths. Each unique source converts once per batch even if it
 appears in several playlists.
 
-Assignments are sticky per source and format. If two different sources would share `<artist> - <track>`, the second gets `(2)`, then `(3)`, and so on. Deleting a generated audio file recreates it at the same assignment on the next run. Deleting the hidden manifest leaves the audio unmanaged and the folder is refused — choose a new empty output folder.
+Assignments are sticky per source and format. If two different sources would share `<artist> - <track>`, the second gets `(2)`, then `(3)`, and so on. Deleting a generated audio file recreates it at the same assignment on the next run.
 
-CLI `--dry-run` prints the same conversion plan the GUI Convert preview shows: input, format, action, reason, quality, and size (CLI also prints the Format directory path); missing sources appear as Missing rows. When space is sufficient, the preview also shows about how much disk space new audio writes need. Convert is refused while conflicts remain, the output volume is too small, or there is nothing to convert. After a run, the CLI and GUI share one report title (Done / Partial / Failed / Cancelled) and the same converted/copied/PCM-rebuilt/metadata-refreshed/reused/recreated/missing/conflicting/failed counts; the GUI Done dialog groups tracks under playlist status lines (successes stay visible if some fail). **Reveal output folder** opens the chosen output folder.
+### Preview, Convert, Cancel
+
+CLI `--dry-run` prints the same conversion plan the GUI Convert preview shows: input, format, action, reason, quality, and size (CLI also prints the Format directory path); missing sources appear as Missing rows. When space is sufficient, the preview also shows about how much disk space new audio writes need. Convert is refused while conflicts remain, the output volume is too small, or there is nothing to convert.
+
+**Cancel** stops in-flight encodes. Files already written stay on disk; Import XML is still written for successes.
+
+Preview **Action** / **Reason** (first-run missing dest is **Convert** / Not converted yet; **Recreate missing** is only when a prior assignment’s file is gone):
+
+| Action | Typical reason |
+| --- | --- |
+| Convert | Not converted yet |
+| Recreate missing | Destination file is missing; or previous conversion did not finish |
+| Reuse existing | Output is already current |
+| Refresh XML | Rekordbox metadata changed |
+| Update metadata | Rekordbox metadata changed (AIFF tags) |
+| Rebuild container | Converter revision requires a container rebuild |
+| Transcode | Source file changed; or output quality recipe changed; or Forced rebuild |
+| In-place skip | Source and destination are the same file |
+| Missing | Source file is missing |
+| Conflict | Destination was changed outside this app |
+
+Conflicts are **not overwritten**. Resolve them (restore the dest, pick a new output folder, or otherwise clear the external edit), then preview again.
+
+After a run, the CLI and GUI share one report title and the same count fragments. GUI reports group tracks under playlist status lines (successes stay visible if some fail). **Reveal output folder** opens the chosen output folder.
+
+| Title | Meaning |
+| --- | --- |
+| Done | Every selected output succeeded |
+| Partial | Some succeeded and some failed, conflicted, were cancelled, or were missing |
+| Failed | Nothing succeeded and at least one item failed |
+| Cancelled | The batch was cancelled |
+| No conversions | Nothing succeeded and nothing failed (for example all missing) |
+
+Count fragments: converted, copied, PCM-rebuilt, metadata-refreshed, reused, recreated, missing skipped, conflicts, state-changed, cancelled, failed.
+
+### Manifest v2, crash recovery, and old libraries
+
+A hidden sticky `output/.rekordbox-converter-manifest.json` (**version 2**) records ownership, source/metadata/output signatures, and the conversion recipe. Mid-batch checkpoints keep unfinished writes **incomplete** so a crash is not treated as an external edit; the next run can recreate or finish that assignment.
+
+Do **not** delete only the manifest JSON. That leaves the audio unmanaged and the folder is refused. Back up or recreate the **whole** output library folder, or choose a new empty output folder.
+
+Leftover **development** version-1 manifests are refused the same way. There is no migration: copy any audio you still need, then remove or recreate the whole folder (or pick a new empty folder) before converting with 2.0.0.
 
 ### Edit a generated Import XML (GUI)
 
@@ -108,7 +153,9 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 
 ## Privacy
 
-Analytics is **off until you opt in**. In the GUI: Help → **Share anonymous usage analytics**. On the CLI: `--analytics on` (or `off`). Event types, queue, and what is never sent are documented in [README.md](README.md#privacy) and [SECURITY.md](SECURITY.md).
+The GUI may contact GitHub Releases on launch and via Help → **Check for Updates…** even when analytics is off.
+
+Analytics is optional. First-launch Welcome’s checkbox is **checked by default**; Continue with it checked opts in. Uncheck it, Help → **Share anonymous usage analytics**, or CLI `--analytics on` / `off`. Event types, queue, and what is never sent are documented in [README.md](README.md#privacy) and [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -149,3 +196,11 @@ Play one track. Confirm it is on a disk Rekordbox can read (internal drive or a 
 - Original lossless files are untouched.
 
 **New tracks later:** export XML from Rekordbox again, run `./rb-converter.py` with the same output folder, refresh **Imported Library**, then import the new rows.
+
+---
+
+## Compatibility and limits
+
+Live import of this tool’s XML is **verified on macOS** with Rekordbox **6.8.5** and **7.2.18** (rekordbox xml pane, Imported Library, `[WAV]`/`[AIFF]` playlists, Import Playlist, rating/BPM/key/comments/colour, memory/hot/loop cues, constant and variable-tempo grids, playlist order, repeated Keys, shared tracks, and playback from the converter Location). See [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md). Empty cells (including **Windows** live import, OS version) are untested.
+
+This tool does not open Rekordbox’s database or write USB export media. MP3, AAC, and other lossy files are skipped. Generated `[WAV]`/`[AIFF]` playlists are **flat** — source folder hierarchy is not reproduced.

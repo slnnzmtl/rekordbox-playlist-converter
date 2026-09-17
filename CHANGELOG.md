@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## 2.0.0
+
+First public release of the v2 workflow and **manifest v2**. GitHub release
+artifacts are not published yet; the latest **published** download is still
+v1.2.0. Rollback: keep the previous `.app` and output library; this release
+refuses unreleased v1 manifests (back up or recreate the **whole** output
+folder, or choose a new empty folder).
+
+Live import is **verified on macOS** with Rekordbox **6.8.5** and **7.2.18**. Packaged macOS app smoke is recorded as pass
+except Help → Check for Updates… (empty). Evidence:
+[docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
+(empty cells = untested).
+
 - Convert no longer fails with **Output destination conflict since preview**
   when the output library already has a track under a different Unicode
   spelling of the same filename (NFC vs NFD, e.g. accented titles on external
@@ -26,9 +39,9 @@
 - Conversion preview lists missing source files in the table (Missing /
   Source file is missing), disables Convert when there is nothing to convert,
   and shows about how much disk space audio writes need when space is OK.
-- Opt-in anonymous usage analytics (default off): Help checkbutton or
-  `--analytics on|off`; one `install` event on first opt-in,
-  `conversion_completed` after successful writes (includes aggregate
+- Opt-in anonymous usage analytics: Welcome checkbox (checked by default) or
+  Help checkbutton or `--analytics on|off`; one `install` event on first
+  opt-in, `conversion_completed` after successful writes (includes aggregate
   `input_file_types` source-extension counts), and `conversion_failed` after
   a failed job with a closed reason (`xml_parse` / `encode` / `config` /
   `unknown`); failed POSTs are queued in `analytics_queue.json` beside
@@ -48,17 +61,6 @@
   the prebatch save; persist failures surface as `CliError`; periodic
   checkpoints are requested atomically; Import XML edit treats repeated Keys
   as a multiset. Public JSON schema and durability rules are unchanged.
-
-## 2.0.0
-
-First public release of the v2 workflow and **manifest v2**. Do not publish
-GitHub release artifacts until the Rekordbox import matrix and packaged-app
-smoke rows in
-[docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
-are filled for the versions you claim. Rollback: keep the previous `.app` and
-output library; this release refuses unreleased v1 manifests (back up or use a
-new folder).
-
 - Preview shows input, format, action, classifier reason, quality, and size
   (GUI omits Destination and Write; CLI `--dry-run` also prints the Format
   directory). Convert is blocked on unresolved destination conflicts,
@@ -81,12 +83,8 @@ new folder).
   entry (TrackID / Keys preserved) for WAV and AIFF from Rekordbox 6- and
   7-style PRODUCT versions.
 - Failed encode lines include source and destination (`src → WAV/out.wav: …`).
-- Recorded Rekordbox 6/7 compatibility and packaged-app smoke checks live in
-  [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
-  (empty = untested).
-- The GUI may contact GitHub Releases to check for updates. Optional
-  analytics (default off) is documented under Unreleased until the GitHub
-  release cut folds that section into this entry.
+- The GUI may contact GitHub Releases to check for updates (not gated by
+  analytics). Optional analytics is documented above and in README / SECURITY.
 - Manifest **v2** is the first released converter-library contract. Unreleased v1
   and unknown future versions are refused; leftover managed audio still causes
   folder validation to reject the library, so recreate the whole development

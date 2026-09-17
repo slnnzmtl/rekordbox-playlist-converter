@@ -16,8 +16,9 @@ your originals. The import playlist is named {your playlist} [WAV] or
 2. Convert in this app
    Choose the XML export, select playlists and tracks, confirm the output
    folder, choose Format and Maximum output quality, then Convert. Review
-   the preview and confirm. Import XML is always
-   <output folder>/rekordbox-import.xml.
+   the preview (action, reason, quality, size) and confirm. Import XML is
+   always <output folder>/rekordbox-import.xml. Cancel keeps files already
+   written. Conflicts (dest changed outside this app) block Convert.
 
 3. Bring it into Rekordbox
    Do not use File → Import. Show the rekordbox xml pane
@@ -25,6 +26,10 @@ your originals. The import playlist is named {your playlist} [WAV] or
    this app’s rekordbox-import.xml, then drag the [WAV] or [AIFF] playlist
    into your collection (or Import Playlist). Choose Yes if asked to load
    information from the library being imported.
+
+Live import is verified on macOS with Rekordbox 6.8.5 and 7.2.18. The GUI
+may check GitHub Releases for updates. The checkbox below is checked by
+default; uncheck it if you do not want anonymous usage analytics.
 
 Full steps: Help → How to Use…
 """
@@ -39,6 +44,9 @@ your originals. The import playlist is named {your playlist} [WAV] or
 
 Menu names match Rekordbox 7. Rekordbox 6 is the same idea: export the
 collection, then use the rekordbox xml pane — never File → Import.
+
+Live import is verified on macOS with Rekordbox 6.8.5 and 7.2.18. Lossy files are skipped. Generated
+playlists are flat (source folders are not copied).
 
 ────────────────────────────────────────
 1. Export your collection from Rekordbox
@@ -62,17 +70,33 @@ collection, then use the rekordbox xml pane — never File → Import.
 4. Choose Format: WAV or AIFF.
 5. Choose Maximum output quality (16/24-bit and 44.1/48 kHz). These are
    ceilings, not targets. Defaults are 24-bit / 48 kHz.
+   WAV is stereo WAVE_FORMAT_PCM (fmt + data only). AIFF is uncompressed
+   FORM/AIFF plus ID3v2.3 from the XML and optional JPEG cover.
 6. Click Convert. Review the preview (action, reason, quality, size), then
-   confirm. Cancel stops in-flight work; already-written files are kept.
-   When finished, Reveal output folder opens the chosen folder.
+   confirm. Convert is blocked on conflicts, insufficient disk, or nothing
+   to convert. Cancel stops in-flight work; already-written files are kept
+   and Import XML is still written for successes. When finished, Reveal
+   output folder opens the chosen folder.
+
+Preview Action / Reason (first write is Convert / Not converted yet):
+Reuse existing, Refresh XML, Update metadata, Rebuild container,
+Transcode, Recreate missing, In-place skip, Missing, Conflict (dest
+changed outside this app — not overwritten).
+
+Finish titles: Done, Partial, Failed, Cancelled, No conversions.
+Counts: converted, copied, PCM-rebuilt, metadata-refreshed, reused,
+recreated, missing skipped, conflicts, state-changed, cancelled, failed.
 
 What you get:
 • Audio in <output folder>/WAV/ or …/AIFF/ as <artist> - <track>
+• Hidden .rekordbox-converter-manifest.json (version 2)
 • Import file <output folder>/rekordbox-import.xml
 • Playlist inside that file named {your playlist} [WAV] or [AIFF]
 
 Originals stay where they are. Re-run with the same output folder to refresh
-or add tracks.
+or add tracks. Do not delete only the manifest — that refuses the folder.
+Back up or recreate the whole output library, or choose a new empty folder.
+Development version-1 libraries are refused the same way (no migration).
 
 ────────────────────────────────────────
 3. Bring it into Rekordbox
@@ -116,6 +140,12 @@ Save or Cancel. Your Rekordbox source XML stays read-only.
 If Convert is disabled, read the preview reason — conflicts (file changed
 outside the app), insufficient disk space, or nothing to convert (sources
 missing).
+
+Network: Help → Check for Updates… may contact GitHub Releases on launch.
+Anonymous usage analytics is optional (Welcome checkbox is checked by
+default; uncheck it or use Help → Share anonymous usage analytics). No
+track titles, artists, paths, playlist names, XML, accounts, or session
+ids are sent.
 
 More detail: USAGE.md in the project (or on GitHub).
 """
