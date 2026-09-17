@@ -2,9 +2,12 @@
 
 ## Unreleased
 
-- Convert no longer treats NFC vs NFD spellings of the same output file
-  (common on external volumes after a mid-convert quit) as a destination
-  conflict that re-prepare cannot clear.
+- Convert no longer fails with **Output destination conflict since preview**
+  when the output library already has a track under a different Unicode
+  spelling of the same filename (NFC vs NFD, e.g. accented titles on external
+  SSDs) than the planned destination—common after quitting mid-conversion;
+  re-preparing alone could not clear it. Complements the 1.1.0 fix for NFC/NFD
+  **source** path collisions; this is the **output** execute-inventory check.
 - Output-folder validation no longer treats unrelated nested WAV/AIFF under a
   parent folder (for example Documents) as a leftover converter library; only
   root `rekordbox-import.xml` or files directly in `WAV/` / `AIFF/` count.
