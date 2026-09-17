@@ -12,7 +12,7 @@ if str(_SRC) not in sys.path:
 if str(_TESTS) not in sys.path:
     sys.path.insert(0, str(_TESTS))
 
-from gui_tk import tk_available
+from gui_tk import app_patches, startup_patches, tk_available
 
 from gui.layout import (
     bind_wraplength,
@@ -109,6 +109,73 @@ class BindWraplengthTests(unittest.TestCase):
             root.update_idletasks()
             root.update()
             self.assertEqual(int(label.cget("wraplength")), 480)
+        finally:
+            root.destroy()
+
+
+class BrowserPaneRatioTests(unittest.TestCase):
+    def test_browser_sash_keeps_ratio_when_panes_widen(self) -> None:
+        """Given the browser paned window: When its width grows: Then the
+        playlist sash stays near the default ratio and never past the max."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from gui import constants
+        from rb_converter_gui import ConverterApp
+
+        try:
+            root = tk.Tk()
+            root.geometry("900x600+40+40")
+            root.update_idletasks()
+            root.update()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+
+        try:
+            with app_patches(**startup_patches()):
+                app = ConverterApp(root, documents_accessible=False)
+                panes = app.browser_panes
+                root.update_idletasks()
+                root.update()
+
+                def measure(root_w: int) -> tuple[int, int]:
+                    root.geometry(f"{root_w}x600+40+40")
+                    root.update_idletasks()
+                    root.update()
+                    width = int(panes.winfo_width())
+                    sash = panes.sashpos(0)
+                    self.assertGreater(width, 100)
+                    self.assertGreater(sash, 0)
+                    return sash, width
+
+                sash_n, width_n = measure(900)
+                sash_w, _ = measure(1500)
+                expected_n = min(
+                    round(width_n * constants.BROWSER_PLAYLIST_SASH_RATIO),
+                    constants.BROWSER_PLAYLIST_MAX_WIDTH,
+                )
+                self.assertAlmostEqual(sash_n, expected_n, delta=8)
+                self.assertLessEqual(sash_w, constants.BROWSER_PLAYLIST_MAX_WIDTH + 2)
+                self.assertAlmostEqual(
+                    sash_w,
+                    constants.BROWSER_PLAYLIST_MAX_WIDTH,
+                    delta=8,
+                )
+                sash_back, width_back = measure(900)
+                expected_back = min(
+                    round(width_back * constants.BROWSER_PLAYLIST_SASH_RATIO),
+                    constants.BROWSER_PLAYLIST_MAX_WIDTH,
+                )
+                self.assertAlmostEqual(
+                    sash_back,
+                    expected_back,
+                    delta=8,
+                    msg=(
+                        f"after shrink sash={sash_back} width={width_back} "
+                        f"expected={expected_back}"
+                    ),
+                )
         finally:
             root.destroy()
 

@@ -550,6 +550,84 @@ class ProgressBusyVisibilityTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_close_while_busy_yes_cancels_then_quits(self) -> None:
+        """Given encode is busy: When close is confirmed: Then cancel is
+        requested, the window stays until finish_cancelled, then destroys
+        without a done dialog."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        try:
+            root = tk.Tk()
+            root.withdraw()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+
+        try:
+            with app_patches(
+                **startup_patches(ask_centered_yesno={"return_value": True})
+            ) as mocks, patch.object(
+                ConverterApp, "_show_done_dialog"
+            ) as done, patch.object(
+                ConverterApp, "_show_conversion_errors"
+            ) as show_errors:
+                ask = mocks["ask_centered_yesno"]
+                app = ConverterApp(root, documents_accessible=False)
+                app._set_busy(True)
+                app._prepared_conversion = None
+                app._confirm_prepared = None
+                app._cancel_event.clear()
+                app._on_import_edit_close()
+                ask.assert_called_once()
+                self.assertTrue(app._cancel_event.is_set())
+                self.assertTrue(root.winfo_exists())
+                self.assertTrue(app._busy)
+                app._finish_cancelled()
+                done.assert_not_called()
+                show_errors.assert_not_called()
+                with self.assertRaises(tk.TclError):
+                    root.winfo_exists()
+        finally:
+            try:
+                root.destroy()
+            except tk.TclError:
+                pass
+
+    def test_close_while_busy_no_keeps_converting(self) -> None:
+        """Given conversion is busy: When close is declined: Then the window
+        stays open and cancel is not requested."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        from rb_converter_gui import ConverterApp
+
+        try:
+            root = tk.Tk()
+            root.withdraw()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+
+        try:
+            with app_patches(
+                **startup_patches(ask_centered_yesno={"return_value": False})
+            ) as mocks:
+                ask = mocks["ask_centered_yesno"]
+                app = ConverterApp(root, documents_accessible=False)
+                app._set_busy(True)
+                app._cancel_event.clear()
+                app._on_import_edit_close()
+                ask.assert_called_once()
+                self.assertTrue(root.winfo_exists())
+                self.assertTrue(app._busy)
+                self.assertFalse(app._cancel_event.is_set())
+        finally:
+            root.destroy()
+
+
 class MissingFilesDialogTests(unittest.TestCase):
     def test_finish_no_conversions_lists_missing_paths_in_report(self) -> None:
         if not tk_available():

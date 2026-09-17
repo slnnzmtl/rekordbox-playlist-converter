@@ -16,6 +16,16 @@ date versus published GitHub latest v1.2.0). Evidence:
 [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
 (empty cells = untested).
 
+- Closing the window or using macOS Quit during a conversion asks to cancel,
+  then quits after cancel finishes without a Done or error dialog; declining
+  leaves the job running.
+- The playlist/tracklist split stays at one-third playlist width, caps the
+  playlist column, and restores that ratio when the window shrinks (it no
+  longer collapses after a wide-window cap).
+- The Done / Partial track table sizes the Track column to the longest
+  playlist status header so the header is not clipped.
+- Confirmation dialogs show **Yes** then **No** (Return still confirms; Escape
+  and the window close control still decline).
 - Convert no longer fails with **Output destination conflict since preview**
   when the output library already has a track under a different Unicode
   spelling of the same filename (NFC vs NFD, e.g. accented titles on external

@@ -7,6 +7,7 @@ Pass open_in_finder / other namespace-bound callables from gui.runtime (via app 
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
 from collections.abc import Callable
 from pathlib import Path
 from tkinter import scrolledtext, ttk
@@ -21,6 +22,20 @@ from gui.layout import (
     place_dialog_over_parent,
     tree_with_yscroll,
 )
+
+_DONE_TRACK_COL_MIN = 520
+_DONE_STATUS_COL_W = 120
+_DONE_DETAIL_COL_W = 200
+# Frame padding, fixed columns, and vertical scrollbar (see show_done_dialog table).
+_DONE_DIALOG_CHROME_W = 32 + _DONE_STATUS_COL_W + _DONE_DETAIL_COL_W + 20
+
+
+def _treeview_font(tree: ttk.Treeview) -> tkfont.Font:
+    spec = ttk.Style(tree).lookup("Treeview", "font") or "TkDefaultFont"
+    try:
+        return tkfont.Font(font=spec)
+    except tk.TclError:
+        return tkfont.nametofont("TkDefaultFont")
 
 
 def show_xml_choice_dialog(
@@ -409,8 +424,8 @@ def ask_centered_yesno(parent: tk.Tk, title: str, message: str) -> bool:
         result = True
         dlg.destroy()
 
-    ttk.Button(btns, text="No", command=on_no).pack(side=tk.LEFT, padx=(0, 8))
-    ttk.Button(btns, text="Yes", command=on_yes).pack(side=tk.LEFT)
+    ttk.Button(btns, text="Yes", command=on_yes).pack(side=tk.LEFT, padx=(0, 8))
+    ttk.Button(btns, text="No", command=on_no).pack(side=tk.LEFT)
     dlg.bind("<Return>", lambda _e: on_yes())
     dlg.bind("<Escape>", lambda _e: on_no())
     dlg.protocol("WM_DELETE_WINDOW", on_no)
@@ -443,6 +458,7 @@ def show_done_dialog(
         groups = [FinishResultGroup(header="", rows=list(result_rows))]
 
     if groups:
+        header_texts = [group.header for group in groups if group.header]
         frm.rowconfigure(row, weight=1)
         table_frame = ttk.Frame(frm)
         table_frame.grid(row=row, column=0, sticky="nsew")
@@ -459,10 +475,21 @@ def show_done_dialog(
         table.heading("#0", text="Track", anchor="w")
         table.heading("status", text="Status", anchor="w")
         table.heading("detail", text="Detail", anchor="w")
-        # Wide #0 so playlist status-line headers fit; Status/Detail stay compact.
-        table.column("#0", width=520, stretch=True, minwidth=360)
-        table.column("status", width=120, stretch=False, anchor="w", minwidth=100)
-        table.column("detail", width=200, stretch=True, minwidth=120)
+        track_col_w = _DONE_TRACK_COL_MIN
+        if header_texts:
+            font = _treeview_font(table)
+            track_col_w = max(
+                _DONE_TRACK_COL_MIN,
+                max(font.measure(text) for text in header_texts) + 56,
+            )
+        dlg.geometry(f"{max(900, _DONE_DIALOG_CHROME_W + track_col_w)}x480")
+        table.column("#0", width=track_col_w, stretch=True, minwidth=360)
+        table.column(
+            "status", width=_DONE_STATUS_COL_W, stretch=False, anchor="w", minwidth=100
+        )
+        table.column(
+            "detail", width=_DONE_DETAIL_COL_W, stretch=True, minwidth=120
+        )
         table.grid(row=0, column=0, sticky="nsew")
         yscroll.grid(row=0, column=1, sticky="ns")
         for group in groups:

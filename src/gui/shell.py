@@ -189,7 +189,7 @@ class ShellMixin:
         )
 
         panes.add(left, weight=1)
-        panes.add(right, weight=1)
+        panes.add(right, weight=4)
         self._tracklist_path_tooltip = RowHoverTooltip(
             self.tracklist_tree, self._tracklist_hover_path
         )
@@ -408,9 +408,14 @@ class ShellMixin:
             on_closed=on_closed,
         )
 
+    def _browser_sash_target(self, width: int) -> int:
+        return min(
+            round(width * constants.BROWSER_PLAYLIST_SASH_RATIO),
+            constants.BROWSER_PLAYLIST_MAX_WIDTH,
+            max(width - 200, 1),
+        )
+
     def _on_browser_panes_configure(self, event: object = None) -> None:
-        if self._browser_sash_set:
-            return
         widget = getattr(event, "widget", None) or self.browser_panes
         try:
             width = int(widget.winfo_width())
@@ -418,11 +423,16 @@ class ShellMixin:
             return
         if width <= 1:
             return
+        # Recompute from the default ratio, not the current sash. A cap at
+        # max width would otherwise shrink the ratio and collapse the playlist
+        # after restore.
+        if width == self._browser_panes_width:
+            return
         try:
-            self.browser_panes.sashpos(0, round(width * 0.3))
+            self.browser_panes.sashpos(0, self._browser_sash_target(width))
         except tk.TclError:
             return
-        self._browser_sash_set = True
+        self._browser_panes_width = width
 
     def _on_bit_depth_selected(self, _event: object = None) -> None:
         label = self.bit_depth_combo.get().strip()

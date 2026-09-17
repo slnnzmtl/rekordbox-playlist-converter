@@ -34,3 +34,6 @@ SAMPLE_RATE_FROM_LABEL = {label: value for value, label in SAMPLE_RATE_LABELS.it
 CANCELLED_STATUS_CLEAR_MS = 3000
 SEARCH_DEBOUNCE_MS = 200
 WAV_DIR_VALIDATE_DEBOUNCE_MS = 300
+# Playlist column of the browser paned window (tracklist gets the rest).
+BROWSER_PLAYLIST_SASH_RATIO = 0.33
+BROWSER_PLAYLIST_MAX_WIDTH = 320

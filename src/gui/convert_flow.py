@@ -120,6 +120,7 @@ class ConvertFlowMixin:
         xml_path = Path(xml_s).expanduser()
 
         self._set_busy(True)
+        self._close_after_cancel = False
         self._cancel_event.clear()
         self.status_var.set("Preparing…")
 
@@ -446,6 +447,8 @@ class ConvertFlowMixin:
         self._prepared_conversion = None
         self._confirm_prepared = None
         self._set_busy(False)
+        if self._destroy_if_closing_after_cancel():
+            return
         self.status_var.set("Cancelled.")
         self._cancel_cancelled_clear()
         self._cancelled_clear_id = self.root.after(
@@ -459,6 +462,8 @@ class ConvertFlowMixin:
         self._prepared_conversion = None
         self._confirm_prepared = None
         self._set_busy(False)
+        if self._destroy_if_closing_after_cancel():
+            return
         self._animate_progress_to(0, snap=True)
         self.status_var.set("Failed.")
         runtime.report_failure(surface="gui", reason=reason)
@@ -525,6 +530,8 @@ class ConvertFlowMixin:
         self._prepared_conversion = None
         self._confirm_prepared = None
         self._set_busy(False)
+        if self._destroy_if_closing_after_cancel():
+            return
         if title == "Done" and analytics_stats is not None:
             runtime.report_conversion(
                 surface="gui",

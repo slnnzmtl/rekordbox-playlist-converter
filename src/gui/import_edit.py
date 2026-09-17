@@ -369,9 +369,24 @@ class ImportEditMixin:
 
     def _bind_import_edit_window_guards(self) -> None:
         self.root.protocol("WM_DELETE_WINDOW", self._on_import_edit_close)
+        try:
+            self.root.createcommand("::tk::mac::Quit", self._on_import_edit_close)
+        except tk.TclError:
+            pass
         self.root.bind("<Escape>", self._on_import_edit_escape, add="+")
 
     def _on_import_edit_close(self) -> None:
+        if self._busy:
+            if not runtime.ask_centered_yesno(
+                self.root,
+                "Conversion in progress",
+                "Cancel the conversion and close?",
+            ):
+                return
+            self._close_after_cancel = True
+            self._request_cancel()
+            self._destroy_if_closing_after_cancel()
+            return
         if not self._confirm_discard_if_editing():
             return
         self.root.destroy()
@@ -381,3 +396,10 @@ class ImportEditMixin:
             return None
         self._cancel_import_edit()
         return "break"
+
+    def _destroy_if_closing_after_cancel(self) -> bool:
+        if not self._close_after_cancel or self._busy:
+            return False
+        self._close_after_cancel = False
+        self.root.destroy()
+        return True

@@ -73,6 +73,7 @@ class ConverterApp(ImportEditMixin, ConvertFlowMixin, PlaylistsMixin, ShellMixin
         self.status_var = tk.StringVar(value="Choose a Rekordbox XML export.")
         self.scan_status_var = tk.StringVar(value="")
         self._busy = False
+        self._close_after_cancel = False
         self._cancel_event = runtime.threading.Event()
         self._prepared_conversion: PreparedConversion | None = None
         self._confirm_prepared: PreparedConversion | None = None
@@ -106,7 +107,7 @@ class ConverterApp(ImportEditMixin, ConvertFlowMixin, PlaylistsMixin, ShellMixin
         self._preview_bit_depth_lock = runtime.threading.Lock()
         self._preview_probe_thread: runtime.threading.Thread | None = None
         self._preview_scan_active = False
-        self._browser_sash_set = False
+        self._browser_panes_width: int | None = None
         self._tracklist_sort_column: str | None = None
         self._tracklist_sort_reverse = False
         self._playlist_search_after_id: str | None = None
