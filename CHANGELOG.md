@@ -10,8 +10,9 @@ v1.2.0. Rollback: keep the previous `.app` and output library; this release
 refuses unreleased v1 manifests (back up or recreate the **whole** output
 folder, or choose a new empty folder).
 
-Live import is **verified on macOS** with Rekordbox **6.8.5** and **7.2.18**. Packaged macOS app smoke is recorded as pass
-except Help → Check for Updates… (empty). Evidence:
+Live import is **verified on macOS** with Rekordbox **6.8.5** and **7.2.18**. Packaged macOS app smoke for the **2.0.0** RC
+(`cdd5f710627108d014023d6d2ef69d1878012991`) is recorded as **pass**, including Help → Check for Updates… (2.0.0 is up to
+date versus published GitHub latest v1.2.0). Evidence:
 [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
 (empty cells = untested).
 
