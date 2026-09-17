@@ -687,11 +687,13 @@ def _has_legacy_library_content(wav_dir: Path) -> bool:
     if import_xml.is_file():
         return True
     try:
-        for path in wav_dir.rglob("*"):
-            if not path.is_file():
+        for fmt_dir_name in _FORMAT_DIRS.values():
+            fmt_dir = wav_dir / fmt_dir_name
+            if not fmt_dir.is_dir():
                 continue
-            if path.suffix.casefold() in {".wav", ".aiff", ".aif"}:
-                return True
+            for entry in fmt_dir.iterdir():
+                if entry.is_file():
+                    return True
     except OSError:
         return False
     return False

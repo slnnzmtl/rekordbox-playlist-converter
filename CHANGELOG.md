@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Output-folder validation no longer treats unrelated nested WAV/AIFF under a
+  parent folder (for example Documents) as a leftover converter library; only
+  root `rekordbox-import.xml` or files directly in `WAV/` / `AIFF/` count.
 - First-launch welcome modal with a short how-to guide and opt-in checkbox for
   anonymous usage analytics (checked by default; creates preferences on
   dismiss). Documents/XML discovery waits until Welcome is closed (and until

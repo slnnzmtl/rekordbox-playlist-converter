@@ -538,6 +538,20 @@ class LibraryFolderValidationTests(unittest.TestCase):
             self.assertIsNone(cm.validate_library_folder(existing))
             self.assertIsNone(cm.validate_library_folder(Path(tmp) / "new-lib"))
 
+    def test_unrelated_nested_audio_is_not_legacy_library(self) -> None:
+        """Given a Documents-like folder with nested Music audio but no
+        converter layout: When validate: Then the folder is usable."""
+        with tempfile.TemporaryDirectory() as tmp:
+            documents = Path(tmp) / "Documents"
+            music = documents / "Music"
+            music.mkdir(parents=True)
+            (music / "song.wav").write_bytes(b"RIFF")
+            self.assertFalse((documents / cm.MANIFEST_NAME).exists())
+            self.assertFalse((documents / "rekordbox-import.xml").exists())
+            self.assertFalse((documents / "WAV").exists())
+            self.assertFalse((documents / "AIFF").exists())
+            self.assertIsNone(cm.validate_library_folder(documents))
+
     def test_legacy_audio_without_manifest_is_refused(self) -> None:
         """Given WAV/AIFF audio and no hidden manifest: When validate: Then
         refuse."""

@@ -36,8 +36,8 @@ class GuiLibraryValidationTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 legacy = Path(tmp) / "legacy"
-                legacy.mkdir()
-                (legacy / "old.wav").write_bytes(b"RIFF")
+                (legacy / "WAV").mkdir(parents=True)
+                (legacy / "WAV" / "old.wav").write_bytes(b"RIFF")
                 with app_patches(**startup_patches(), save_preferences=None):
                     root = tk.Tk()
                     root.withdraw()
