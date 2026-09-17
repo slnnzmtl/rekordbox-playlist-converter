@@ -336,6 +336,89 @@ class GuiLibraryValidationTests(unittest.TestCase):
             if root is not None:
                 root.destroy()
 
+    def test_done_dialog_stays_populated_when_sizing_to_playlist_header(self) -> None:
+        """Given a long playlist status header: When Done opens: Then the table
+        and OK are present (Treeview font lookup must not abort the dialog)."""
+        if not tk_available():
+            self.skipTest("_tkinter not available")
+
+        import tkinter as tk
+        import tkinter.ttk as ttk
+        from convert.models import FinishResultGroup, FinishResultRow
+        from rb_converter_gui import ConverterApp
+
+        header = (
+            "darkpsy [AIFF]: 534 reused, 66 recreated (66 transcoded), "
+            "715 cancelled, +66 playlist entries"
+        )
+
+        def find_tree(widget):
+            if isinstance(widget, ttk.Treeview):
+                return widget
+            for child in widget.winfo_children():
+                found = find_tree(child)
+                if found is not None:
+                    return found
+            return None
+
+        root = None
+        try:
+            root = tk.Tk()
+            root.withdraw()
+        except tk.TclError:
+            self.skipTest("tk.TclError: display not available")
+        try:
+            with app_patches(
+                **startup_patches(),
+                open_in_finder=None,
+            ), patch.object(tk.Toplevel, "wait_window"):
+                app = ConverterApp(root, documents_accessible=False)
+                app._show_done_dialog(
+                    "",
+                    Path("/tmp/library-root"),
+                    title="Done",
+                    result_groups=[
+                        FinishResultGroup(
+                            header=header,
+                            rows=[
+                                FinishResultRow(
+                                    track="a.flac",
+                                    status="Reused",
+                                    detail="AIFF/a.aiff",
+                                ),
+                            ],
+                        )
+                    ],
+                )
+                dlg = None
+                for child in root.winfo_children():
+                    if isinstance(child, tk.Toplevel):
+                        dlg = child
+                        break
+                self.assertIsNotNone(dlg)
+                table = find_tree(dlg)
+                self.assertIsNotNone(table)
+                roots = list(table.get_children(""))
+                self.assertEqual(table.item(roots[0], "text"), header)
+                has_ok = False
+
+                def scan_buttons(widget) -> None:
+                    nonlocal has_ok
+                    try:
+                        if isinstance(widget, ttk.Button) and str(
+                            widget.cget("text")
+                        ) == "OK":
+                            has_ok = True
+                    except tk.TclError:
+                        pass
+                    for child in widget.winfo_children():
+                        scan_buttons(child)
+
+                scan_buttons(dlg)
+                self.assertTrue(has_ok)
+        finally:
+            root.destroy()
+
 
 if __name__ == "__main__":
     unittest.main()
