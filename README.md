@@ -4,16 +4,16 @@
   <img src="assets/rpc-logo-white.png" alt="Simple Rekordbox Converter logo" width="160">
 </p>
 
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![CI](https://github.com/slnnzmtl/rekordbox-playlist-converter/actions/workflows/test.yml/badge.svg)](https://github.com/slnnzmtl/rekordbox-playlist-converter/actions/workflows/test.yml)
+[![License: GPL v3](assets/badge-license-gplv3.svg)](LICENSE)
+[![CI](assets/badge-ci.svg)](https://github.com/slnnzmtl/rekordbox-playlist-converter/actions/workflows/test.yml)
 
-Turn a Rekordbox playlist of lossless tracks into **WAV** or **AIFF** files, **without changing your originals**. Cues, beatgrid, rating, BPM, and tags are copied into a new playlist named `{your playlist} [WAV]` or `{your playlist} [AIFF]`.
+Turn a Rekordbox playlist of lossless tracks into **WAV** or **AIFF** files, **without changing your originals**. Cues, loops, beatgrid, rating, BPM, key, comments, colour, and tags are copied into a new playlist named `{your playlist} [WAV]` or `{your playlist} [AIFF]`.
 
 Supports the Rekordbox **6** and **7** XML export → convert → **rekordbox xml** import **workflow**. Live import compatibility with specific Rekordbox builds is **untested until** the evidence matrix in [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md) is filled — empty cells mean unverified, not a claim of support.
 
 **Not File → Import.** Rekordbox loads this XML from the **rekordbox xml** pane. The full click-path is in **[USAGE.md](USAGE.md)**.
 
-Pre-built **macOS app** (universal2): see [GitHub Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases). The **CLI** runs on macOS, Linux, and Windows (Python 3.10+ and `ffmpeg`).
+Pre-built **macOS app** (universal2): see [GitHub Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases). The latest **published** release is still **v1.2.0**; this tree is **2.0.0** and is not a published GitHub release until the import checklist is filled. The **CLI** runs on macOS, Linux, and Windows (Python 3.10+ and `ffmpeg`).
 
 ## What gets converted
 
@@ -33,13 +33,13 @@ Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 k
 **AIFF profile:** uncompressed `FORM`/`AIFF` (not AIFC), stereo PCM at the effective depth/rate, plus ID3v2.3 text from the Rekordbox XML and an optional JPEG cover from the source file.
 ## macOS app (no Terminal)
 
-Download **Simple Rekordbox Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases), or build it yourself (below). It is a **universal** binary (Intel and Apple Silicon).
+Download **Simple Rekordbox Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases) (currently **v1.2.0**), or build this **2.0.0** tree yourself (below). It is a **universal** binary (Intel and Apple Silicon).
 
 1. **Download and first launch.** The app is ad-hoc signed: if Gatekeeper blocks it, right-click → **Open**. macOS may ask for Documents access; if you decline, the app still opens and defaults to `~/rekordbox-converter` (Browse… can prompt again in Documents).
 2. **Updates.** On launch the app may check [GitHub Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases) for a newer version (Help → **Check for Updates…**). See [SECURITY.md](SECURITY.md).
 3. **Analytics (optional).** Help → **Share anonymous usage analytics** is off by default. When enabled, the app sends one anonymous install ping, later aggregate conversion counts, and closed-reason failure pings only. See [Privacy](#privacy).
 4. **Rekordbox XML.** Export the collection from Rekordbox (File → Export Collection in xml format), then choose it in the app. Refresh the export after you change cues in Rekordbox. The app remembers the last XML and output folder. Defaults write to `~/Documents/rekordbox-converter`. Import XML is always `<output folder>/rekordbox-import.xml`.
-5. **Convert.** Select playlists and tracks, WAV or AIFF, and a quality ceiling. **Convert** opens a preview of destination, action, reason, and size. Unresolved **conflicts** (files changed outside the app) disable Convert. **Back** writes nothing. Progress can be **Cancel**led; the Done report still lists successes, failures, and Import XML steps, with **Reveal output folder**.
+5. **Convert.** Select playlists and tracks, WAV or AIFF, and a quality ceiling. **Convert** opens a preview of input, format, action, reason, quality, and size (Missing rows when a source is not on disk). Unresolved **conflicts** (files changed outside the app) disable Convert. **Back** writes nothing. Progress can be **Cancel**led; the Done report still lists successes, failures, and Import XML steps, with **Reveal output folder**.
 6. **Import in Rekordbox.** Point **Imported Library** at that XML, refresh the rekordbox xml pane, then Import Playlist / drag the `[WAV]` or `[AIFF]` playlist. **Edit** on a generated library can remove playlists or tracks (Save moves owned audio to Trash; Cancel discards). Source Rekordbox XML stays read-only.
 
 **Help → How to Use…** is the same click-path. Details: [USAGE.md](USAGE.md). Compatibility evidence: [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md).

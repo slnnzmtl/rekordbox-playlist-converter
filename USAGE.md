@@ -1,6 +1,6 @@
 # How to convert a playlist (Rekordbox 6 and 7)
 
-Goal: new **WAV** or **AIFF** copies of a playlist, with cues and beatgrid, **without touching your FLACs / ALACs / AIFFs**.
+Goal: new **WAV** or **AIFF** copies of a playlist, with cues, loops, beatgrid, rating, BPM, key, comments, colour, and tags, **without touching your FLACs / ALACs / AIFFs**.
 
 Menu names below match **Rekordbox 7**. Rekordbox 6 is the same idea: export the collection, then use the **rekordbox xml** pane — never **File → Import**.
 
@@ -72,11 +72,11 @@ appears in several playlists.
 
 Assignments are sticky per source and format. If two different sources would share `<artist> - <track>`, the second gets `(2)`, then `(3)`, and so on. Deleting a generated audio file recreates it at the same assignment on the next run. Deleting the hidden manifest leaves the audio unmanaged and the folder is refused — choose a new empty output folder.
 
-CLI `--dry-run` prints the same conversion plan the GUI Convert preview shows: input, reserved destination, action, reason, write kind, quality, and size; missing sources appear as Missing rows. When space is sufficient, the preview also shows about how much disk space new audio writes need. Convert is refused while conflicts remain, the output volume is too small, or there is nothing to convert. After a run, the CLI and GUI share one report title (Done / Partial / Failed / Cancelled) and the same converted/copied/PCM-rebuilt/metadata-refreshed/reused/recreated/missing/conflicting/failed counts; the GUI Done dialog groups tracks under playlist status lines (successes stay visible if some fail). **Reveal output folder** opens the chosen output folder.
+CLI `--dry-run` prints the same conversion plan the GUI Convert preview shows: input, format, action, reason, quality, and size (CLI also prints the Format directory path); missing sources appear as Missing rows. When space is sufficient, the preview also shows about how much disk space new audio writes need. Convert is refused while conflicts remain, the output volume is too small, or there is nothing to convert. After a run, the CLI and GUI share one report title (Done / Partial / Failed / Cancelled) and the same converted/copied/PCM-rebuilt/metadata-refreshed/reused/recreated/missing/conflicting/failed counts; the GUI Done dialog groups tracks under playlist status lines (successes stay visible if some fail). **Reveal output folder** opens the chosen output folder.
 
 ### Edit a generated Import XML (GUI)
 
-When the output folder already contains `rekordbox-import.xml` and `.rekordbox-converter-manifest.json`, an **Edit** button appears beside the Import XML path. Edit mode browses that generated library (your Rekordbox source XML stays unchanged). Right-click a playlist or track to remove it, or **Reveal in Finder** for a track file; Shift/Command-click to select several tracks, then right-click to remove them together. Tracks that remain in the collection after they leave every playlist appear under **Unknown**. Missing tracks show `!` in a status column (click the header to sort). Edits stay in a draft until **Save** — Save shows a preview table of pending removals (remove from playlist vs move to Trash) — or **Cancel**. Convert and folder browsing are locked while editing.
+When the output folder already contains `rekordbox-import.xml` and `.rekordbox-converter-manifest.json`, an **Edit** button appears beside the Import XML path. Edit mode browses that generated library (your Rekordbox source XML stays unchanged). Right-click a playlist or track to remove it, or **Reveal in Finder** for a track file; Shift/Command-click to select several tracks, then right-click to remove them together. Tracks that remain in the collection after they leave every playlist appear under **Unknown**. Missing tracks show `!` in a status column (click the header to sort). Edits stay in a draft until **Save** — Save shows a preview table of pending removals (remove from playlist vs move to Trash; Unknown tracks moved to Trash are listed) — or **Cancel**. Convert and folder browsing are locked while editing.
 
 ### Same thing with options (optional)
 
@@ -108,7 +108,7 @@ Playlist name must match Rekordbox **exactly** (spaces included). The wizard can
 
 ## Privacy
 
-Analytics is **off until you opt in**. In the GUI: Help → **Share anonymous usage analytics**. On the CLI: `--analytics on` (or `off`). The first opt-in sends one anonymous `install` ping; later successful conversions may send aggregate `conversion_completed` counts (format, quality ceiling, converted/copied/skipped/appended); failed conversion jobs may send a slim `conversion_failed` ping with a closed reason (`xml_parse`, `encode`, `config`, or `unknown`) plus a random install UUID. Nothing identifies tracks, playlists, files, or accounts. Failed POSTs are queued locally and retried until success; they never affect conversion. Details: [README.md](README.md#privacy) and [SECURITY.md](SECURITY.md).
+Analytics is **off until you opt in**. In the GUI: Help → **Share anonymous usage analytics**. On the CLI: `--analytics on` (or `off`). Event types, queue, and what is never sent are documented in [README.md](README.md#privacy) and [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -136,7 +136,7 @@ If that pane already pointed at another XML, change **Imported Library** to this
 3. Drag it onto **Playlists** in your main library, or right-click → **Import Playlist**.
 4. Tracks only: **rekordbox xml → All Tracks**, select the audio rows, drag onto **Collection** (or right-click → **Import to Collection**).
 
-If Rekordbox asks whether to load information from the library being imported, choose **Yes** so cues, grid, BPM, and key come across.
+If Rekordbox asks whether to load information from the library being imported, choose **Yes** so cues, loops, grid, BPM, key, comments, colour, and rating come across.
 
 Play one track. Confirm it is on a disk Rekordbox can read (internal drive or a mounted volume).
 

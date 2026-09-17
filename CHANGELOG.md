@@ -45,9 +45,10 @@ are filled for the versions you claim. Rollback: keep the previous `.app` and
 output library; this release refuses unreleased v1 manifests (back up or use a
 new folder).
 
-- Preview shows reserved destination, action, classifier reason, write kind
-  (writes audio / metadata only / nothing), quality, and size. Convert is blocked
-  on unresolved destination conflicts or insufficient disk space. GUI and CLI
+- Preview shows input, format, action, classifier reason, quality, and size
+  (GUI omits Destination and Write; CLI `--dry-run` also prints the Format
+  directory). Convert is blocked on unresolved destination conflicts,
+  insufficient disk space, or when there is nothing to convert. GUI and CLI
   `--dry-run` share the same labels.
 - On a complete success rerun, generated `[WAV]`/`[AIFF]` playlist Keys are
   rewritten to the current source order (reorder, remove, insert, repeats).
@@ -59,15 +60,19 @@ new folder).
 - The conversion report counts converted, copied, PCM-rebuilt,
   metadata-refreshed, reused, recreated, missing, conflicting, and failed
   outputs; mixed batches keep successes visible.
-- Automated Import XML round-trips cover ratings, key, comments, unknown
-  fields, memory/hot/loop marks, and variable-tempo grids for WAV and AIFF
-  from Rekordbox 6- and 7-style PRODUCT versions.
+- Automated Import XML round-trips cover ratings, BPM, key, comments, colour,
+  supported TRACK attributes, unknown fields and children, memory/hot/loop
+  marks, constant and variable-tempo grids, playlist order and repeated Keys,
+  flat `[WAV]`/`[AIFF]` nodes, and metadata refresh of an existing collection
+  entry (TrackID / Keys preserved) for WAV and AIFF from Rekordbox 6- and
+  7-style PRODUCT versions.
 - Failed encode lines include source and destination (`src → WAV/out.wav: …`).
 - Recorded Rekordbox 6/7 compatibility and packaged-app smoke checks live in
   [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md)
   (empty = untested).
 - The GUI may contact GitHub Releases to check for updates. Optional
-  analytics (default off) is documented separately; see Unreleased.
+  analytics (default off) is documented under Unreleased until the GitHub
+  release cut folds that section into this entry.
 - Manifest **v2** is the first released converter-library contract. Unreleased v1
   and unknown future versions are refused; leftover managed audio still causes
   folder validation to reject the library, so recreate the whole development
