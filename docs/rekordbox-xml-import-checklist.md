@@ -2,7 +2,8 @@
 
 Recorded evidence for app **v2.0.0**. Fill remaining blanks after testing on a
 real machine — do not invent version numbers, pass/fail, or untested hardware
-claims. Empty cells mean **untested**, not supported.
+claims. Empty cells mean **untested**, not supported. End-user steps:
+[USAGE.md](../USAGE.md).
 
 **Verified combinations:** macOS live import with Rekordbox **6.8.5** and  
 **7.2.18** (rows marked pass below). Packaged macOS app smoke for the

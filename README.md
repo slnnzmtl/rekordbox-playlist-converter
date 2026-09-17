@@ -11,9 +11,9 @@ Turn a Rekordbox playlist of lossless tracks into **WAV** or **AIFF** files, **w
 
 Supports the Rekordbox **6** and **7** XML export → convert → **rekordbox xml** import **workflow**. Live import is **verified on macOS** with Rekordbox **6.8.5** and **7.2.18** (cues, grids, ratings, playlist order, repeated Keys, shared tracks, and playback from the converter Location). Other Rekordbox builds, Windows live import, and empty checklist cells are **untested**, not a claim of support. Evidence: [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md).
 
-**Not File → Import.** Rekordbox loads this XML from the **rekordbox xml** pane. The full click-path is in **[USAGE.md](USAGE.md)**.
+**Not File → Import.** Rekordbox loads this XML from the **rekordbox xml** pane. The full click-path with screenshots is in **[USAGE.md](USAGE.md)** (macOS app **v2.0.0**).
 
-Pre-built **macOS app** (universal2): see [GitHub Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases). The latest **published** release is still **v1.2.0**; this tree is **2.0.0** and is not a published GitHub release yet. The **CLI** runs on macOS, Linux, and Windows (Python 3.10+ and `ffmpeg`).
+This tree is **2.0.0**. The latest **published** GitHub download may still be an older tag until the v2.0.0 release is published — use this tree’s build (or the v2.0.0 release when available) with [USAGE.md](USAGE.md). The **CLI** runs on macOS, Linux, and Windows (Python 3.10+ and `ffmpeg`).
 
 ## What gets converted
 
@@ -34,16 +34,20 @@ Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 k
 
 ## macOS app (no Terminal)
 
-Download **Simple Rekordbox Converter.app** from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases) (currently **v1.2.0**), or build this **2.0.0** tree yourself (below). It is a **universal** binary (Intel and Apple Silicon).
+**Simple Rekordbox Converter.app** is a **universal** binary (Intel and Apple Silicon) for **2.0.0**. Download from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases) when v2.0.0 is published, or [build this tree](#build-the-app) below.
 
-1. **Download and first launch.** The app is ad-hoc signed: if Gatekeeper blocks it, right-click → **Open**. macOS may ask for Documents access; if you decline, the app still opens and defaults to `~/rekordbox-converter` (Browse… can prompt again in Documents).
-2. **Updates.** On launch the GUI may contact [GitHub Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases) to check for a newer version (Help → **Check for Updates…**). That is separate from analytics. See [SECURITY.md](SECURITY.md).
-3. **Analytics (optional).** First-launch Welcome has a checkbox that is **checked by default**; Continue with it checked opts in. Uncheck it, or later use Help → **Share anonymous usage analytics**, to stay off. When enabled, the app sends one anonymous install ping, later aggregate conversion counts, and closed-reason failure pings only. See [Privacy](#privacy).
-4. **Rekordbox XML.** Export the collection from Rekordbox (File → Export Collection in xml format), then choose it in the app. Refresh the export after you change cues in Rekordbox. The app remembers the last XML and output folder. Defaults write to `~/Documents/rekordbox-converter`. Import XML is always `<output folder>/rekordbox-import.xml`.
-5. **Convert.** Select playlists and tracks, WAV or AIFF, and a quality ceiling. **Convert** opens a preview of input, format, action, reason, quality, and size (Missing rows when a source is not on disk). Unresolved **conflicts** (files changed outside the app) disable Convert until you resolve them — the app does not overwrite those dests. **Back** writes nothing. Progress can be **Cancel**led; already-written files are kept and Import XML is still written for successes. The finish title is Done / Partial / Failed / Cancelled (or No conversions). **Reveal output folder** opens the chosen folder.
-6. **Import in Rekordbox.** Point **Imported Library** at that XML, refresh the rekordbox xml pane, then Import Playlist / drag the `[WAV]` or `[AIFF]` playlist. **Edit** on a generated library can remove playlists or tracks (Save moves owned audio to Trash; Cancel discards). Source Rekordbox XML stays read-only.
+![Welcome — first launch](docs/images/macos-app-v2/01-welcome.png)
 
-**Help → How to Use…** is the same click-path. Details: [USAGE.md](USAGE.md). Compatibility evidence: [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md).
+![Main window](docs/images/macos-app-v2/02-main-window.png)
+
+![Conversion preview](docs/images/macos-app-v2/03-convert-preview.png)
+
+1. **Download / Open.** Ad-hoc signed: if Gatekeeper blocks it, right-click → **Open**. Documents access is optional (fallback `~/rekordbox-converter`).
+2. **Welcome & updates.** First-launch analytics checkbox is checked by default. Help → **Check for Updates…** may contact GitHub Releases (separate from analytics). See [SECURITY.md](SECURITY.md) and [Privacy](#privacy).
+3. **Export & convert.** Export the Rekordbox collection XML, select playlists/tracks, choose WAV or AIFF and a quality ceiling, then **Convert** (preview shows action, reason, quality, size; conflicts block overwrite).
+4. **Finish & import.** Cancel keeps written files; finish titles are Done / Partial / Failed / Cancelled. **Reveal output folder**, then in Rekordbox set **Imported Library** to `rekordbox-import.xml` and Import Playlist. **Edit** can safely remove playlists/tracks from a generated library.
+
+Full steps, troubleshooting, and recovery: **[USAGE.md](USAGE.md)**. Compatibility evidence: [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md).
 
 On launch the app also searches your home folder (top-level files) and `~/Documents` for `*rekordbox*.xml` (skipping Desktop, Downloads, and iCloud) and auto-loads a single match, or asks you to choose if several are found.
 
@@ -89,13 +93,13 @@ cd rekordbox-playlist-converter
 ```
 
 3. Pick the XML export, pick one or more playlists (`1`, `1,4,7`, or `all`), and confirm the output folder (default `./output`). Audio lands under `output/WAV/` or `output/AIFF/` as `<artist> - <track>`; the import file is `output/rekordbox-import.xml`.
-4. Follow the import steps printed at the end — or open **[USAGE.md](USAGE.md)** and do section 3.
+4. Follow the import steps in **[USAGE.md](USAGE.md)** (section 5 — Bring it into Rekordbox).
 
 The new playlist in the import file is named `{original} [WAV]` or `{original} [AIFF]`. Generated playlists are **flat** (source folder hierarchy is not copied). Repeated playlist Keys keep their order; the collection still stores each destination once. Running again classifies each reserved destination (preview Action / Reason): **Convert** / Not converted yet, Reuse existing, Refresh XML, Update metadata, Rebuild container, Transcode, Recreate missing, In-place skip, Missing, or **Conflict**. Conflicts block Convert and are not overwritten. A hidden sticky `.rekordbox-converter-manifest.json` (**version 2**) remembers ownership, source/metadata/output signatures, and the conversion recipe. Deleting that file alone leaves the audio unmanaged and the folder is refused — back up or recreate the **whole** output library, or choose a new empty folder. Leftover **development** version-1 manifests are refused the same way; there is no upgrade path.
 
 Live import evidence (macOS Rekordbox 6.8.5 and 7.2.18 pass; Windows untested) is in
 [docs/rekordbox-xml-import-checklist.md](docs/rekordbox-xml-import-checklist.md).
-Empty cells stay untested. Preview labels, report titles, cancel, and recovery: **[USAGE.md](USAGE.md)**.
+Empty cells stay untested. Preview labels, report titles, cancel, and recovery: **[USAGE.md](USAGE.md)** (packaged-app guide; CLI section at the end).
 
 ## Options (optional)
 

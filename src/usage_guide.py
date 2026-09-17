@@ -23,19 +23,19 @@ your originals. The import playlist is named {your playlist} [WAV] or
 3. Bring it into Rekordbox
    Do not use File → Import. Show the rekordbox xml pane
    (Preferences → View → Layout → Media Browser), set Imported Library to
-   this app’s rekordbox-import.xml, then drag the [WAV] or [AIFF] playlist
-   into your collection (or Import Playlist). Choose Yes if asked to load
-   information from the library being imported.
+   this app’s rekordbox-import.xml, refresh if needed, then drag the
+   [WAV] or [AIFF] playlist into your collection (or Import Playlist).
+   Choose Yes if asked to load information from the library being imported.
 
 Live import is verified on macOS with Rekordbox 6.8.5 and 7.2.18. The GUI
 may check GitHub Releases for updates. The checkbox below is checked by
 default; uncheck it if you do not want anonymous usage analytics.
 
-Full steps: Help → How to Use…
+Full steps: Help → How to Use… (screenshots: USAGE.md on GitHub)
 """
 
 USAGE_GUIDE = """\
-How to convert a playlist (Rekordbox 6 and 7)
+How to convert a playlist (Rekordbox 6 and 7) — macOS app v2.0.0
 
 This app makes new WAV or AIFF copies of a playlist, with cues, loops,
 beatgrid, rating, BPM, key, comments, colour, and tags, without touching
@@ -45,11 +45,21 @@ your originals. The import playlist is named {your playlist} [WAV] or
 Menu names match Rekordbox 7. Rekordbox 6 is the same idea: export the
 collection, then use the rekordbox xml pane — never File → Import.
 
-Live import is verified on macOS with Rekordbox 6.8.5 and 7.2.18. Lossy files are skipped. Generated
-playlists are flat (source folders are not copied).
+Live import is verified on macOS with Rekordbox 6.8.5 and 7.2.18. Lossy
+files are skipped. Generated playlists are flat (source folders are not
+copied).
 
 ────────────────────────────────────────
-1. Export your collection from Rekordbox
+1. First launch, permissions, updates
+────────────────────────────────────────
+
+The app is ad-hoc signed: if Gatekeeper blocks it, right-click → Open.
+macOS may ask for Documents access; if you decline, the app still opens
+and defaults to ~/rekordbox-converter. Help → Check for Updates… may
+contact GitHub Releases on launch (separate from analytics).
+
+────────────────────────────────────────
+2. Export your collection from Rekordbox
 ────────────────────────────────────────
 
 1. Wait until analysis has finished on the tracks you care about.
@@ -58,9 +68,10 @@ playlists are flat (source folders are not copied).
 3. File → Export Collection in xml format.
 4. Save locally (for example Documents/rekordbox/rekordbox.xml). Avoid
    iCloud or Dropbox for a large export if you can.
+5. After cue or playlist changes, export again and Refresh in this app.
 
 ────────────────────────────────────────
-2. Convert in this app
+3. Convert in this app
 ────────────────────────────────────────
 
 1. Choose the XML export (Browse… next to Rekordbox XML).
@@ -99,7 +110,7 @@ Back up or recreate the whole output library, or choose a new empty folder.
 Development version-1 libraries are refused the same way (no migration).
 
 ────────────────────────────────────────
-3. Bring it into Rekordbox
+4. Bring it into Rekordbox
 ────────────────────────────────────────
 
 Do not use File → Import.
@@ -124,7 +135,7 @@ choose Yes so cues, loops, grid, BPM, key, comments, colour, and rating come
 across. Play one track to confirm it is on a readable disk.
 
 ────────────────────────────────────────
-4. After import
+5. After import / Edit
 ────────────────────────────────────────
 
 • Analyze again only if waveforms are missing; cues and grid should already
@@ -135,11 +146,16 @@ across. Play one track to confirm it is on a readable disk.
 
 Edit (optional): when the output folder already has rekordbox-import.xml and
 the converter manifest, Edit appears beside Import XML. Change the draft, then
-Save or Cancel. Your Rekordbox source XML stays read-only.
+Save or Cancel (Save can move owned audio to Trash). Your Rekordbox source
+XML stays read-only.
+
+────────────────────────────────────────
+6. Troubleshooting
+────────────────────────────────────────
 
 If Convert is disabled, read the preview reason — conflicts (file changed
 outside the app), insufficient disk space, or nothing to convert (sources
-missing).
+missing). Gatekeeper: right-click → Open. Do not delete only the manifest.
 
 Network: Help → Check for Updates… may contact GitHub Releases on launch.
 Anonymous usage analytics is optional (Welcome checkbox is checked by
@@ -147,5 +163,5 @@ default; uncheck it or use Help → Share anonymous usage analytics). No
 track titles, artists, paths, playlist names, XML, accounts, or session
 ids are sent.
 
-More detail: USAGE.md in the project (or on GitHub).
+More detail and screenshots: USAGE.md in the project (or on GitHub).
 """
