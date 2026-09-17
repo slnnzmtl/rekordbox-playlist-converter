@@ -33,9 +33,42 @@ def collision_key(name: str) -> str:
     return unicodedata.normalize("NFC", name).casefold()
 
 
+def _unique_collision_dirent(parent: Path, filename: str) -> Path | None:
+    """Return the sole file in parent whose name matches filename's collision key."""
+    if not parent.is_dir():
+        return None
+    key = collision_key(filename)
+    matches: list[Path] = []
+    for entry in parent.iterdir():
+        if entry.is_file() and collision_key(entry.name) == key:
+            matches.append(entry)
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _same_file_path(path: Path) -> Path | None:
+    """Resolve path to a concrete file for samefile comparison."""
+    dirent = _unique_collision_dirent(path.parent, path.name)
+    if dirent is not None:
+        return dirent
+    return path if path.is_file() else None
+
+
 def same_file(a: Path, b: Path) -> bool:
+    """True when a and b are one file, including NFC vs NFD spellings.
+
+    When the directory lists one dirent for this collision key, compare that
+    entry so pathlib is not fooled by alias paths on some external volumes.
+    """
+    if collision_key(a.name) != collision_key(b.name):
+        return False
     try:
-        return a.exists() and b.exists() and a.samefile(b)
+        left = _same_file_path(a)
+        right = _same_file_path(b)
+        if left is None or right is None:
+            return False
+        return left.samefile(right)
     except OSError:
         return False
 

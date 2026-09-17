@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Convert no longer treats NFC vs NFD spellings of the same output file
+  (common on external volumes after a mid-convert quit) as a destination
+  conflict that re-prepare cannot clear.
 - Output-folder validation no longer treats unrelated nested WAV/AIFF under a
   parent folder (for example Documents) as a leftover converter library; only
   root `rekordbox-import.xml` or files directly in `WAV/` / `AIFF/` count.

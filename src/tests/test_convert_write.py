@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import unicodedata
 import unittest
 import xml.etree.ElementTree as ET
 from copy import deepcopy
@@ -347,6 +348,69 @@ class ExecutePreparedTests(XmlFixtureBase):
             dest = prepared.items[0].dest_path
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes(b"EXISTING")
+            stats = execute_prepared(prepared, force=False, progress=False)
+        self.assertIsNotNone(stats)
+        self.assertTrue(self.output.exists())
+
+    def test_execute_prepared_nfc_plan_nfd_dirent_is_not_batch_conflict(self) -> None:
+        """Given a planned NFC dest whose format dir lists the NFD spelling of
+        the same file, and pathlib.samefile disagrees (APFS/ExFAT alias): When
+        execute_prepared runs: Then it does not abort as a destination collision."""
+        encoded: list[str] = []
+
+        def fake_ffmpeg(
+            source: Path, dest: Path, codec: str, force: bool, **_kwargs
+        ) -> None:
+            encoded.append(Path(source).name)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"RIFF")
+
+        orig_samefile = Path.samefile
+
+        def aliasing_samefile(self: Path, other: str | Path) -> bool:
+            other_path = Path(other)
+            if (
+                unicodedata.normalize("NFC", self.name)
+                == unicodedata.normalize("NFC", other_path.name)
+                and self.name != other_path.name
+            ):
+                return False
+            return orig_samefile(self, other)
+
+        with patch.object(ffmpeg_tools, "require_tools", return_value=[]), patch.object(
+            ffmpeg_tools, "run_ffprobe", side_effect=self._probe
+        ), patch.object(convert.plan, "run_ffmpeg", side_effect=fake_ffmpeg), patch.object(
+            cdj_wav, "is_cdj_safe_wav", return_value=False
+        ), patch.object(Path, "samefile", aliasing_samefile):
+            prepared, errors = prepare_batch(
+                self.xml_path,
+                [(None, "Untitled Intelligent List")],
+                self.wav_dir,
+                self.output,
+            )
+            self.assertEqual(errors, [])
+            assert prepared is not None
+            item = prepared.items[0]
+            parent = item.dest_path.parent
+            parent.mkdir(parents=True, exist_ok=True)
+            stem = "Cauet la Pensée"
+            nfc_name = unicodedata.normalize("NFC", stem) + item.dest_path.suffix
+            nfd_name = unicodedata.normalize("NFD", stem) + item.dest_path.suffix
+            if nfc_name == nfd_name:
+                self.skipTest("Unicode NFC and NFD spellings are identical")
+            nfc_dest = parent / nfc_name
+            nfd_dest = parent / nfd_name
+            nfd_dest.write_bytes(b"EXISTING")
+            item.dest_path = nfc_dest
+            item.dest_name = nfc_name
+            orig_refresh = prepared.reservation.refresh_inventory
+
+            def refresh_list_nfd() -> None:
+                orig_refresh()
+                key = collision_key(nfc_name)
+                prepared.reservation.inventory[key] = (nfd_dest,)
+
+            prepared.reservation.refresh_inventory = refresh_list_nfd
             stats = execute_prepared(prepared, force=False, progress=False)
         self.assertIsNotNone(stats)
         self.assertTrue(self.output.exists())

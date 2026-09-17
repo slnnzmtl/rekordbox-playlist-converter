@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unicodedata
 import unittest
 import xml.etree.ElementTree as ET
@@ -17,7 +18,7 @@ for _p in (_SRC, _TESTS):
 import rb_playlist_to_wav as rb
 from cli_error import CancelledError, CliError
 import ffmpeg_tools
-from convert.paths import collision_key
+from convert.paths import collision_key, same_file
 from rekordbox_xml import find_playlists_by_name, load_dj_playlists
 from convert_fixtures import XmlFixtureTests as XmlFixtureBase
 from convert_fixtures import FIXTURE, flac_probe, wav_probe, write_flac
@@ -57,6 +58,19 @@ class CollisionKeyTests(unittest.TestCase):
         self.assertNotEqual(nfc, nfd)
         self.assertEqual(collision_key(nfc), collision_key(nfd))
 
+    def test_same_file_nfc_and_nfd_spellings_when_one_dirent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            nfd_name = unicodedata.normalize("NFD", "café.wav")
+            nfc_name = unicodedata.normalize("NFC", "café.wav")
+            if nfd_name == nfc_name:
+                self.skipTest("NFC and NFD spellings are identical")
+            (parent / nfd_name).write_bytes(b"x")
+            nfc_path = parent / nfc_name
+            nfd_path = parent / nfd_name
+            if not nfc_path.exists():
+                self.skipTest("filesystem does not alias NFC to the NFD dirent")
+            self.assertTrue(same_file(nfc_path, nfd_path))
 
 
 class XmlFixtureTests(XmlFixtureBase):
