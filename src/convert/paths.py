@@ -47,10 +47,17 @@ def _unique_collision_dirent(parent: Path, filename: str) -> Path | None:
     return None
 
 
+def _unicode_spelling_alias(left: str, right: str) -> bool:
+    """True when names differ only by Unicode normalization (e.g. NFC vs NFD)."""
+    return left != right and unicodedata.normalize("NFC", left) == unicodedata.normalize(
+        "NFC", right
+    )
+
+
 def _same_file_path(path: Path) -> Path | None:
     """Resolve path to a concrete file for samefile comparison."""
     dirent = _unique_collision_dirent(path.parent, path.name)
-    if dirent is not None:
+    if dirent is not None and _unicode_spelling_alias(path.name, dirent.name):
         return dirent
     return path if path.is_file() else None
 
