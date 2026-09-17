@@ -10,8 +10,8 @@ plus an import XML. At runtime it may contact the network for two purposes
 
 1. **Update check (GUI).** GitHub Releases (`api.github.com`) on launch or via
    Help → Check for Updates…. This is **not** gated by the analytics opt-in.
-   Packaged-app smoke on the **2.0.0** RC recorded that check as **up to date**
-   versus the published GitHub latest (**v1.2.0**); see the
+   Packaged-app smoke on the **2.0.0** RC (`ae9de0e`) recorded that check as
+   **up to date** versus the published GitHub latest (**v1.2.0**); see the
    [import checklist](docs/rekordbox-xml-import-checklist.md).
 2. **Usage analytics (optional).** First-launch Welcome has a checkbox that is
    **checked by default**; Continue with it checked opts in. Uncheck it, Help →
