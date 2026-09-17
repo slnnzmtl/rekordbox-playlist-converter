@@ -48,17 +48,21 @@ def startup_patches(
     output: Any = None,
     preferences: dict[str, Any] | None = None,
     check_for_update: Any = None,
+    prefs_file_exists: bool = True,
     **extra: Any,
 ) -> dict[str, Any]:
     """Build the common ConverterApp startup patch dict for :func:`app_patches`."""
     from rb_converter_gui import DEFAULT_OUTPUT, DEFAULT_WAV_DIR
     from update_check import UpdateCheckResult
 
+    prefs_path = Mock()
+    prefs_path.is_file.return_value = prefs_file_exists
     result: dict[str, Any] = {
         "check_for_update": check_for_update
         if check_for_update is not None
         else UpdateCheckResult(kind="up_to_date"),
         "load_preferences": preferences if preferences is not None else {},
+        "default_config_path": {"return_value": prefs_path},
         "resolve_startup_paths": (
             wav_dir if wav_dir is not None else DEFAULT_WAV_DIR,
             output if output is not None else DEFAULT_OUTPUT,

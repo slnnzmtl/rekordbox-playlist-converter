@@ -35,7 +35,7 @@ from gui.startup_probe import StartupProbeResult, run_startup_probe
 from gui.types import PlaylistNodeKind
 from gui_prefs import default_output_paths
 from update_check import ReleaseInfo, UpdateCheckResult
-from usage_guide import USAGE_GUIDE
+from usage_guide import USAGE_GUIDE, WELCOME_GUIDE
 from version import __version__
 
 
@@ -327,6 +327,54 @@ class ShellMixin:
         else:
             runtime.disable_analytics()
 
+    def _maybe_show_welcome(self, _attempts: int = 0) -> None:
+        if runtime.default_config_path().is_file():
+            self._run_deferred_startup()
+            return
+        # Wait until the main window is mapped. Showing a grab modal before
+        # the first paint freezes the app on macOS aqua with an invisible dialog.
+        try:
+            viewable = bool(self.root.winfo_viewable())
+        except tk.TclError:
+            self._run_deferred_startup()
+            return
+        if not viewable and _attempts < 40:
+            self.root.after(
+                50, lambda: self._maybe_show_welcome(_attempts + 1)
+            )
+            return
+
+        def on_result(action: str, analytics_opt_in: bool) -> None:
+            if analytics_opt_in:
+                self.analytics_var.set(True)
+                self._on_analytics_toggle()
+            else:
+                runtime.save_preferences(analytics="off")
+            if action == "guide":
+                self._show_usage_guide()
+            else:
+                self._run_deferred_startup()
+
+        gui_dialogs.show_welcome_dialog(
+            self.root,
+            WELCOME_GUIDE,
+            on_result=on_result,
+        )
+
+    def _run_deferred_startup(self) -> None:
+        """Documents probe/access + update check. Safe to call more than once."""
+        if self._startup_done:
+            return
+        self._startup_done = True
+        accessible = self._deferred_documents_accessible
+        if accessible is None:
+            # after_idle: listing Documents in-process during early init can
+            # block the window on macOS TCC; same deferral is harmless later.
+            self.root.after_idle(self._start_documents_probe)
+        else:
+            self._apply_documents_access(accessible)
+        self._start_update_check(manual=False)
+
     def _search_rekordbox_xml(self) -> None:
         if self._busy:
             return
@@ -351,6 +399,7 @@ class ShellMixin:
     def _show_usage_guide(self) -> None:
         def on_closed() -> None:
             self._usage_window = None
+            self._run_deferred_startup()
 
         self._usage_window = gui_dialogs.show_usage_guide_dialog(
             self.root,

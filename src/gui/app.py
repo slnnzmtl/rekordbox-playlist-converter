@@ -147,14 +147,16 @@ class ConverterApp(ImportEditMixin, ConvertFlowMixin, PlaylistsMixin, ShellMixin
         # restore has not filled the field yet.
         self._has_saved_source_xml = bool(saved_prefs.get("source_xml", "").strip())
         self._restore_saved_source_xml(saved_prefs)
-        if documents_accessible is None:
-            # Never list Documents in this process during init: macOS TCC
-            # blocks every thread until the user answers, so the window would
-            # never appear if they dismiss the dialog.
-            self.root.after_idle(self._start_documents_probe)
+        first_launch = not runtime.default_config_path().is_file()
+        self._startup_done = False
+        self._deferred_documents_accessible = documents_accessible
+        if first_launch:
+            # Defer past first paint so the welcome grab modal is visible.
+            # Documents/XML probe waits until Welcome (and optional full guide)
+            # closes so the choice modal cannot stack over them.
+            self.root.after(100, self._maybe_show_welcome)
         else:
-            self._apply_documents_access(documents_accessible)
-        self._start_update_check(manual=False)
+            self._run_deferred_startup()
         if saved_prefs.get("analytics") == "on":
             self.root.after_idle(runtime.flush_pending)
 

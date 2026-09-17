@@ -22,6 +22,7 @@ from convert.preview import insufficient_output_space_message, preview_block_mes
 from convert.write import execute_prepared
 from gui.dialogs import ask_centered_yesno, show_centered_message
 from gui_prefs import (
+    default_config_path,
     find_rekordbox_xml_via_child,
     import_xml_path,
     load_preferences,
@@ -83,6 +84,7 @@ __all__ = [
     "prepare_batch",
     "converter_manifest",
     "execute_prepared",
+    "default_config_path",
     "load_preferences",
     "save_preferences",
     "enable_analytics",

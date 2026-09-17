@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- First-launch welcome modal with a short how-to guide and opt-in checkbox for
+  anonymous usage analytics (checked by default; creates preferences on
+  dismiss). Documents/XML discovery waits until Welcome is closed (and until
+  the full usage guide is closed if opened from Welcome) so the collection
+  chooser cannot open on top of it.
 - GUI and CLI share the same Done / Partial / Failed / Cancelled batch title;
   finish-table Failed Detail uses `source → dest: error` like the CLI Failed
   list; playlist accordion headers include missing-skipped counts.

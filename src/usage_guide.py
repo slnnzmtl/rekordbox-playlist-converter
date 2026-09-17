@@ -1,5 +1,34 @@
 """In-app usage guide text for the Simple Rekordbox Converter GUI."""
 
+WELCOME_GUIDE = """\
+Welcome to Simple Rekordbox Converter
+
+This app makes new WAV or AIFF copies of a playlist, with cues, loops,
+beatgrid, rating, BPM, key, comments, colour, and tags, without touching
+your originals. The import playlist is named {your playlist} [WAV] or
+{your playlist} [AIFF].
+
+1. Export your collection from Rekordbox
+   File → Export Collection in xml format. Save locally (for example
+   Documents/rekordbox/rekordbox.xml). In Rekordbox 7, enable Export
+   BeatGrid information under Preferences → Advanced → rekordbox xml.
+
+2. Convert in this app
+   Choose the XML export, select playlists and tracks, confirm the output
+   folder, choose Format and Maximum output quality, then Convert. Review
+   the preview and confirm. Import XML is always
+   <output folder>/rekordbox-import.xml.
+
+3. Bring it into Rekordbox
+   Do not use File → Import. Show the rekordbox xml pane
+   (Preferences → View → Layout → Media Browser), set Imported Library to
+   this app’s rekordbox-import.xml, then drag the [WAV] or [AIFF] playlist
+   into your collection (or Import Playlist). Choose Yes if asked to load
+   information from the library being imported.
+
+Full steps: Help → How to Use…
+"""
+
 USAGE_GUIDE = """\
 How to convert a playlist (Rekordbox 6 and 7)
 

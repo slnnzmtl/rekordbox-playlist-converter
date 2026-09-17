@@ -536,6 +536,77 @@ def show_done_dialog(
     dlg.wait_window()
 
 
+def show_welcome_dialog(
+    parent: tk.Tk,
+    guide_text: str,
+    *,
+    on_result: Callable[[str, bool], None],
+) -> None:
+    """First-launch modal with short guide and analytics opt-in checkbox.
+
+    Calls ``on_result(action, analytics_opt_in)`` where *action* is
+    ``"continue"`` or ``"guide"`` before destroying the dialog.
+    """
+    dlg, frm = make_dialog(parent, "Welcome", grab=True, resizable=True, padding=12)
+    dlg.geometry("560x480")
+    dlg.minsize(420, 360)
+    frm.rowconfigure(0, weight=1)
+
+    text = scrolledtext.ScrolledText(
+        frm, wrap=tk.WORD, width=64, height=18, font=("Menlo", 11)
+    )
+    text.grid(row=0, column=0, sticky="nsew")
+    text.insert("1.0", guide_text.strip() + "\n")
+    text.configure(state=tk.DISABLED)
+
+    opt_in = tk.BooleanVar(value=True)
+    analytics = ttk.Frame(frm)
+    analytics.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+    ttk.Checkbutton(
+        analytics,
+        text=(
+            "Help improve Rekordbox Converter by sending anonymous "
+            "usage statistics."
+        ),
+        variable=opt_in,
+    ).pack(anchor="w")
+    privacy = ttk.Label(
+        analytics,
+        text=(
+            "No music metadata, file names, file paths or library "
+            "contents are collected."
+        ),
+        justify=tk.LEFT,
+    )
+    privacy.pack(anchor="w", pady=(4, 0))
+    bind_wraplength(privacy, frm, inset=32)
+
+    btns = ttk.Frame(frm)
+    btns.grid(row=2, column=0, sticky="e", pady=(12, 0))
+
+    def finish(action: str) -> None:
+        on_result(action, bool(opt_in.get()))
+        dlg.destroy()
+
+    ttk.Button(
+        btns, text="Open full guide…", command=lambda: finish("guide")
+    ).pack(side=tk.LEFT, padx=(0, 8))
+    ttk.Button(
+        btns, text="Continue", command=lambda: finish("continue")
+    ).pack(side=tk.LEFT)
+
+    def on_close() -> None:
+        finish("continue")
+
+    dlg.bind("<Return>", lambda _e: finish("continue"))
+    dlg.bind("<Escape>", lambda _e: on_close())
+    dlg.protocol("WM_DELETE_WINDOW", on_close)
+    place_dialog_over_parent(dlg, parent)
+    dlg.lift()
+    dlg.focus_force()
+    dlg.wait_window()
+
+
 def show_update_available_dialog(
     parent: tk.Tk,
     *,
