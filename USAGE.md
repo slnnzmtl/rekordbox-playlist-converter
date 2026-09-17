@@ -4,13 +4,13 @@ Goal: new **WAV** or **AIFF** copies of a playlist, with cues, loops, beatgrid, 
 
 This guide is for the **packaged macOS app v2.0.0**. Menu names match **Rekordbox 7**; Rekordbox 6 is the same idea: export the collection, then use the **rekordbox xml** pane — never **File → Import**.
 
-Screenshots below are from the **2.0.0** release candidate UI. Until GitHub publishes v2.0.0, build this tree with `./scripts/build-macos-app.sh` (see [README.md](README.md)) or wait for the release. Do not follow this guide against an older **v1.x** download.
+Screenshots below are from the **2.0.0** UI. Get the app from [GitHub Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases/tag/v2.0.0), or build this tree with `./scripts/build-macos-app.sh` (see [README.md](README.md)). Do not follow this guide against an older **v1.x** download.
 
 ---
 
 ## 1. Download, first launch, permissions, updates
 
-1. Get **Simple Rekordbox Converter.app** (universal2) for **2.0.0** from [GitHub Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases) when published, or build this repository (README → Build the .app).
+1. Get **Simple Rekordbox Converter.app** (universal2) for **2.0.0** from [GitHub Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases/tag/v2.0.0), or build this repository (README → Build the .app).
 2. **First launch.** The app is ad-hoc signed. If Gatekeeper blocks it, right-click the `.app` → **Open**.
 3. **Documents access.** macOS may ask for Documents access. If you decline, the app still opens and defaults to `~/rekordbox-converter` (Browse… can prompt again later). With Documents allowed, the default output folder is `~/Documents/rekordbox-converter`.
 4. **Welcome.** On first launch, read the short guide and choose whether to share anonymous usage analytics (checkbox is **checked by default**). Continue, or open the full in-app guide.

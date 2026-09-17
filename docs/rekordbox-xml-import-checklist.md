@@ -8,8 +8,8 @@ claims. Empty cells mean **untested**, not supported. End-user steps:
 **Verified combinations:** macOS live import with Rekordbox **6.8.5** and  
 **7.2.18** (rows marked pass below). Packaged macOS app smoke for the
 **2.0.0** RC at commit `ae9de0e3da0e683ca2a89e95796ee32890ba8339` is **pass**,
-including Help → Check for Updates… (app **2.0.0** is up to date versus the
-published GitHub latest **v1.2.0**).
+including Help → Check for Updates… (app **2.0.0** was up to date versus then-
+published GitHub latest **v1.2.0**; GitHub **v2.0.0** is now published).
 
 Use the same source collection as the automated fidelity fixture where
 practical: ratings, BPM, key, comments, colour, memory cue, hot cue, loop,
@@ -95,7 +95,7 @@ artifact identity here.
 | Import XML edit, Reveal output folder                                                            | pass (prior RC; not re-clicked on this build) |
 | Help → Check for Updates…                                                                        | pass (`check_for_update("2.0.0")` → up to date vs published v1.2.0) |
 | Output `WAV/` or `AIFF/`, `.rekordbox-converter-manifest.json` version 2, `rekordbox-import.xml` | pass (WAV and AIFF libraries, manifest version 2) |
-| Notes                                                                                            | RC smoke **2026-09-18** on macOS **14.4.1** (23E224) at `ae9de0e`. Exe SHA-256 `566ec5c3d9dd84b09ac2c3d9828387a0775ae77f742131122515d740c8aac28d`. Quality for this RC convert: WAV/AIFF **16-bit / 44.1 kHz**. Isolated GUI binary stayed running (no Assistive Access: Welcome, Help, Import XML edit, Reveal, close-while-busy, and Gatekeeper right-click were not re-clicked). Close-while-busy, sash cap, and Done header sizing covered by unittest on this commit. GitHub **.app** not published yet. |
+| Notes                                                                                            | RC smoke **2026-09-18** on macOS **14.4.1** (23E224) at `ae9de0e`. Exe SHA-256 `566ec5c3d9dd84b09ac2c3d9828387a0775ae77f742131122515d740c8aac28d`. Quality for this RC convert: WAV/AIFF **16-bit / 44.1 kHz**. Isolated GUI binary stayed running (no Assistive Access: Welcome, Help, Import XML edit, Reveal, close-while-busy, and Gatekeeper right-click were not re-clicked). Close-while-busy, sash cap, and Done header sizing covered by unittest on this commit. GitHub release **v2.0.0** publishes `Simple-Rekordbox-Converter-macos-universal2.zip`. |
 
 
 Smoke failures that affect conversion, recovery, data safety, or startup

@@ -13,7 +13,7 @@ Supports the Rekordbox **6** and **7** XML export → convert → **rekordbox xm
 
 **Not File → Import.** Rekordbox loads this XML from the **rekordbox xml** pane. The full click-path with screenshots is in **[USAGE.md](USAGE.md)** (macOS app **v2.0.0**).
 
-This tree is **2.0.0**. The latest **published** GitHub download may still be an older tag until the v2.0.0 release is published — use this tree’s build (or the v2.0.0 release when available) with [USAGE.md](USAGE.md). The **CLI** runs on macOS, Linux, and Windows (Python 3.10+ and `ffmpeg`).
+This tree is **2.0.0**. Download the macOS app from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases/tag/v2.0.0), or [build this tree](#build-the-app). Use [USAGE.md](USAGE.md) with **2.0.0**, not an older **v1.x** download. The **CLI** runs on macOS, Linux, and Windows (Python 3.10+ and `ffmpeg`).
 
 ## What gets converted
 
@@ -34,7 +34,7 @@ Quality flags are a **ceiling**, not a target: 16-bit tracks stay 16-bit; 44.1 k
 
 ## macOS app (no Terminal)
 
-**Simple Rekordbox Converter.app** is a **universal** binary (Intel and Apple Silicon) for **2.0.0**. Download from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases) when v2.0.0 is published, or [build this tree](#build-the-app) below.
+**Simple Rekordbox Converter.app** is a **universal** binary (Intel and Apple Silicon) for **2.0.0**. Download from [Releases](https://github.com/slnnzmtl/rekordbox-playlist-converter/releases/tag/v2.0.0), or [build this tree](#build-the-app) below.
 
 ![Welcome — first launch](docs/images/macos-app-v2/01-welcome.png)
 
